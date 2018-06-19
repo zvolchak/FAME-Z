@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 # This work is licensed under the terms of the GNU GPL, version 2 or
-# (at your option) any later version.  See the COPYING file in the
+# (at your option) any later version.  See the LICENSE file in the
 # top-level directory.
 
 # Rocky Craig <rjsnoose@gmail.com>
@@ -20,7 +20,7 @@ from twisted.internet.protocol import Factory as TIPFactory
 from twisted.internet.protocol import Protocol as TIPProtocol
 
 from ivshmsg_sendrecv import ivshmem_send_one_msg
-from ivshmsg_eventfd import ivshmem_event_notifier_list
+from ivshmsg_eventfd import ivshmem_event_notifier_list, EventfdReader
 
 class ProtocolIVSHMSG(TIPProtocol):
 
@@ -31,17 +31,28 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     IVSHMEM_PROTOCOL_VERSION = 0
 
-    _next_peer_id = 1   # Docs say zero okay, not my experience
-    _peer_list = []     # Map transport fds to list of eventfds
+    next_peer_id = 1   # Docs say zero okay, not my experience
+    peer_list = []     # Map transport fds to list of eventfds
+    args = None        # Invariant across instances
+    logmsg = None
+    logerr = None
+    # Non-standard addition to IVSHMEM protocol: this server can be
+    # interrupted and messaged, and here is where the Gen-Z magic
+    # will occur.
+    famez_vectors = None
+    FAMEZ_SERVER_ID = 4242
 
     def __init__(self, factory):
-        assert isinstance(factory, TIPFactory), 'arg0 is not my Factory'
-        self.logmsg = factory.args.logmsg
-        self.logerr = factory.args.logerr
-        self.mailbox_fd = factory.args.mailbox_fd
-        self.nVectors = factory.args.nVectors
-        self.socketpath = factory.args.socketpath
-        self.verbose = factory.args.verbose
+        if self.args is None:           # Do all the singletons
+            assert isinstance(factory, TIPFactory), 'arg0 not my Factory'
+            self.__class__.args = factory.args          # Seldom-used
+            self.__class__.logmsg = self.args.logmsg    # Often-used
+            self.__class__.logerr = self.args.logerr
+            self.__class__.famez_vectors = ivshmem_event_notifier_list(10)
+            for i, famez_vector in enumerate(self.famez_vectors):
+                famez_vector.num = i
+                famez_vector.logmsg = self.logmsg   # work on this...
+                tmp = EventfdReader(famez_vector, self.ERcallback).start()
         self.create_new_peer_id()
 
     def logPrefix(self):    # This override works after instantiation
@@ -58,7 +69,7 @@ class ProtocolIVSHMSG(TIPProtocol):
 
         # Introduce variables that resemble the QEMU "ivshmem-server" code.
         peer = self
-        server_peer_list = self._peer_list
+        server_peer_list = self.peer_list
         if len(server_peer_list) > 15:   # cuz server makes 16
             self.logerr('Max clients reached (15)')
             peer.send_initial_info(False)
@@ -67,7 +78,7 @@ class ProtocolIVSHMSG(TIPProtocol):
         # Server line 175: create specified number of eventfds, mixed with
         # Server line 183: send peer id and shm fd
         try:
-            peer.vectors = ivshmem_event_notifier_list(self.nVectors)
+            peer.vectors = ivshmem_event_notifier_list(self.args.nVectors)
         except Exception as e:
             self.logerr('Event notifiers failed: %s' % str(e))
             peer.send_initial_info(False)
@@ -75,7 +86,8 @@ class ProtocolIVSHMSG(TIPProtocol):
         peer.send_initial_info()
 
         # Server line 189: advertise the new peer to others.  Note that
-        # this new "peer" has not yet been added to the list.
+        # this new "peer" has not yet been added to the list, so this
+        # loop is not traversed for the first client.
         for other_peer in server_peer_list:
             for peer_vector in peer.vectors:
                 ivshmem_send_one_msg(
@@ -90,6 +102,14 @@ class ProtocolIVSHMSG(TIPProtocol):
                     peer.transport.socket,
                     other_peer.id,
                     other_peer_vector.wfd)
+
+        # Non-standard voodoo: advertise this server to the new one.
+        if True:
+            for famez_vector in self.famez_vectors:
+                ivshmem_send_one_msg(
+                    peer.transport.socket,
+                    self.FAMEZ_SERVER_ID,
+                    famez_vector.wfd)
 
         # Server line 205: advertise the new peer to itself
         for peer_vector in peer.vectors:
@@ -111,9 +131,9 @@ class ProtocolIVSHMSG(TIPProtocol):
             logit = self.logmsg
         logit('%s disconnect from peer id %d' % (txt, self.id))
         try:
-            if self in self._peer_list:     # Only if everything was done
-                self._peer_list.remove(self)
-                for other_peer in self._peer_list:
+            if self in self.peer_list:     # Only if everything was done
+                self.peer_list.remove(self)
+                for other_peer in self.peer_list:
                     ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
             for vector in self.vectors:
@@ -123,8 +143,9 @@ class ProtocolIVSHMSG(TIPProtocol):
             self.logerr('Closing peer transports failed: %s' % str(e))
 
     def create_new_peer_id(self):
-        self.id = self._next_peer_id
-        self.__class__._next_peer_id += 1
+        '''These tend to stay well below FAMEZ_SERVER_ID.'''
+        self.id = self.next_peer_id
+        self.__class__.next_peer_id += 1
 
     def send_initial_info(self, ok=True):
         # Server line 103 and client line 210:
@@ -145,7 +166,11 @@ class ProtocolIVSHMSG(TIPProtocol):
         # Server line 119 and client line 225:
         # -1 "index" and a real FD that still seems to be used.  It
         # may supersede the QEMU 2.5 explicit declaration of ivshmem.
-        ivshmem_send_one_msg(thesocket, -1, self.mailbox_fd)
+        ivshmem_send_one_msg(thesocket, -1, self.args.mailbox_fd)
+
+    @staticmethod
+    def ERcallback(vectorobj):
+        vectorobj.logmsg('CALLBACK %d' % vectorobj.num)
 
 
 class FactoryIVSHMSG(TIPFactory):

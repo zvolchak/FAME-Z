@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 # This work is licensed under the terms of the GNU GPL, version 2 or
-# (at your option) any later version.  See the COPYING file in the
+# (at your option) any later version.  See the LICENSE file in the
 # top-level directory.
 
 # Rocky Craig <rjsnoose@gmail.com>
@@ -16,8 +16,10 @@ import os
 import struct
 import sys
 
-from zope.interface import implementer
+from twisted.internet import reactor as TIreactor   # should be same everywhere
 from twisted.internet.interfaces import IReadDescriptor
+
+from zope.interface import implementer
 
 ###########################################################################
 # See qemu/util/event_notifier-posix.c for routine names and models; only
@@ -96,8 +98,8 @@ def ivshmem_event_notifier_list(count):
 @implementer(IReadDescriptor)
 class EventfdReader(object):
 
-    def __init__(self, theReactor, eventobj, callback):
-        self.reactor = theReactor
+    def __init__(self, eventobj, callback):
+        assert isinstance(eventobj, IVSHMEM_Event_Notifier), 'Bad object'
         self.eventobj = eventobj
         self.callback = callback
 
@@ -107,23 +109,23 @@ class EventfdReader(object):
     def  logPrefix(self):
         return 'ServerEvent%d' % self.fileno()
 
-    def do_read(self):
+    def doRead(self):
         fired = self.eventobj.reset()
         if fired:
             self.callback(self.eventobj)
 
     def connectionLost(self, reason):
-        self.reactor.removeReader(self)  # Paranoid?  EAGAIN?  Use destroy()?
+        TIreactor.removeReader(self)  # Paranoid?  EAGAIN?  Use destroy()?
         self.eventobj.cleanup()
         self.eventobj = None
         self.callback = None
 
     def start(self):
         '''Convenience, not in twisted classes.'''
-        self.reactor.addReader(self)
+        TIreactor.addReader(self)
 
     def destroy(self):
         '''Convenience, not in twisted classes.'''
-        self.reactor.removeReader(self)
+        TIreactor.removeReader(self)
         self.loseConnection()
 
