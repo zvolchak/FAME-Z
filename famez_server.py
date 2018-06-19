@@ -59,20 +59,23 @@ def parse_cmdline():
     oldumask = os.umask(0)
     gr_name = 'libvirt-qemu'
     try:
-        gid = grp.getgrnam(gr_name).gr_gid
+        gr_gid = grp.getgrnam(gr_name).gr_gid
         if os.path.isfile(args.mailbox):
             lstat = os.lstat(args.mailbox)
             assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
             assert lstat.st_size >= 131072, 'size is < 128k'
-            assert lstat.st_gid == gid, 'group is not %s' % gr_name
-            assert lstat.st_mode & 0o660 == 0o660, \
-                'permissions must be 66x'
+            if lstat.st_gid != gr_gid:
+                print('Changing %s to group %s' % (args.mailbox, gr_name))
+                os.chown(args.mailbox, -1, gr_gid)
+            if lstat.st_mode & 0o660 != 0o660:  # at least
+                print('Changing %s to permissions 666' % args.mailbox)
+                os.chmod(args.mailbox, 0o666)
             args.mailbox_fd = os.open(args.mailbox, os.O_RDWR)
         else:
             args.mailbox_fd = os.open(
-                args.mailbox, os.O_RDWR | os.O_CREAT, mode=0o666)   # umask oddities
+                args.mailbox, os.O_RDWR | os.O_CREAT, mode=0o666)
             os.posix_fallocate(args.mailbox_fd, 0, 131072)
-            os.fchown(args.mailbox_fd, -1, gid)
+            os.fchown(args.mailbox_fd, -1, gr_gid)
     except Exception as e:
         raise SystemExit('Problem with %s: %s' % (args.mailbox, str(e)))
 
