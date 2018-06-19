@@ -1,2 +1,3 @@
 # FAME-Z
-A Gen-Z fabric emulation environment built on FAME built on QEMU and IVSHMEM.
+
+A Gen-Z fabric emulation environment built on QEMU and IVSHMEM.
