@@ -7,6 +7,8 @@
 # Rocky Craig <rocky.craig@hpe.com>
 
 import argparse
+import grp
+import os
 import sys
 
 from twisted.python import log as TPlog
@@ -188,16 +190,56 @@ class ProtocolIVSHMSG(TIPProtocol):
         peer_id = 43
         vectorobj.logmsg('CALLBACK %d peer %d' % (vectorobj.num, peer_id))
 
+###########################################################################
+# The IVSHMEM protocol practiced by QEMU demands a memory-mappable file
+# descriptor as part of the initial exchange, so give it one.  The mailbox
+# is a shared common area.  In non-silent mode, each client gets 8k, max
+# 31 extra clients after server area which starts at zero, thus 256k.
+
+
+def _prepare_mailbox(path, size=262144):
+    '''Starts with mailbox base name, returns an fd to open file.'''
+
+    oldumask = os.umask(0)
+    gr_name = 'libvirt-qemu'
+    if '/' not in path:
+        path = '/dev/shm/' + path
+    try:
+        gr_gid = grp.getgrnam(gr_name).gr_gid
+        if not os.path.isfile(path):
+            fd = os.open(path, os.O_RDWR | os.O_CREAT, mode=0o666)
+            os.posix_fallocate(fd, 0, size)
+            os.fchown(fd, -1, gr_gid)
+        else:   # Re-condition and re-use
+            STAT = os.path.stat         # for constants
+            lstat = os.lstat(path)
+            assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
+            assert lstat.st_size >= size, 'size is < 128k'
+            if lstat.st_gid != gr_gid:
+                print('Changing %s to group %s' % (path, gr_name))
+                os.chown(path, -1, gr_gid)
+            if lstat.st_mode & 0o660 != 0o660:  # at least
+                print('Changing %s to permissions 666' % path)
+                os.chmod(path, 0o666)
+            fd = os.open(path, os.O_RDWR)
+    except Exception as e:
+        raise SystemExit('Problem with %s: %s' % (path, str(e)))
+
+    os.umask(oldumask)
+    return fd
+
+###########################################################################
+# Normally the Endpoint and listen() call is done explicitly,
+# interwoven with passing this constructor.  This approach hides
+# all the twisted things in this module.
 
 class FactoryIVSHMSG(TIPFactory):
-    # Normally the Endpoint and listen() call is done explicitly,
-    # interwoven with passing this constructor.  This approach hides
-    # all the twisted things in this module.
 
     _required_arg_defaults = {
         'foreground':   True,       # Only affects logging choice in here
         'logfile':      '/tmp/ivshmem_log',
-        'mailbox':      '/dev/shm/ivshmem_mailbox',
+        'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
+        'mailbox_size': 262144,             # See _prepare_mailbox above
         'nVectors':     1,
         'silent':       True,       # Does NOT participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
@@ -214,6 +256,9 @@ class FactoryIVSHMSG(TIPFactory):
             args = argparse.Namespace()
         for arg, default in self._required_arg_defaults.items():
             setattr(args, arg, getattr(args, arg, default))
+        if not hasattr(args, 'mailbox_fd'):     # They could open it themselves
+            args.mailbox_fd = _prepare_mailbox(args.mailbox, args.mailbox_size)
+
         self.args = args
         if args.foreground:
             TPlog.startLogging(sys.stdout, setStdout=False)
@@ -221,7 +266,7 @@ class FactoryIVSHMSG(TIPFactory):
             print('Logging to %s' % args.logfile, file=sys.stderr)
             TPlog.startLogging(
                 DailyLogFile.fromFullPath(args.logfile),
-                setStdout=True)
+                setStdout=True)     # "Pass-through" explicit print() for debug
         args.logmsg = TPlog.msg
         args.logerr = TPlog.err
 
@@ -231,7 +276,7 @@ class FactoryIVSHMSG(TIPFactory):
         E = UNIXServerEndpoint(
             TIreactor,
             args.socketpath,
-            mode=0o666,
+            mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
         args.logmsg('Listening on %s' % args.socketpath)
