@@ -1,7 +1,8 @@
 ## FAME Background
 
-The Gen-Z situation (nothing but specifications, no hardware or software) is similar to the challenge faced with The Machine.
-The Machine consists of up to 40 nodes of an SoC running independent instances of Linux.  All nodes share a 160 TB fabric-attached memory (FAM) global address space via the Gen-Z precursor fabric.  Software to manage the FAM was being designed well in advance of hardware availability, and a suitable development platform was needed.  QEMU/KVM provided the basis for such a platform: a single node was represented by a single VM.  The QEMU feature Inter-VM Shared Memory (IVSHMEM) presents a file in the host operating system as physical address space in a VM.  If all VMs use the same backing store, you get ["Fabric-Attached Memory Emulation" or FAME](https://github.com/FabricAttachedMemory/Emulation).  That project also makes bootable disk images and configures a libvirt network to run a complete setup.
+The current Gen-Z situation is similar to the challenge faced with The Machine.  Actual hardware was many months away and the specifications were still mildly in flux.  However we wanted to start development on the system software required to manage the resources and that demanded a "suitable" development platform.
+
+The Machine consists of up to 40 nodes of an SoC running independent instances of Linux.  All nodes share a 160 TB fabric-attached memory (FAM) global address space via the Gen-Z precursor fabric.  QEMU/KVM provided the basis for a "suitable" development platform.  A single node can be represented by a single VM.  The QEMU feature Inter-VM Shared Memory (IVSHMEM) presents a file in the host operating system as physical address space in a VM.  If all VMs use the same backing store, you get ["Fabric-Attached Memory Emulation" or FAME](https://github.com/FabricAttachedMemory/Emulation).  That project also makes bootable disk images and configures a libvirt network to run a complete setup.
 
 ### QEMU Configuration under FAME
 
