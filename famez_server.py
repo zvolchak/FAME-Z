@@ -13,7 +13,7 @@ import sys
 
 from daemonize import Daemonize
 
-from ivshmsg_twisted import FactoryIVSHMSG
+from ivshmem_twisted.ivshmem_twisted import FactoryIVSHMSG
 
 ###########################################################################
 
@@ -116,7 +116,6 @@ def forever(cmdline_args=None):
         args.mailbox_fd = prepare_mailbox(args.mailbox)
     except Exception as e:
         raise SystemExit(str(e))
-    set_trace()
     if not args.foreground:
         raise NotImplementedError('Gotta run it in the foreground for now')
         if args.verbose:

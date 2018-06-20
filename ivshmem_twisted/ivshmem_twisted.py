@@ -6,6 +6,7 @@
 
 # Rocky Craig <rocky.craig@hpe.com>
 
+import argparse
 import sys
 
 from twisted.python import log as TPlog
@@ -19,8 +20,13 @@ from twisted.internet.endpoints import UNIXServerEndpoint
 from twisted.internet.protocol import Factory as TIPFactory
 from twisted.internet.protocol import Protocol as TIPProtocol
 
-from ivshmsg_sendrecv import ivshmem_send_one_msg
-from ivshmsg_eventfd import ivshmem_event_notifier_list, EventfdReader
+try:
+    from ivshmem_sendrecv import ivshmem_send_one_msg
+    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+except ImportError as e:
+    from .ivshmem_sendrecv import ivshmem_send_one_msg
+    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+
 
 class ProtocolIVSHMSG(TIPProtocol):
 
@@ -189,17 +195,25 @@ class FactoryIVSHMSG(TIPFactory):
     # all the twisted things in this module.
 
     _required_arg_defaults = {
-        'background':   True,       # Only affects logging choice
-        'logfile':      '/tmp/ivshmsg.log',
-        'mailbox':      'ivshmsg',  # Will become /dev/shm/<mailbox>
+        'foreground':   True,       # Only affects logging choice in here
+        'logfile':      '/tmp/ivshmem_log',
+        'mailbox':      '/dev/shm/ivshmem_mailbox',
+        'nVectors':     1,
         'silent':       True,       # Does NOT participate in eventfds/mailbox
-        'socketpath':   '/tmp/ivshmsg_socket',
+        'socketpath':   '/tmp/ivshmem_socket',
         'verbose':      0,
     }
 
-    def __init__(self, args):
+    def __init__(self, args=None):
+        '''Args must be an object with the following attributes:
+           foreground, logfile, mailbox, nVectors, silent, socketpath, verbose
+           Suitable defaults will be supplied.'''
 
         # Pass command line args to ProtocolIVSHMSG, then open logging.
+        if args is None:
+            args = argparse.Namespace()
+        for arg, default in self._required_arg_defaults.items():
+            setattr(args, arg, getattr(args, arg, default))
         self.args = args
         if args.foreground:
             TPlog.startLogging(sys.stdout, setStdout=False)
