@@ -212,12 +212,17 @@ class ProtocolIVSHMSG(TIPProtocol):
 def _prepare_mailbox(path, size=99999999999):     # Force an error if missing
     '''Starts with mailbox base name, returns an fd to open file.'''
 
-    oldumask = os.umask(0)
-    gr_name = 'libvirt-qemu'
+    gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
+    for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
+        try:
+            gr_gid = grp.getgrnam(gr_name).gr_gid
+            break
+        except Exception as e:
+            pass
     if '/' not in path:
         path = '/dev/shm/' + path
+    oldumask = os.umask(0)
     try:
-        gr_gid = grp.getgrnam(gr_name).gr_gid
         if not os.path.isfile(path):
             fd = os.open(path, os.O_RDWR | os.O_CREAT, mode=0o666)
             os.posix_fallocate(fd, 0, size)
@@ -227,7 +232,7 @@ def _prepare_mailbox(path, size=99999999999):     # Force an error if missing
             lstat = os.lstat(path)
             assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
             assert lstat.st_size >= size, 'size is < %d' % size
-            if lstat.st_gid != gr_gid:
+            if lstat.st_gid != gr_gid and gr_gid > 0:
                 print('Changing %s to group %s' % (path, gr_name))
                 os.chown(path, -1, gr_gid)
             if lstat.st_mode & 0o660 != 0o660:  # at least
