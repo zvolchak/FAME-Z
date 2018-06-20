@@ -8,6 +8,10 @@ QEMU has another feature of interest in a multi-actor messaging environment such
 
 The scheme starts with a separate program delivered with QEMU, [```/usr/bin/ivshmem-server. ivshmem-server```](https://www.google.com/search?newwindow=1&qivshmem-spec.txt) establishes a UNIX-domain socket and must be started before any properly-configured QEMU VMs.  As a QEMU process starts, it connects to the socket and is given its own set of event channels, as well as being advised of all other peers.  The idea is that each VM can issue messages through its PCI device which are delivered directly to another QEMU process as a Linux event.  The target QEMU turns that event into a PCI interrupt for its guest OS.  ```ivshmem-server``` only informs each QEMU of the other peers, it does not participate in further peer-to-peer communcation.  A backing file must also be specified during this scenario to be used as a mailbox for larger messages.
 
+![alt text][IVSHMSG]
+
+[IVSHMSG]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/IVSHMSG%20block.png "Figure 1"
+
 The configuration stanza used for IVSHMEM + IVSHMSG:
 ```
 -chardev socket,id=ZMSG,path=/tmp/ivshmsg_socket -device ivshmem-doorbell,chardev=ZMSG,vectors=4
@@ -30,11 +34,25 @@ Unfortunately [```ivshmem-server.c```](https://github.com/qemu/qemu/tree/master/
 
 This FAME-Z project started out as a rewrite of ivshmem-server in Python using Twisted as the network-handling framework.  ```famez_server.py``` is run in place of ```ivshmem-server```.  It correctly serves ```ivshmem-client``` as well as real QEMU processes.  A new feature over ```ivshmem-server``` is that ```famez_server``` can receive messages from clients.  I anticipate this will be needed to facilitate some of the Gen-Z messaging support.
 
+![alt text][IVSHMSG]
+
+[IVSHMSG]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/FAME-Z%20block.png "Figure 1"
+
 The intended first use of FAME-Z is support for the [Gen-Z Management Architecture Authoring Sub-Team (MAAST)](https://genz.causewaynow.com/wg/swmgmt/document/folder/100).  MAAST is providing a suggested reference procedure and architecture for Gen-Z discovery, configuration and management.  Once again a suitable platform for actual software development is lacking and FAME-Z could fill that void.
+
+## Running with ivshmem-client
+
+1. Install python3 packages daemonize and twisted.
+1. Install libvirt and qemu packages for your distribution.  These should also get /usr/bin/ivshmem-client.
+1. In one terminal window run './famez_server.py -v --nVectors 4'
+1. In a second and third terminal window run 'ivshmem-client -v -S /tmp/famez_socket'.  You'll see them get added in the server log output.  The server is always peer ID 0.
+1. In one of the clients, hit return, then type "help".  Play with sending interrupts to the other client or the server.
 
 ## TODO
 1. Write a simple kernel driver so a VM can receive IVSHMSG interrupts, test it with ivshmem-client.  This would actually be a Gen-Z bridge device.
 1. Extend the Gen-Z bridge IVSHMSG driver to generate messages to create interrupts on other clients (VMs or ivshmem-client).
 1. Rewrite ```ivshem-client.c``` in Python to easily extend its abilities as needed.
+1. Add command line input to famez_server.py to issue commands/messages.
 1. Extend the FAME-Z framework to handle Gen-Z abstractions.
+1. Write a proper setup.py for setuptools installer.
 1. ...ad infinitum
