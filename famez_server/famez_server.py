@@ -9,23 +9,30 @@
 import argparse
 import grp
 import os
-from os.path import stat as STAT
+import sys
 
-from pdb import set_trace
+from daemonize import Daemonize
 
 from ivshmsg_twisted import FactoryIVSHMSG
 
-def parse_cmdline():
-    '''Single-letter arguments reflect the QEMU "ivshmem-server".'''
+###########################################################################
+
+
+def parse_cmdline(cmdline_args):
+    '''cmdline_args does NOT lead with the program name.  Single-letter
+       arguments reflect the stock "ivshmem-server".'''
     parser = argparse.ArgumentParser(
         description='FAME-Z server files and vector counts',
         epilog='Options reflect those in the QEMU "ivshmem-server".'
     )
-
     parser.add_argument('-?', action='help')  # -h and --help are built in
     parser.add_argument('--foreground', '-F',
-        help='Run in foreground (default is background with logging to a file',
+        help='Run in foreground (default: background with logging to a file',
         action='store_true'
+    )
+    parser.add_argument('--logfile', '-L', metavar='<name>',
+        help='Pathname of logfile for use in daemon mode',
+        default='/tmp/ivshmsg.log'
     )
     parser.add_argument('--mailbox', '-M', metavar='<name>',
         help='Name of mailbox that exists in POSIX shared memory',
@@ -44,7 +51,7 @@ def parse_cmdline():
         default=0,
         action='count'
     )
-    args = parser.parse_args()   # Default: sys.argv
+    args = parser.parse_args(cmdline_args)
 
     # Idiot checking.
     args.nVectors = int(args.nVectors)
@@ -56,38 +63,64 @@ def parse_cmdline():
     # Mailbox is shared common area.  Each client gets 8k, max 15
     # clients, server area starts at zero, thus 128k.
     args.mailbox = '/dev/shm/' + args.mailbox
+    return args
+
+###########################################################################
+
+
+def prepare_mailbox(abspath):
+    '''Starts with mailbox file name, returns an fd to open file.'''
     oldumask = os.umask(0)
     gr_name = 'libvirt-qemu'
     try:
         gr_gid = grp.getgrnam(gr_name).gr_gid
-        if os.path.isfile(args.mailbox):
-            lstat = os.lstat(args.mailbox)
+        if not os.path.isfile(abspath):
+            fd = os.open(abspath, os.O_RDWR | os.O_CREAT, mode=0o666)
+            os.posix_fallocate(fd, 0, 131072)
+            os.fchown(fd, -1, gr_gid)
+        else:   # Re-condition and re-use
+            STAT = os.path.stat         # for constants
+            lstat = os.lstat(abspath)
             assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
             assert lstat.st_size >= 131072, 'size is < 128k'
             if lstat.st_gid != gr_gid:
-                print('Changing %s to group %s' % (args.mailbox, gr_name))
-                os.chown(args.mailbox, -1, gr_gid)
+                print('Changing %s to group %s' % (abspath, gr_name))
+                os.chown(abspath, -1, gr_gid)
             if lstat.st_mode & 0o660 != 0o660:  # at least
-                print('Changing %s to permissions 666' % args.mailbox)
-                os.chmod(args.mailbox, 0o666)
-            args.mailbox_fd = os.open(args.mailbox, os.O_RDWR)
-        else:
-            args.mailbox_fd = os.open(
-                args.mailbox, os.O_RDWR | os.O_CREAT, mode=0o666)
-            os.posix_fallocate(args.mailbox_fd, 0, 131072)
-            os.fchown(args.mailbox_fd, -1, gr_gid)
+                print('Changing %s to permissions 666' % abspath)
+                os.chmod(abspath, 0o666)
+            fd = os.open(abspath, os.O_RDWR)
     except Exception as e:
-        raise SystemExit('Problem with %s: %s' % (args.mailbox, str(e)))
+        raise SystemExit('Problem with %s: %s' % (abspath, str(e)))
 
     os.umask(oldumask)
-    return args
+    return fd
+
+###########################################################################
+# MAIN
+
+
+def forever(cmdline_args=None):
+    if cmdline_args is None:
+        cmdline_args = sys.argv[1:]  # When being explicit, strip prog name
+    try:
+        args = parse_cmdline(cmdline_args)
+        args.mailbox_fd = prepare_mailbox(args.mailbox)
+    except Exception as e:
+        raise SystemExit(str(e))
+    if not args.foreground:
+        raise NotImplementedError('Gotta run it in the foreground for now')
+        if args.verbose:
+            print(Daemonize.__doc__)    # The website is WRONG
+        d = Daemonize('famez_server', '/dev/null', None, auto_close_fds=None)
+        d.start()
+    server = FactoryIVSHMSG(args)
+    server.run()
+
+###########################################################################
 
 
 if __name__ == '__main__':
+    from pdb import set_trace
+    forever()
 
-    try:
-        args = parse_cmdline()
-    except Exception as e:
-        raise SystemExit(str(e))
-    server = FactoryIVSHMSG(args)
-    server.run()

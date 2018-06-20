@@ -25,8 +25,8 @@ from ivshmsg_eventfd import ivshmem_event_notifier_list, EventfdReader
 class ProtocolIVSHMSG(TIPProtocol):
 
     # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
-    # qemu/contrib/ishmem-server.c::ivshmem_server_handle_new_conn() calling
-    # qemu/contrib/ishmem-server.c::ivshmem_server_send_initial_info(), then
+    # qemu/contrib/ivshmem-server.c::ivshmem_server_handle_new_conn() calling
+    # qemu/contrib/ivshmem-server.c::ivshmem_server_send_initial_info(), then
     # qemu/contrib/ivshmem-client.c::ivshmem_client_connect()
 
     IVSHMEM_PROTOCOL_VERSION = 0
@@ -185,9 +185,9 @@ class FactoryIVSHMSG(TIPFactory):
         if args.foreground:
             TPlog.startLogging(sys.stdout, setStdout=False)
         else:
-            logfile = '%s.log' % args.socketpath
-            print('Logging to %s' % logfile, file=sys.stderr)
-            TPlog.startLogging( DailyLogFile.fromFullPath(logfile),
+            print('Logging to %s' % args.logfile, file=sys.stderr)
+            TPlog.startLogging(
+                DailyLogFile.fromFullPath(args.logfile),
                 setStdout=True)
         args.logmsg = TPlog.msg
         args.logerr = TPlog.err
