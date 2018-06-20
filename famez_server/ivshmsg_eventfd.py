@@ -4,7 +4,7 @@
 # (at your option) any later version.  See the LICENSE file in the
 # top-level directory.
 
-# Rocky Craig <rjsnoose@gmail.com>
+# Rocky Craig <rocky.craig@hpe.com>
 
 # Routine names here mirror those in qemu/contrib/ivshmem-[client|server].
 # The IVSHMEM communications protocol is based on 8-byte integers and an
@@ -66,14 +66,16 @@ class IVSHMEM_Event_Notifier(object):  # Probably overkill
         while True:
             try:
                 junk = os.read(self.rfd, 8)    # reset
-                return len(junk) == 8
+                if len(junk) == 8:
+                    return True, struct.unpack('Q', junk)
+                return False, None
             except InterruptedError as e:      # handled interally at 3.5
                 continue
             except OSError as e:
                 if e.errno == errno.EINTR:
                     continue
                 if e.errno == errno.EAGAIN: # would block
-                    return False
+                    return False, None
                 raise
 
     def get_fd(self):   # I'd love to hear this story...
@@ -101,6 +103,7 @@ class EventfdReader(object):
     def __init__(self, eventobj, callback):
         assert isinstance(eventobj, IVSHMEM_Event_Notifier), 'Bad object'
         self.eventobj = eventobj
+        self.eventobj.last_value = None
         self.callback = callback
 
     def fileno(self):
@@ -110,8 +113,9 @@ class EventfdReader(object):
         return 'ServerEvent%d' % self.fileno()
 
     def doRead(self):
-        fired = self.eventobj.reset()
+        fired, value = self.eventobj.reset()
         if fired:
+            self.eventobj.last_value = value
             self.callback(self.eventobj)
 
     def connectionLost(self, reason):

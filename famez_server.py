@@ -4,7 +4,7 @@
 # (at your option) any later version.  See the LICENSE file in the
 # top-level directory.
 
-# Rocky Craig <rjsnoose@gmail.com>
+# Rocky Craig <rocky.craig@hpe.com>
 
 import argparse
 import grp
@@ -26,25 +26,33 @@ def parse_cmdline(cmdline_args):
         epilog='Options reflect those in the QEMU "ivshmem-server".'
     )
     parser.add_argument('-?', action='help')  # -h and --help are built in
-    parser.add_argument('--foreground', '-F',
-        help='Run in foreground (default: background with logging to a file',
-        action='store_true'
+    parser.add_argument('--daemon', '-D',
+        help='Run in background, log to file (default: foreground/stdout)',
+        # The twisted module expectes the attribute 'foreground'...
+        dest='foreground',
+        action='store_false',   # ...so reverse the polarity, Scotty
+        default=True
     )
     parser.add_argument('--logfile', '-L', metavar='<name>',
         help='Pathname of logfile for use in daemon mode',
-        default='/tmp/ivshmsg.log'
+        default='/tmp/famez_log'
     )
     parser.add_argument('--mailbox', '-M', metavar='<name>',
         help='Name of mailbox that exists in POSIX shared memory',
-        default='ivshmsg_mailbox'
+        default='famez_mailbox'
     )
     parser.add_argument('--nVectors', '-n', metavar='<integer>',
         help='Number of interrupt vectors per client (8 max)',
-        default=1
+        default=4
+    )
+    parser.add_argument('--silent', '-s',
+        help='Do NOT participate in EventFDs as another peer',
+        action='store_true',
+        default=False
     )
     parser.add_argument('--socketpath', '-S', metavar='/path/to/socket',
         help='Absolute path to UNIX domain socket (will be created)',
-        default='/tmp/ivshmsg_socket'
+        default='/tmp/famez_socket'
     )
     parser.add_argument('--verbose', '-v',
         help='Specify multiple times to increase verbosity',
@@ -108,6 +116,7 @@ def forever(cmdline_args=None):
         args.mailbox_fd = prepare_mailbox(args.mailbox)
     except Exception as e:
         raise SystemExit(str(e))
+    set_trace()
     if not args.foreground:
         raise NotImplementedError('Gotta run it in the foreground for now')
         if args.verbose:

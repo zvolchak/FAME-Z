@@ -4,7 +4,7 @@
 # (at your option) any later version.  See the LICENSE file in the
 # top-level directory.
 
-# Rocky Craig <rjsnoose@gmail.com>
+# Rocky Craig <rocky.craig@hpe.com>
 
 # Routine names here mirror those in qemu/contrib/ivshmem-[client|server].
 # The IVSHMEM communications protocol is based on 8-byte integers and an

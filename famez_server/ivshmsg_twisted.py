@@ -4,7 +4,7 @@
 # (at your option) any later version.  See the LICENSE file in the
 # top-level directory.
 
-# Rocky Craig <rjsnoose@gmail.com>
+# Rocky Craig <rocky.craig@hpe.com>
 
 import sys
 
@@ -43,16 +43,25 @@ class ProtocolIVSHMSG(TIPProtocol):
     FAMEZ_SERVER_ID = 4242
 
     def __init__(self, factory):
-        if self.args is None:           # Do all the singletons
+        # First do class-level initialization of singletons
+        if self.args is None:
             assert isinstance(factory, TIPFactory), 'arg0 not my Factory'
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
             self.__class__.famez_vectors = ivshmem_event_notifier_list(10)
+
+            # Create eventfds for receiving messages in IVSHMEM fashion
+            # then add a callback.  The object right now is the eventfd
+            # itself, don't send "self" because this is destined to
+            # be a true peer object.  Pad out the eventfd object with
+            # attributes to assist the callback.
             for i, famez_vector in enumerate(self.famez_vectors):
                 famez_vector.num = i
                 famez_vector.logmsg = self.logmsg   # work on this...
                 tmp = EventfdReader(famez_vector, self.ERcallback).start()
+
+        # Finish with the actual instance attributes
         self.create_new_peer_id()
 
     def logPrefix(self):    # This override works after instantiation
@@ -170,15 +179,25 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     @staticmethod
     def ERcallback(vectorobj):
-        vectorobj.logmsg('CALLBACK %d' % vectorobj.num)
+        peer_id = 43
+        vectorobj.logmsg('CALLBACK %d peer %d' % (vectorobj.num, peer_id))
 
 
 class FactoryIVSHMSG(TIPFactory):
+    # Normally the Endpoint and listen() call is done explicitly,
+    # interwoven with passing this constructor.  This approach hides
+    # all the twisted things in this module.
+
+    _required_arg_defaults = {
+        'background':   True,       # Only affects logging choice
+        'logfile':      '/tmp/ivshmsg.log',
+        'mailbox':      'ivshmsg',  # Will become /dev/shm/<mailbox>
+        'silent':       True,       # Does NOT participate in eventfds/mailbox
+        'socketpath':   '/tmp/ivshmsg_socket',
+        'verbose':      0,
+    }
 
     def __init__(self, args):
-        '''Normally the Endpoint and listen() call is done explicitly,
-           interwoven with passing this constructor.  This approach hides
-           all the twisted things in this module.'''
 
         # Pass command line args to ProtocolIVSHMSG, then open logging.
         self.args = args
