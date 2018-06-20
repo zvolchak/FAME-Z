@@ -4,6 +4,11 @@ The current Gen-Z situation is similar to the challenge faced with The Machine. 
 
 The Machine consists of up to 40 nodes of an SoC running independent instances of Linux.  All nodes share a 160 TB fabric-attached memory (FAM) global address space via the Gen-Z precursor fabric.  QEMU/KVM provided the basis for a "suitable" development platform.  A single node can be represented by a single VM.  The QEMU feature Inter-VM Shared Memory (IVSHMEM) presents a file in the host operating system as physical address space in a VM.  If all VMs use the same backing store, you get ["Fabric-Attached Memory Emulation" or FAME](https://github.com/FabricAttachedMemory/Emulation).  That project also makes bootable disk images and configures a libvirt network to run a complete setup.
 
+![alt text][IVSHMEM]
+
+[IVSHMEM]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/IVSHMEM%20block.png "Figure 1"
+
+
 ### QEMU Configuration under FAME
 
 When QEMU is invoked with an IVSHMEM configuration, a new PCI device appears in the VM.  The size/space of the file is represented as physical address space behind BAR2 of that device.  To configure a VM for IVSHMEM/FAME, first allocate the file somewhere (such as /home/rocky/FAME/FAM of 32G), then start QEMU with the added stanza
