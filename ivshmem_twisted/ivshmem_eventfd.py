@@ -110,7 +110,7 @@ class EventfdReader(object):
         return self.eventobj.get_fd()   # Might as well use it
 
     def  logPrefix(self):
-        return 'ServerEvent%d' % self.fileno()
+        return 'ServerEvent@%d' % self.fileno()
 
     def doRead(self):
         fired, value = self.eventobj.reset()

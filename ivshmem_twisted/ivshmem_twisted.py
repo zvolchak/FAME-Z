@@ -29,6 +29,10 @@ except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
+MAX_CLIENTS = 63      # Add one for the server and be a power of two
+
+###########################################################################
+
 
 class ProtocolIVSHMSG(TIPProtocol):
 
@@ -39,16 +43,15 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     IVSHMEM_PROTOCOL_VERSION = 0
 
-    next_peer_id = 1   # Docs say zero okay, not my experience
-    peer_list = []     # Map transport fds to list of eventfds
     args = None        # Invariant across instances
     logmsg = None
     logerr = None
-    # Non-standard addition to IVSHMEM protocol: this server can be
-    # interrupted and messaged, and here is where the Gen-Z magic
-    # will occur.
-    famez_vectors = None
-    FAMEZ_SERVER_ID = 4242
+    peer_list = []     # Map transport fds to list of eventfds
+
+    # Non-standard addition to IVSHMEM server role: this server can be
+    # interrupted and messaged to particpate in client activity.
+    IVSHMEM_SERVER_ID = 0
+    server_vectors = None
 
     def __init__(self, factory):
         # First do class-level initialization of singletons
@@ -57,19 +60,20 @@ class ProtocolIVSHMSG(TIPProtocol):
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
-            self.__class__.famez_vectors = ivshmem_event_notifier_list(10)
+            self.__class__.server_vectors = ivshmem_event_notifier_list(10)
 
-            # Create eventfds for receiving messages in IVSHMEM fashion
-            # then add a callback.  The object right now is the eventfd
-            # itself, don't send "self" because this is destined to
-            # be a true peer object.  Pad out the eventfd object with
-            # attributes to assist the callback.
-            for i, famez_vector in enumerate(self.famez_vectors):
-                famez_vector.num = i
-                famez_vector.logmsg = self.logmsg   # work on this...
-                tmp = EventfdReader(famez_vector, self.ERcallback).start()
+            if not self.args.silent:
+                # Create eventfds for receiving messages in IVSHMEM fashion
+                # then add a callback.  The object right now is the eventfd
+                # itself, don't send "self" because this is destined to
+                # be a true peer object.  Pad out the eventfd object with
+                # attributes to assist the callback.
+                for i, server_vector in enumerate(self.server_vectors):
+                    server_vector.num = i
+                    server_vector.logmsg = self.logmsg   # work on this...
+                    tmp = EventfdReader(server_vector, self.ERcallback).start()
 
-        # Finish with the actual instance attributes
+        # Finish with any actual instance attributes.
         self.create_new_peer_id()
 
     def logPrefix(self):    # This override works after instantiation
@@ -87,9 +91,10 @@ class ProtocolIVSHMSG(TIPProtocol):
         # Introduce variables that resemble the QEMU "ivshmem-server" code.
         peer = self
         server_peer_list = self.peer_list
-        if len(server_peer_list) > 15:   # cuz server makes 16
-            self.logerr('Max clients reached (15)')
-            peer.send_initial_info(False)
+
+        if len(server_peer_list) >= MAX_CLIENTS or self.id == -1:
+            self.logerr('Max clients reached (%d)' % MAX_CLIENTS)
+            peer.send_initial_info(False)   # client complains but with grace
             return
 
         # Server line 175: create specified number of eventfds, mixed with
@@ -120,13 +125,13 @@ class ProtocolIVSHMSG(TIPProtocol):
                     other_peer.id,
                     other_peer_vector.wfd)
 
-        # Non-standard voodoo: advertise this server to the new one.
-        if True:
-            for famez_vector in self.famez_vectors:
+        # Non-standard voodoo: advertise me (this server) to the new peer.
+        if not self.args.silent:
+            for server_vector in self.server_vectors:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
-                    self.FAMEZ_SERVER_ID,
-                    famez_vector.wfd)
+                    self.IVSHMEM_SERVER_ID,
+                    server_vector.wfd)
 
         # Server line 205: advertise the new peer to itself
         for peer_vector in peer.vectors:
@@ -160,9 +165,17 @@ class ProtocolIVSHMSG(TIPProtocol):
             self.logerr('Closing peer transports failed: %s' % str(e))
 
     def create_new_peer_id(self):
-        '''These tend to stay well below FAMEZ_SERVER_ID.'''
-        self.id = self.next_peer_id
-        self.__class__.next_peer_id += 1
+        '''Does not occur often, don't sweat the performance.'''
+        if len(self.peer_list) >= MAX_CLIENTS:
+            self.id = -1    # sentinel
+            return
+        current_ids = frozenset((p.id for p in self.peer_list))
+        if not current_ids:
+            self.id = 1
+            return
+        max_ids = frozenset((range(MAX_CLIENTS))) - \
+                  frozenset((self.IVSHMEM_SERVER_ID, ))
+        self.id = sorted(max_ids - current_ids)[0]
 
     def send_initial_info(self, ok=True):
         # Server line 103 and client line 210:
@@ -187,8 +200,7 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     @staticmethod
     def ERcallback(vectorobj):
-        peer_id = 43
-        vectorobj.logmsg('CALLBACK %d peer %d' % (vectorobj.num, peer_id))
+        vectorobj.logmsg('CALLBACK %d' % (vectorobj.num))
 
 ###########################################################################
 # The IVSHMEM protocol practiced by QEMU demands a memory-mappable file
@@ -197,7 +209,7 @@ class ProtocolIVSHMSG(TIPProtocol):
 # 31 extra clients after server area which starts at zero, thus 256k.
 
 
-def _prepare_mailbox(path, size=262144):
+def _prepare_mailbox(path, size=99999999999):     # Force an error if missing
     '''Starts with mailbox base name, returns an fd to open file.'''
 
     oldumask = os.umask(0)
@@ -214,7 +226,7 @@ def _prepare_mailbox(path, size=262144):
             STAT = os.path.stat         # for constants
             lstat = os.lstat(path)
             assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
-            assert lstat.st_size >= size, 'size is < 128k'
+            assert lstat.st_size >= size, 'size is < %d' % size
             if lstat.st_gid != gr_gid:
                 print('Changing %s to group %s' % (path, gr_name))
                 os.chown(path, -1, gr_gid)
@@ -239,7 +251,7 @@ class FactoryIVSHMSG(TIPFactory):
         'foreground':   True,       # Only affects logging choice in here
         'logfile':      '/tmp/ivshmem_log',
         'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
-        'mailbox_size': 262144,             # See _prepare_mailbox above
+        'mailbox_size': 8192 * (MAX_CLIENTS + 1),  # See _prepare_mailbox above
         'nVectors':     1,
         'silent':       True,       # Does NOT participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
