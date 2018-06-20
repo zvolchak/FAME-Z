@@ -34,9 +34,9 @@ Unfortunately [```ivshmem-server.c```](https://github.com/qemu/qemu/tree/master/
 
 This FAME-Z project started out as a rewrite of ivshmem-server in Python using Twisted as the network-handling framework.  ```famez_server.py``` is run in place of ```ivshmem-server```.  It correctly serves ```ivshmem-client``` as well as real QEMU processes.  A new feature over ```ivshmem-server``` is that ```famez_server``` can receive messages from clients.  I anticipate this will be needed to facilitate some of the Gen-Z messaging support.
 
-![alt text][IVSHMSG]
+![alt text][FAME-Z]
 
-[IVSHMSG]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/FAME-Z%20block.png "Figure 1"
+[FAME-Z]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/FAME-Z%20block.png "Figure 2"
 
 The intended first use of FAME-Z is support for the [Gen-Z Management Architecture Authoring Sub-Team (MAAST)](https://genz.causewaynow.com/wg/swmgmt/document/folder/100).  MAAST is providing a suggested reference procedure and architecture for Gen-Z discovery, configuration and management.  Once again a suitable platform for actual software development is lacking and FAME-Z could fill that void.
 
@@ -47,6 +47,8 @@ The intended first use of FAME-Z is support for the [Gen-Z Management Architectu
 1. In one terminal window run './famez_server.py -v --nVectors 4'
 1. In a second and third terminal window run 'ivshmem-client -v -S /tmp/famez_socket'.  You'll see them get added in the server log output.  The server is always peer ID 0.
 1. In one of the clients, hit return, then type "help".  Play with sending interrupts to the other client or the server.
+
+Building a QEMU image is beyond the scope of this project.  The FAME project mentioned previously is a great place to accomplish that.
 
 ## TODO
 1. Write a simple kernel driver so a VM can receive IVSHMSG interrupts, test it with ivshmem-client.  This would actually be a Gen-Z bridge device.
