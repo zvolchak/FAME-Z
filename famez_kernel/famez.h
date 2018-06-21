@@ -40,6 +40,13 @@
 #define STREQ(s1, s2) (!strcmp(s1, s2))
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
+struct bar0 {
+	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
+			Rev1Reserved2,	// Rev 0: Interrupt status
+			IVPosition,	// My peer id
+			Doorbell;
+};
+
 struct famez_configuration {
 	struct pci_dev *pci_dev;
 	struct resource *res_registers, *res_mailbox;	// convenience

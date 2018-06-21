@@ -8,7 +8,7 @@
 
 int famez_getconfig(struct famez_configuration *config)
 {
-	struct pci_dev *dev_famez;
+	struct pci_dev *dev_famez = NULL;
 	struct resource *bar1, *bar2 = NULL;
 
 	memset(config, 0, sizeof(*config));
@@ -19,11 +19,11 @@ int famez_getconfig(struct famez_configuration *config)
 
 	// Find the first one with two BARs.  There should be only one.
 	while ((dev_famez = pci_get_device(
-			IVSHMEM_VENDOR, IVSHMEM_DEVICE, NULL))) {
+			IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev_famez))) {
 
 		bar1 = &(dev_famez->resource[1]);
 		bar2 = &(dev_famez->resource[2]);
-		if (!bar1->start) {
+		if (!bar1->start || dev_famez->revision != 1) {
 			pr_info("Skipping an IVSHMEM %s\n", bar1->name);
 			continue;
 		}
