@@ -43,13 +43,19 @@
 struct famez_configuration {
 	struct pci_dev *pci_dev;
 	struct resource *res_registers, *res_mailbox;	// convenience
-	void *registers, *mailbox			// after mapping
+	void *registers, *mailbox;			// after mapping
 };
 
 //-------------------------------------------------------------------------
 // famez_base.c - globals from insmod parameters, then routines
 
 extern int famez_verbose;
+
+//-------------------------------------------------------------------------
+// famez_config.c - early setup and late teardown of things
+
+int famez_getconfig(struct famez_configuration *config);
+void famez_unconfig(struct famez_configuration *config);
 
 //-------------------------------------------------------------------------
 // During callgraph generation, "flipping" these values will create a
