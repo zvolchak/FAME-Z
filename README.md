@@ -44,8 +44,8 @@ The intended first use of FAME-Z is support for the [Gen-Z Management Architectu
 
 1. Install python3 packages daemonize and twisted.
 1. Install libvirt and qemu packages for your distribution.  These should also get /usr/bin/ivshmem-client.
-1. In one terminal window run './famez_server.py -v --nVectors 4'
-1. In a second and third terminal window run 'ivshmem-client -v -S /tmp/famez_socket'.  You'll see them get added in the server log output.  The server is always peer ID 0.
+1. In one terminal window run './famez_server.py'.  The server is peer ID zero.  You can run 'famez_server.py --help' for an option synopsis.
+1. In a second and third terminal window run 'ivshmem-client -v -S /tmp/famez_socket'.  You'll see them get added in the server log output.
 1. In one of the clients, hit return, then type "help".  Play with sending interrupts to the other client or the server.
 
 Building a QEMU image is beyond the scope of this project.  The FAME project mentioned previously is a great place to accomplish that.
