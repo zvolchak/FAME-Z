@@ -10,7 +10,7 @@
 #define IVSHMEM_DEVICE	0x1110
 
 // When stable, git commit, then git tag, then commit again (for the tag)
-#define FAMEZ_VERSION	"famez git version v0.6: doesn't even compile"
+#define FAMEZ_VERSION	"famez git version v0.6: no interrupts"
 
 #include <linux/delay.h>
 #include <linux/mmzone.h>
@@ -44,11 +44,12 @@ struct bar0 {
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
 			Rev1Reserved2,	// Rev 0: Interrupt status
 			IVPosition,	// My peer id
-			Doorbell;
+			Doorbell;	// Upper and lower half
 };
 
 struct famez_configuration {
 	struct pci_dev *pci_dev;
+	struct bar0 *bar0;
 	struct resource *res_registers, *res_mailbox;	// convenience
 	void *registers, *mailbox;			// after mapping
 };

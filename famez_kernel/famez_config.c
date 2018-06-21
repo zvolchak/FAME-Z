@@ -31,15 +31,16 @@ int famez_getconfig(struct famez_configuration *config)
 	}
 	if (!dev_famez)
 		return -ENODEV;
-
 	pci_dev_put(dev_famez);
 
+	pr_info("Keeping the IVSHMEM %s\n", bar1->name);
 	pr_info("       FAME-Z control  = 0x%llx - 0x%llx\n",
 		bar1->start, bar1->end);
 	pr_info("       FAME-Z mailbox  = 0x%llx - 0x%llx\n",
 		bar2->start, bar2->end);
 
 	config->pci_dev = dev_famez;
+	config->bar0 = &(dev_famez->resource[0];
 	config->res_registers = bar1;
 	config->res_mailbox = bar2;
 
