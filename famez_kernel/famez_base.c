@@ -17,11 +17,14 @@ int famez_verbose = 0;
 module_param(famez_verbose, int, S_IRUGO);
 MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 
+static struct famez_configuration famez_single;	// as opposed to list_head
+
 //-------------------------------------------------------------------------
 
 STATIC int famez_getconfig(struct famez_configuration *config)
 {
-	struct pci_dev *dev_ivshmem;
+	struct pci_dev *dev_famez;
+	struct resource *bar1, *bar2 = NULL;
 
 	memset(config, 0, sizeof(*config));
 
@@ -32,35 +35,43 @@ STATIC int famez_getconfig(struct famez_configuration *config)
 	pr_info("       famez_verbose = %d\n", famez_verbose);
 
 	// Find the first one with two BARs.  There should be only one.
-	while ((dev_ivshmem = pci_get_device(
+	while ((dev_famez = pci_get_device(
 			IVSHMEM_VENDOR, IVSHMEM_DEVICE, NULL))) {
-		struct resource *bar1, *bar2 = NULL;
 
-		if (!(dev_ivshmem->resource[1])) {
-			pr_info("Skipping an IVSHMEM\n");
+		bar1 = &(dev_famez->resource[1]);
+		bar2 = &(dev_famez->resource[2]);
+		if (!bar1->start) {
+			pr_info("Skipping an IVSHMEM %s\n", bar1->name);
 			continue;
 		}
-
-		bar1 = &(dev_ivshmem->resource[1]);
-		bar2 = &(dev_ivshmem->resource[2]);
-		pr_info("     ivshmem           = 0x%llx - 0x%llx\n",
-			bar1->start, bar1->end);
-		pr_info("     ivshmem           = 0x%llx - 0x%llx\n",
-			bar2->start, bar2->end);
-		
-		pci_dev_put(dev_ivshmem);
-
-		// config->basePHY = bar2->start;
-		// config->basePFN = config->basePHY >> PAGE_SHIFT;
-		// config->nbytes = (bar2->end - bar2->start + 1) & SECTION_MASK;
-		return 0;
+		break;
 	}
-	return -ENODEV;
+	if (!dev_famez)
+		return -ENODEV;
+
+	pci_dev_put(dev_famez);
+
+	pr_info("     FAME-Z control  = 0x%llx - 0x%llx\n",
+		bar1->start, bar1->end);
+	pr_info("     FAME-Z mailbox  = 0x%llx - 0x%llx\n",
+		bar2->start, bar2->end);
+
+	config->pci_dev = dev_famez;
+	config->res_registers = bar1;
+	config->res_mailbox = bar2;
+
+	// TODO: map the regions, set the interrupt handler.
+
+	return 0;
 }
 
 //-------------------------------------------------------------------------
 
-static struct famez_configuration famez_single;	// as opposed to list_head
+STATIC void famez_unconfig(struct famez_configuration *config)
+{
+}
+
+//-------------------------------------------------------------------------
 
 int famez_init(void)
 {
@@ -68,24 +79,15 @@ int famez_init(void)
 
 	if ((ret = famez_getconfig(&famez_single)))
 		return ret;
-	if (!famez_single.basePHY) {
-		pr_info("r2h: no memory discovered or specified\n");
-		goto done;
-	}
-	famez_check_reservations(&famez_single); // After I have a config
 
-	if ((ret = famez_memory_map(&famez_single)))
-		return ret;
-
-done:	
-	pr_info("r2h: initialization complete, refcount is %d\n",
+	pr_info("famez: initialization complete, refcount is %d\n",
 		module_refcount(THIS_MODULE));
 	return 0;
 }
 
 NOINLINE void famez_exit(void)
 {
-	famez_memory_unmap(&famez_single);
+	famez_unconfig(&famez_single);
 	PR_EXIT(FAMEZ_NAME " has been unloaded\n");
 }
 

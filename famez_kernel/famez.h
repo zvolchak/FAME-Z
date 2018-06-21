@@ -37,6 +37,21 @@
 
 #define PR_SLEEPMS(_txt, _ms) { pr_info("r2h: " _txt); msleep(_ms); }
 
+#define STREQ(s1, s2) (!strcmp(s1, s2))
+#define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
+
+struct famez_configuration {
+	struct pci_dev *pci_dev;
+	struct resource *res_registers, *res_mailbox;	// convenience
+	void *registers, *mailbox			// after mapping
+};
+
+//-------------------------------------------------------------------------
+// famez_base.c - globals from insmod parameters, then routines
+
+extern int famez_verbose;
+
+//-------------------------------------------------------------------------
 // During callgraph generation, "flipping" these values will create a
 // more detailed map.  Otherwise use normal/idiot-proofing/performant values.
 
@@ -47,19 +62,5 @@
 #define STATIC		static
 #define NOINLINE
 #endif
-
-#define STREQ(s1, s2) (!strcmp(s1, s2))
-#define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
-
-struct famez_configuration {
-	u64 basePHY, basePFN, nbytes;
-	void *ioremapped;
-	struct resource *bar1, *bar2;
-};
-
-//-------------------------------------------------------------------------
-// famez_base.c - globals from insmod parameters, then routines
-
-extern int famez_verbose;
 
 #endif
