@@ -29,7 +29,13 @@ except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
-MAX_CLIENTS = 63      # Add one for the server and be a power of two
+# Don't use ID 0, certain documentation implies it's reserved.  Put the
+# server ID at the top of the list, and insure the sum is a power of two.
+
+IVSHMEM_PEER_SLOTS = 64                         # There's the power of two
+IVSHMEM_UNUSED_ID = 0                           # That's one
+IVSHMEM_SERVER_ID = IVSHMEM_PEER_SLOTS - 1      # That's two
+IVSHMEM_MAX_CLIENTS = IVSHMEM_PEER_SLOTS - 2    # That's the rest
 
 ###########################################################################
 
@@ -50,7 +56,6 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     # Non-standard addition to IVSHMEM server role: this server can be
     # interrupted and messaged to particpate in client activity.
-    IVSHMEM_SERVER_ID = 0
     server_vectors = None
 
     def __init__(self, factory):
@@ -92,8 +97,8 @@ class ProtocolIVSHMSG(TIPProtocol):
         peer = self
         server_peer_list = self.peer_list
 
-        if len(server_peer_list) >= MAX_CLIENTS or self.id == -1:
-            self.logerr('Max clients reached (%d)' % MAX_CLIENTS)
+        if len(server_peer_list) >= IVSHMEM_MAX_CLIENTS or self.id == -1:
+            self.logerr('Max clients reached (%d)' % IVSHMEM_MAX_CLIENTS)
             peer.send_initial_info(False)   # client complains but with grace
             return
 
@@ -130,7 +135,7 @@ class ProtocolIVSHMSG(TIPProtocol):
             for server_vector in self.server_vectors:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
-                    self.IVSHMEM_SERVER_ID,
+                    IVSHMEM_SERVER_ID,
                     server_vector.wfd)
 
         # Server line 205: advertise the new peer to itself
@@ -166,15 +171,15 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     def create_new_peer_id(self):
         '''Does not occur often, don't sweat the performance.'''
-        if len(self.peer_list) >= MAX_CLIENTS:
+        if len(self.peer_list) >= IVSHMEM_MAX_CLIENTS:
             self.id = -1    # sentinel
             return
         current_ids = frozenset((p.id for p in self.peer_list))
         if not current_ids:
             self.id = 1
             return
-        max_ids = frozenset((range(MAX_CLIENTS))) - \
-                  frozenset((self.IVSHMEM_SERVER_ID, ))
+        max_ids = frozenset((range(IVSHMEM_PEER_SLOTS))) - \
+                  frozenset((IVSHMEM_UNUSED_ID, IVSHMEM_SERVER_ID ))
         self.id = sorted(max_ids - current_ids)[0]
 
     def send_initial_info(self, ok=True):
@@ -256,7 +261,7 @@ class FactoryIVSHMSG(TIPFactory):
         'foreground':   True,       # Only affects logging choice in here
         'logfile':      '/tmp/ivshmem_log',
         'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
-        'mailbox_size': 8192 * (MAX_CLIENTS + 1),  # See _prepare_mailbox above
+        'mailbox_size': 8192 * (IVSHMEM_PEER_SLOTS),  # See _prepare_mailbox
         'nVectors':     1,
         'silent':       True,       # Does NOT participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
