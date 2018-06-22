@@ -41,7 +41,9 @@ int famez_config(struct famez_configuration *config)
 	pr_info(FZSP "MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
 	pr_info(FZSP "mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
 
-	// Map the regions and overlay data structures
+	// Map the regions and overlay data structures.  Since it's QEMU,
+	// ioremap (uncached) for BAR0/1 and ioremap_cached(BAR2) would be
+	// fine.  However, do it with proscribed calls here.
 
 	ret = -ENOMEM;
 	if (!(config->regs = pci_iomap(dev_famez, 0, 0))) {
@@ -53,11 +55,11 @@ int famez_config(struct famez_configuration *config)
 		goto undo_regs;
 	}
 	// if (!(config->mbox = ioremap_cache(
-		// bar2->start, bar2->start - bar2->end + 1))) {
+		// bar2->start, bar2->end - bar2->start + 1))) {
 	if (!(config->mbox = pci_iomap(dev_famez, 2, 0))) {
-			pr_err(FZ "can't map memory for mailxbox\n");
-			goto undo_msix;
-		}
+		pr_err(FZ "can't map memory for mailxbox\n");
+		goto undo_msix;
+	}
 
 	// Docs for pci_iomap() say to use pci_ioread/write, but since
 	// this is QEMU, a direct memory reference should work.
@@ -71,7 +73,7 @@ int famez_config(struct famez_configuration *config)
 
 	iowrite32(5 << 16, &config->regs->Doorbell);
 	config->regs->Doorbell = 5;
-	// strcpy(config->mbox->mbox, "Hello");
+	strcpy(config->mbox->mbox, "Hello Kitty");
 
 	// TODO: set the interrupt handler.
 
