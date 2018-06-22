@@ -12,9 +12,6 @@ MODULE_AUTHOR("Rocky Craig <rocky.craig@hpe.com>");
 MODULE_DESCRIPTION("Simple driver to wiggle interrupts for FAME-Z project.");
 
 // module parameters are global
-int famez_max_clients = 63;		// must be one less than a power of 2
-module_param(famez_max_clients, int, S_IRUGO);
-MODULE_PARM_DESC(famez_max_clients, "max number of clients (63)");
 
 int famez_verbose = 0;
 module_param(famez_verbose, int, S_IRUGO);
