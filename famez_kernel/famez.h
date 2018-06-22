@@ -46,7 +46,7 @@ struct ivshmem_BAR1_msi_x_msi_pba {
 };
 
 struct ivshmem_BAR2_famez_mailbox {
-	uint32_t junk;
+	char *mbox;
 };
 
 struct famez_configuration {

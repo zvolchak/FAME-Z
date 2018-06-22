@@ -34,7 +34,6 @@ int famez_config(struct famez_configuration *config)
 		return -ENODEV;
 	
 	pr_info(FZ "keeping the IVSHMEM @ %s\n", bar1->name);
-	pci_dev_get(dev_famez);
 
 	bar0 = &(dev_famez->resource[0]);
 	bar2 = &(dev_famez->resource[2]);
@@ -45,12 +44,20 @@ int famez_config(struct famez_configuration *config)
 	// Map the regions and overlay data structures
 
 	ret = -ENOMEM;
-	if (!(config->regs = pci_iomap(dev_famez, 0, 0)))
+	if (!(config->regs = pci_iomap(dev_famez, 0, 0))) {
+		pr_err(FZ "can't map memory for registers\n");
 		goto putitback;
-	if (!(config->msix = pci_iomap(dev_famez, 1, 0)))
+	}
+	if (!(config->msix = pci_iomap(dev_famez, 1, 0))) {
+		pr_err(FZ "can't map memory for MSI-X\n");
 		goto undo_regs;
-	if (!(config->mbox = pci_iomap(dev_famez, 2, 0)))
-		goto undo_msix;
+	}
+	// if (!(config->mbox = ioremap_cache(
+		// bar2->start, bar2->start - bar2->end + 1))) {
+	if (!(config->mbox = pci_iomap(dev_famez, 2, 0))) {
+			pr_err(FZ "can't map memory for mailxbox\n");
+			goto undo_msix;
+		}
 
 	// Docs for pci_iomap() say to use pci_ioread/write, but since
 	// this is QEMU, a direct memory reference should work.
@@ -62,10 +69,13 @@ int famez_config(struct famez_configuration *config)
 	ringer.peer = FAMEZ_PEER_SERVER;
 	ringer.vector = 5;
 
+	iowrite32(5 << 16, &config->regs->Doorbell);
 	config->regs->Doorbell = 5;
+	// strcpy(config->mbox->mbox, "Hello");
 
 	// TODO: set the interrupt handler.
 
+	pci_dev_get(dev_famez);
 	return 0;
 
 

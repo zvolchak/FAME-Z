@@ -23,8 +23,12 @@ static struct famez_configuration famez_single;	// as opposed to list_head
 
 int famez_init(void)
 {
-	int ret = famez_config(&famez_single);
-	pr_info(FZ "initialization complete\n");
+	int ret;
+	
+	if ((ret = famez_config(&famez_single)))
+		pr_err(FZ "initialization failed\n");
+	else
+		pr_info(FZ "initialization complete\n");
 	return ret;
 }
 
