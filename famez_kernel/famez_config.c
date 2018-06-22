@@ -33,13 +33,14 @@ int famez_config(struct famez_configuration *config)
 	if (!dev_famez)
 		return -ENODEV;
 	
+	pci_dev_get(dev_famez);
 	pr_info(FZ "keeping the IVSHMEM @ %s\n", bar1->name);
 
 	bar0 = &(dev_famez->resource[0]);
 	bar2 = &(dev_famez->resource[2]);
-	pr_info(FZSP "registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
-	pr_info(FZSP "MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
-	pr_info(FZSP "mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
+	PR_V1(FZSP "registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
+	PR_V1(FZSP "MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
+	PR_V1(FZSP "mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
 
 	// Map the regions and overlay data structures.  Since it's QEMU,
 	// ioremap (uncached) for BAR0/1 and ioremap_cached(BAR2) would be
@@ -54,30 +55,23 @@ int famez_config(struct famez_configuration *config)
 		pr_err(FZ "can't map memory for MSI-X\n");
 		goto undo_regs;
 	}
-	// if (!(config->mbox = ioremap_cache(
-		// bar2->start, bar2->end - bar2->start + 1))) {
 	if (!(config->mbox = pci_iomap(dev_famez, 2, 0))) {
 		pr_err(FZ "can't map memory for mailxbox\n");
 		goto undo_msix;
 	}
 
-	// Docs for pci_iomap() say to use pci_ioread/write, but since
-	// this is QEMU, a direct memory reference should work.
+	// Docs for pci_iomap() say to use io[read|write]32.
+	// Since this is QEMU, direct memory references should work.
 
 	pr_info(FZSP "client ID = %d\n", config->regs->IVPosition);
+	ringer.peer = 63;
+	ringer.vector = 3;
+	config->regs->Doorbell = ringer.push;
 
-	pr_info(FZSP "Doorbell offset = %lu\n",
-		offsetof(struct ivshmem_BAR0_registers, Doorbell));
-	ringer.peer = FAMEZ_PEER_SERVER;
-	ringer.vector = 5;
-
-	iowrite32(5 << 16, &config->regs->Doorbell);
-	config->regs->Doorbell = 5;
-	strcpy(config->mbox->mbox, "Hello Kitty");
+	strcpy((char *)((uint64_t)config->mbox->mbox + 8192L), "Hello Kitty");
 
 	// TODO: set the interrupt handler.
 
-	pci_dev_get(dev_famez);
 	return 0;
 
 
