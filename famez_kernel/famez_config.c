@@ -16,8 +16,8 @@ int famez_config(struct famez_configuration *config)
 	memset(config, 0, sizeof(*config));
 
 	pr_info("-----------------------------------------------------------");
-	pr_info("famez: " FAMEZ_VERSION "; module loaded with\n");
-	pr_info("     famez_verbose = %d\n", famez_verbose);
+	pr_info(FZ FAMEZ_VERSION "; module loaded with\n");
+	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
 
 	// Find the first one with two BARs.
 	while ((dev_famez = pci_get_device(
@@ -25,8 +25,7 @@ int famez_config(struct famez_configuration *config)
 
 		bar1 = &(dev_famez->resource[1]);
 		if (!bar1->start || dev_famez->revision != 1) {
-			pr_info("famez: skipping an IVSHMEM @ %s\n",
-				bar1->name);
+			pr_info(FZSP "skipping an IVSHMEM @ %s\n", bar1->name);
 			continue;
 		}
 		break;
@@ -34,14 +33,14 @@ int famez_config(struct famez_configuration *config)
 	if (!dev_famez)
 		return -ENODEV;
 	
-	pr_info("famez: keeping the IVSHMEM @ %s\n", bar1->name);
+	pr_info(FZ "keeping the IVSHMEM @ %s\n", bar1->name);
 	pci_dev_get(dev_famez);
 
 	bar0 = &(dev_famez->resource[0]);
 	bar2 = &(dev_famez->resource[2]);
-	pr_info("       registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
-	pr_info("       MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
-	pr_info("       mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
+	pr_info(FZSP "registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
+	pr_info(FZSP "MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
+	pr_info(FZSP "mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
 
 	// Map the regions and overlay data structures
 
@@ -56,11 +55,14 @@ int famez_config(struct famez_configuration *config)
 	// Docs for pci_iomap() say to use pci_ioread/write, but since
 	// this is QEMU, a direct memory reference should work.
 
-	pr_info("     client ID = %d\n", config->regs->IVPosition);
+	pr_info(FZSP "client ID = %d\n", config->regs->IVPosition);
 
+	pr_info(FZSP "Doorbell offset = %lu\n",
+		offsetof(struct ivshmem_BAR0_registers, Doorbell));
 	ringer.peer = FAMEZ_PEER_SERVER;
 	ringer.vector = 5;
-	config->regs->Doorbell = ringer.push;
+
+	config->regs->Doorbell = 5;
 
 	// TODO: set the interrupt handler.
 

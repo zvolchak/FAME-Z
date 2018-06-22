@@ -4,6 +4,8 @@
 #define FAMEZ_DOT_H
 
 #define FAMEZ_NAME	"famez"
+#define FZ		"famez: "	// pr_info header
+#define FZSP		"       "	// pr_info header same length
 
 // For PCI search
 #define IVSHMEM_VENDOR	0x1af4	// RedHat
@@ -32,7 +34,7 @@ struct ivshmem_BAR0_registers {
 			Doorbell;	// Upper and lower half
 };
 
-struct ringer {
+__attribute__ ((packed)) struct ringer {
 	union {
 		struct { uint16_t vector, peer; };	// vector is low 16
 		uint32_t push;
