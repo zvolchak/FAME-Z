@@ -23,20 +23,15 @@ static struct famez_configuration famez_single;	// as opposed to list_head
 
 int famez_init(void)
 {
-	int ret = 0;
-
-	if ((ret = famez_getconfig(&famez_single)))
-		return ret;
-
-	pr_info("famez: initialization complete, refcount is %d\n",
-		module_refcount(THIS_MODULE));
-	return 0;
+	int ret = famez_config(&famez_single);
+	pr_info(FAMEZ_NAME " initialization complete\n");
+	return ret;
 }
 
 NOINLINE void famez_exit(void)
 {
 	famez_unconfig(&famez_single);
-	PR_EXIT(FAMEZ_NAME " has been unloaded\n");
+	pr_info(FAMEZ_NAME " has been unloaded\n");
 }
 
 module_init(famez_init);

@@ -21,6 +21,7 @@
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
 #define FAMEZ_MAX_CLIENTS	63	// + 1 for server == power of 2
+#define FAMEZ_PEER_SERVER	0
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
@@ -29,6 +30,13 @@ struct ivshmem_BAR0_registers {
 			Rev1Reserved2,	// Rev 0: Interrupt status
 			IVPosition,	// My peer id
 			Doorbell;	// Upper and lower half
+};
+
+struct ringer {
+	union {
+		struct { uint16_t vector, peer; };	// vector is low 16
+		uint32_t push;
+	};
 };
 
 struct ivshmem_BAR1_msi_x_msi_pba {
@@ -54,7 +62,7 @@ extern int famez_verbose;
 //-------------------------------------------------------------------------
 // famez_config.c - early setup and late teardown of things
 
-int famez_getconfig(struct famez_configuration *config);
+int famez_config(struct famez_configuration *config);
 void famez_unconfig(struct famez_configuration *config);
 
 //-------------------------------------------------------------------------

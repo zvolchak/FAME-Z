@@ -6,11 +6,12 @@
 
 //-------------------------------------------------------------------------
 
-int famez_getconfig(struct famez_configuration *config)
+int famez_config(struct famez_configuration *config)
 {
 	struct pci_dev *dev_famez = NULL;
 	struct resource *bar0 = NULL, *bar1 = NULL, *bar2 = NULL;
 	int ret = 0;
+	struct ringer ringer;
 
 	memset(config, 0, sizeof(*config));
 
@@ -38,9 +39,9 @@ int famez_getconfig(struct famez_configuration *config)
 
 	bar0 = &(dev_famez->resource[0]);
 	bar2 = &(dev_famez->resource[2]);
-	pr_info("     registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
-	pr_info("     MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
-	pr_info("     mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
+	pr_info("       registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
+	pr_info("       MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
+	pr_info("       mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
 
 	// Map the regions and overlay data structures
 
@@ -56,6 +57,10 @@ int famez_getconfig(struct famez_configuration *config)
 	// this is QEMU, a direct memory reference should work.
 
 	pr_info("     client ID = %d\n", config->regs->IVPosition);
+
+	ringer.peer = FAMEZ_PEER_SERVER;
+	ringer.vector = 5;
+	config->regs->Doorbell = ringer.push;
 
 	// TODO: set the interrupt handler.
 
