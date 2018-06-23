@@ -41,6 +41,7 @@ class IVSHMEM_Event_Notifier(object):  # Probably overkill
         self.rfd = self.wfd = self._libc.eventfd(
             init_val, self.EFD_NONBLOCK | self.EFD_CLOEXEC)
         assert self.rfd >= 0, 'eventfd() failed'
+        self.cbdata = None
         if active:
             self.incr()
 
@@ -100,8 +101,10 @@ def ivshmem_event_notifier_list(count):
 @implementer(IReadDescriptor)
 class EventfdReader(object):
 
-    def __init__(self, eventobj, callback):
+    def __init__(self, eventobj, callback, cbdata):
+        '''cbdata is usually "self" from the caller.'''
         assert isinstance(eventobj, IVSHMEM_Event_Notifier), 'Bad object'
+        eventobj.cbdata = cbdata
         self.eventobj = eventobj
         self.eventobj.last_value = None
         self.callback = callback

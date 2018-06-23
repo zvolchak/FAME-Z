@@ -8,7 +8,9 @@
 
 import argparse
 import grp
+import mmap
 import os
+import struct
 import sys
 
 from twisted.python import log as TPlog
@@ -66,6 +68,7 @@ class ProtocolIVSHMSG(TIPProtocol):
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
             self.__class__.server_id = self.args.nSlots - 1
+            self.__class__.mailbox_mm = mmap.mmap(self.args.mailbox_fd, 0)
 
             if not self.args.silent:
                 # Create eventfds for receiving messages in IVSHMEM fashion
@@ -77,8 +80,8 @@ class ProtocolIVSHMSG(TIPProtocol):
                     self.args.nSlots)
                 for i, server_vector in enumerate(self.server_vectors):
                     server_vector.num = i
-                    server_vector.logmsg = self.logmsg   # work on this...
-                    tmp = EventfdReader(server_vector, self.ERcallback).start()
+                    tmp = EventfdReader(server_vector,
+                        self.ERcallback, self).start()
 
         # Finish with any actual instance attributes.
         self.create_new_peer_id()
@@ -208,12 +211,19 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     @staticmethod
     def ERcallback(vectorobj):
-        vectorobj.logmsg('CALLBACK %d' % (vectorobj.num))
+        selph = vectorobj.cbdata
+        index = vectorobj.num * 512     # start of nodename
+        nodename, msglen = struct.unpack('32sQ',
+            selph.mailbox_mm[index:index + 40])
+        selph.logmsg('CALLBACK %d' % (vectorobj.num), msglen, nodename)
+        index += 128
+        print(dir(selph))
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,
 # interwoven with passing this constructor.  This approach hides
 # all the twisted things in this module.
+
 
 class FactoryIVSHMSG(TIPFactory):
 

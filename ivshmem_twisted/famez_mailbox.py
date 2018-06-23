@@ -20,15 +20,20 @@ import struct
 from pdb import set_trace
 
 MAILBOX_SLOTSIZE = 512
+MAILBOX_MESSAGE_OFFSET = 128    # Leaves 384 bytes for message
 MAILBOX_MAX_SLOTS = 64
+
 
 def _populate_mailbox(fd, nSlots):
     mapped = mmap.mmap(fd, 0)
     data = b'\0' * (nSlots * MAILBOX_SLOTSIZE)      # Never very big
     mapped[0:len(data)] = data
-    data = struct.pack('QQ', MAILBOX_SLOTSIZE, nSlots)
+
+    # Slot size, message area start within a slot, nSlots
+    data = struct.pack('QQQ', MAILBOX_SLOTSIZE, MAILBOX_MESSAGE_OFFSET, nSlots)
     mapped[0:len(data)] = data
     mapped.close()
+
 
 def prepare_mailbox(path, nSlots=MAILBOX_MAX_SLOTS):
     '''Starts with mailbox base name, returns an fd to a populated file.'''
