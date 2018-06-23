@@ -55,6 +55,7 @@ struct ivshmem_BAR2_famez_mailbox_globals {	// Slot 0 byt not a mailbox
 };
 
 struct famez_mailbox_slot {
+	char nodename[32];
 	uint64_t msglen;
 	char *msg;			// @ globals->msg_offset
 };
@@ -66,6 +67,7 @@ struct famez_configuration {		// Slots 1 - (nSlots-1); last == server
 	struct ivshmem_BAR0_registers *regs;
 	struct ivshmem_BAR1_msi_x_msi_pba *msix;
 	struct ivshmem_BAR2_famez_mailbox_globals *mbox;
+	struct famez_mailbox_slot *my_mbox;
 };
 
 //-------------------------------------------------------------------------
