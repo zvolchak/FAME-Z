@@ -15,11 +15,9 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
-	// Keep nodename and msg pointer
+	// Keep nodename and msg pointer, update msglen and msg contents
 	memset(config->my_slot->msg, 0, config->max_msglen);
 	config->my_slot->msglen = msglen;
-	pr_info(FZSP "myslot @ %p", config->my_slot);
-	pr_info(FZSP "msg @ %p", config->my_slot->msg);
 	memcpy(config->my_slot->msg, msg, msglen);
 	ringer.vector = config->my_id;		// from this
 	ringer.peer = peer_id;			// to this
@@ -32,7 +30,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 int famez_config(struct famez_configuration *config)
 {
 	struct pci_dev *dev_famez = NULL;
-	struct resource *bar0 = NULL, *bar1 = NULL, *bar2 = NULL;
+	struct resource *bar1 = NULL;
 	int ret = 0;
 	char buf80[80];
 
@@ -59,17 +57,12 @@ int famez_config(struct famez_configuration *config)
 	pci_dev_get(dev_famez);
 	pr_info(FZ "keeping the IVSHMEM @ %s\n", bar1->name);
 
-	bar0 = &(dev_famez->resource[0]);
-	bar2 = &(dev_famez->resource[2]);
-	PR_V1(FZSP "registers = 0x%llx - 0x%llx\n", bar0->start, bar0->end);
-	PR_V1(FZSP "MSI-Z/PBA = 0x%llx - 0x%llx\n", bar1->start, bar1->end);
-	PR_V1(FZSP "mailbox   = 0x%llx - 0x%llx\n", bar2->start, bar2->end);
-
 	// Map the regions and overlay data structures.  Since it's QEMU,
 	// ioremap (uncached) for BAR0/1 and ioremap_cached(BAR2) would be
-	// fine.  However, do it with proscribed calls here.
+	// fine.  However, do it with proscribed calls here so it will
+	// do the start/end extraction and length math.
 
-	ret = -ENOMEM;
+	ret = -EFAULT;
 	if (!(config->regs = pci_iomap(dev_famez, 0, 0))) {
 		pr_err(FZ "can't map memory for registers\n");
 		goto putitback;
@@ -103,10 +96,11 @@ int famez_config(struct famez_configuration *config)
 	pr_info(FZSP "slot size = %llu, server ID = %d\n",
 		config->globals->slotsize, config->server_id);
 
-	// Tell the server I'm here.  Cover the NUL terminator.
+	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
-	if ((ret = famez_sendmail(config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
-		return ret;
+	if ((ret = famez_sendmail(
+		config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
+			return ret;
 
 	// TODO: set the interrupt handler.
 
