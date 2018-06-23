@@ -37,23 +37,35 @@ struct ivshmem_BAR0_registers {
 __attribute__ ((packed)) struct ringer {
 	union {
 		struct { uint16_t vector, peer; };	// vector is low 16
-		uint32_t push;
+		uint32_t push;				// Assigned atomically
 	};
 };
 
-struct ivshmem_BAR1_msi_x_msi_pba {
+struct ivshmem_BAR1_msi_x_msi_pba {	// Not sure if this is needed?
 	uint32_t junk;
 };
 
-struct ivshmem_BAR2_famez_mailbox {
-	char mbox[128];
+// There are a power-of-two number of mailbox slots.  Slot 0 is reserved
+// for global data; it's easy to find :-) and server ID 0 doesn't seem to
+// work in the doorbell.  The last slot (with ID == nSlots - 1) is for the
+// server.  The remaining slots are for client IDs 1 - (nSlots -2).
+
+struct ivshmem_BAR2_famez_mailbox_globals {	// Slot 0 byt not a mailbox
+	uint64_t slotsize, msg_offset, nSlots;
 };
 
-struct famez_configuration {
+struct famez_mailbox_slot {
+	uint64_t msglen;
+	char *msg;			// @ globals->msg_offset
+};
+
+struct famez_configuration {		// Slots 1 - (nSlots-1); last == server
 	struct pci_dev *pci_dev;
+	uint64_t max_msglen;
+	uint16_t my_id, server_id;	// match ringer.peer 
 	struct ivshmem_BAR0_registers *regs;
 	struct ivshmem_BAR1_msi_x_msi_pba *msix;
-	struct ivshmem_BAR2_famez_mailbox *mbox;
+	struct ivshmem_BAR2_famez_mailbox_globals *mbox;
 };
 
 //-------------------------------------------------------------------------

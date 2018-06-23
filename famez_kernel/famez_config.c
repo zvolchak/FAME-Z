@@ -5,13 +5,36 @@
 #include "famez.h"
 
 //-------------------------------------------------------------------------
+// Return positive on success, negative on error, never 0.
+
+int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
+		   struct famez_configuration *config)
+{
+	struct famez_mailbox_slot *my_mbox;
+	struct ringer ringer;
+
+	if (msglen > config->max_msglen)
+		return -E2BIG;
+	my_mbox = (void *)((uint64_t)config->mbox +
+		config->my_id * config->mbox->slotsize);
+	memset(my_mbox, 0, config->mbox->slotsize);
+	my_mbox->msglen = msglen;
+	my_mbox->msg = (void *)((uint64_t) + config->mbox->msg_offset);
+	memcpy(my_mbox->msg, msg, msglen);
+	ringer.peer = peer_id;
+	ringer.vector = config->my_id;
+	config->regs->Doorbell = ringer.push;
+	return 0;
+}
+
+//-------------------------------------------------------------------------
 
 int famez_config(struct famez_configuration *config)
 {
 	struct pci_dev *dev_famez = NULL;
 	struct resource *bar0 = NULL, *bar1 = NULL, *bar2 = NULL;
 	int ret = 0;
-	struct ringer ringer;
+	char buf80[80];
 
 	memset(config, 0, sizeof(*config));
 
@@ -63,12 +86,18 @@ int famez_config(struct famez_configuration *config)
 	// Docs for pci_iomap() say to use io[read|write]32.
 	// Since this is QEMU, direct memory references should work.
 
-	pr_info(FZSP "client ID = %d\n", config->regs->IVPosition);
-	ringer.peer = 63;
-	ringer.vector = 3;
-	config->regs->Doorbell = ringer.push;
+	config->my_id = config->regs->IVPosition;
+	config->server_id = config->mbox->nSlots - 1;
+	config->max_msglen = config->mbox->slotsize - config->mbox->msg_offset;
 
-	strcpy((char *)((uint64_t)config->mbox->mbox + 8192L), "Hello Kitty");
+	pr_info(FZSP "client ID = %d\n", config->my_id);
+	pr_info(FZSP "slot size = %llu, server ID = %d\n",
+		config->mbox->slotsize, config->server_id);
+
+	// Tell the server I'm here
+	sprintf(buf80, "Client %d is ready", config->my_id);
+	if ((ret = famez_sendmail(config->server_id, buf80, strlen(buf80), config)) < 0)
+		return ret;
 
 	// TODO: set the interrupt handler.
 
