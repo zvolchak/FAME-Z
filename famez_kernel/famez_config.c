@@ -15,11 +15,10 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
-	memset(config->my_slot, 0, config->globals->slotsize);
-	snprintf(config->my_slot->nodename,
-		 sizeof(config->my_slot->nodename) - 1,
-		 utsname()->nodename);
+	// Keep nodename and msg pointer
+	memset(config->my_slot->msg, 0, config->max_msglen);
 	config->my_slot->msglen = msglen;
+	pr_info(FZSP "myslot @ %p", config->my_slot);
 	pr_info(FZSP "msg @ %p", config->my_slot->msg);
 	memcpy(config->my_slot->msg, msg, msglen);
 	ringer.vector = config->my_id;		// from this
@@ -89,13 +88,18 @@ int famez_config(struct famez_configuration *config)
 
 	config->my_id = config->regs->IVPosition;
 	config->server_id = config->globals->nSlots - 1;
-	config->max_msglen = config->globals->slotsize - config->globals->msg_offset;
+	config->max_msglen = config->globals->slotsize -
+			     config->globals->msg_offset;
+
+	// My slot and invariant info.
 	config->my_slot = (void *)((uint64_t)config->globals +
 		config->my_id * config->globals->slotsize);
+	memset(config->my_slot, 0, config->globals->slotsize);
+	snprintf(config->my_slot->nodename,
+		 sizeof(config->my_slot->nodename) - 1,
+		 utsname()->nodename);
 	config->my_slot->msg = (void *)((uint64_t)config->my_slot +
 		config->globals->msg_offset);
-
-	pr_info(FZSP "client ID = %d\n", config->my_id);
 	pr_info(FZSP "slot size = %llu, server ID = %d\n",
 		config->globals->slotsize, config->server_id);
 
