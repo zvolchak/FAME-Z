@@ -50,7 +50,7 @@ struct ivshmem_BAR1_msi_x_msi_pba {	// Not sure if this is needed?
 // work in the doorbell.  The last slot (with ID == nSlots - 1) is for the
 // server.  The remaining slots are for client IDs 1 - (nSlots -2).
 
-struct ivshmem_BAR2_famez_mailbox_globals {	// Slot 0 byt not a mailbox
+struct famez_globals {			// Start of IVSHMEM, not a mailslot
 	uint64_t slotsize, msg_offset, nSlots;
 };
 
@@ -63,11 +63,11 @@ struct famez_mailbox_slot {
 struct famez_configuration {		// Slots 1 - (nSlots-1); last == server
 	struct pci_dev *pci_dev;
 	uint64_t max_msglen;
-	uint16_t my_id, server_id;	// match ringer.peer 
+	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_BAR0_registers *regs;
 	struct ivshmem_BAR1_msi_x_msi_pba *msix;
-	struct ivshmem_BAR2_famez_mailbox_globals *mbox;
-	struct famez_mailbox_slot *my_mbox;
+	struct famez_globals *globals;			// Base of BAR2
+	struct famez_mailbox_slot *my_slot;		// Calculated into BAR2
 };
 
 //-------------------------------------------------------------------------

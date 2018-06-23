@@ -13,14 +13,15 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 {
 	struct ringer ringer;
 
-	if (msglen > config->max_msglen)
+	if (msglen >= config->max_msglen)
 		return -E2BIG;
-	memset(config->my_mbox, 0, config->mbox->slotsize);
-	snprintf(config->my_mbox->nodename,
-		 sizeof(config->my_mbox->nodename) - 1,
+	memset(config->my_slot, 0, config->globals->slotsize);
+	snprintf(config->my_slot->nodename,
+		 sizeof(config->my_slot->nodename) - 1,
 		 utsname()->nodename);
-	config->my_mbox->msglen = msglen;
-	memcpy(config->my_mbox->msg, msg, msglen);
+	config->my_slot->msglen = msglen;
+	pr_info(FZSP "msg @ %p", config->my_slot->msg);
+	memcpy(config->my_slot->msg, msg, msglen);
 	ringer.vector = config->my_id;		// from this
 	ringer.peer = peer_id;			// to this
 	config->regs->Doorbell = ringer.push;
@@ -78,7 +79,7 @@ int famez_config(struct famez_configuration *config)
 		pr_err(FZ "can't map memory for MSI-X\n");
 		goto undo_regs;
 	}
-	if (!(config->mbox = pci_iomap(dev_famez, 2, 0))) {
+	if (!(config->globals = pci_iomap(dev_famez, 2, 0))) {
 		pr_err(FZ "can't map memory for mailxbox\n");
 		goto undo_msix;
 	}
@@ -87,18 +88,18 @@ int famez_config(struct famez_configuration *config)
 	// Since this is QEMU, direct memory references should work.
 
 	config->my_id = config->regs->IVPosition;
-	config->server_id = config->mbox->nSlots - 1;
-	config->max_msglen = config->mbox->slotsize - config->mbox->msg_offset;
-	config->my_mbox = (void *)((uint64_t)config->mbox +
-		config->my_id * config->mbox->slotsize);
-	config->my_mbox->msg = (void *)((uint64_t)config->my_mbox +
-		config->mbox->msg_offset);
+	config->server_id = config->globals->nSlots - 1;
+	config->max_msglen = config->globals->slotsize - config->globals->msg_offset;
+	config->my_slot = (void *)((uint64_t)config->globals +
+		config->my_id * config->globals->slotsize);
+	config->my_slot->msg = (void *)((uint64_t)config->my_slot +
+		config->globals->msg_offset);
 
 	pr_info(FZSP "client ID = %d\n", config->my_id);
 	pr_info(FZSP "slot size = %llu, server ID = %d\n",
-		config->mbox->slotsize, config->server_id);
+		config->globals->slotsize, config->server_id);
 
-	// Tell the server I'm here
+	// Tell the server I'm here.  Cover the NUL terminator.
 	sprintf(buf80, "Client %d is ready", config->my_id);
 	if ((ret = famez_sendmail(config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
 		return ret;
@@ -126,7 +127,7 @@ putitback:
 
 void famez_unconfig(struct famez_configuration *config)
 {
-	iounmap(config->mbox);
+	iounmap(config->globals);
 	iounmap(config->msix);
 	iounmap(config->regs);
 	pci_dev_put(config->pci_dev);
