@@ -25,17 +25,16 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from .famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS
 
-# Don't use ID 0, certain documentation implies it's reserved.  Put the
-# server ID at the top of the list, and insure the sum is a power of two.
+# Don't use peer ID 0, certain documentation implies it's reserved.  Put the
+# server ID at the end of the list (nSlots-1) and use the middle for clients.
 
-IVSHMEM_PEER_SLOTS = 64                         # There's the power of two
-IVSHMEM_UNUSED_ID = 0                           # That's one
-IVSHMEM_SERVER_ID = IVSHMEM_PEER_SLOTS - 1      # That's two
-IVSHMEM_MAX_CLIENTS = IVSHMEM_PEER_SLOTS - 2    # That's the rest
+IVSHMEM_UNUSED_ID = 0
 
 ###########################################################################
 
@@ -53,6 +52,7 @@ class ProtocolIVSHMSG(TIPProtocol):
     logmsg = None
     logerr = None
     peer_list = []     # Map transport fds to list of eventfds
+    server_id = None
 
     # Non-standard addition to IVSHMEM server role: this server can be
     # interrupted and messaged to particpate in client activity.
@@ -65,7 +65,7 @@ class ProtocolIVSHMSG(TIPProtocol):
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
-            self.__class__.server_vectors = ivshmem_event_notifier_list(10)
+            self.__class__.server_id = self.args.nSlots - 1
 
             if not self.args.silent:
                 # Create eventfds for receiving messages in IVSHMEM fashion
@@ -73,6 +73,8 @@ class ProtocolIVSHMSG(TIPProtocol):
                 # itself, don't send "self" because this is destined to
                 # be a true peer object.  Pad out the eventfd object with
                 # attributes to assist the callback.
+                self.__class__.server_vectors = ivshmem_event_notifier_list(
+                    self.args.nSlots)
                 for i, server_vector in enumerate(self.server_vectors):
                     server_vector.num = i
                     server_vector.logmsg = self.logmsg   # work on this...
@@ -97,7 +99,7 @@ class ProtocolIVSHMSG(TIPProtocol):
         peer = self
         server_peer_list = self.peer_list
 
-        if len(server_peer_list) >= IVSHMEM_MAX_CLIENTS or self.id == -1:
+        if len(server_peer_list) >= self.args.nSlots - 2 or self.id == -1:
             self.logerr('Max clients reached (%d)' % IVSHMEM_MAX_CLIENTS)
             peer.send_initial_info(False)   # client complains but with grace
             return
@@ -105,7 +107,7 @@ class ProtocolIVSHMSG(TIPProtocol):
         # Server line 175: create specified number of eventfds, mixed with
         # Server line 183: send peer id and shm fd
         try:
-            peer.vectors = ivshmem_event_notifier_list(self.args.nVectors)
+            peer.vectors = ivshmem_event_notifier_list(self.args.nSlots)
         except Exception as e:
             self.logerr('Event notifiers failed: %s' % str(e))
             peer.send_initial_info(False)
@@ -135,7 +137,7 @@ class ProtocolIVSHMSG(TIPProtocol):
             for server_vector in self.server_vectors:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
-                    IVSHMEM_SERVER_ID,
+                    self.server_id,
                     server_vector.wfd)
 
         # Server line 205: advertise the new peer to itself
@@ -171,15 +173,16 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     def create_new_peer_id(self):
         '''Does not occur often, don't sweat the performance.'''
-        if len(self.peer_list) >= IVSHMEM_MAX_CLIENTS:
+        max_clients = self.args.nSlots - 2  # 1 unused, 1 for the server
+        if len(self.peer_list) >= max_clients:
             self.id = -1    # sentinel
             return
         current_ids = frozenset((p.id for p in self.peer_list))
         if not current_ids:
             self.id = 1
             return
-        max_ids = frozenset((range(IVSHMEM_PEER_SLOTS))) - \
-                  frozenset((IVSHMEM_UNUSED_ID, IVSHMEM_SERVER_ID ))
+        max_ids = frozenset((range(self.args.nSlots))) - \
+                  frozenset((IVSHMEM_UNUSED_ID, self.server_id ))
         self.id = sorted(max_ids - current_ids)[0]
 
     def send_initial_info(self, ok=True):
@@ -208,49 +211,6 @@ class ProtocolIVSHMSG(TIPProtocol):
         vectorobj.logmsg('CALLBACK %d' % (vectorobj.num))
 
 ###########################################################################
-# The IVSHMEM protocol practiced by QEMU demands a memory-mappable file
-# descriptor as part of the initial exchange, so give it one.  The mailbox
-# is a shared common area.  In non-silent mode, each client gets 8k, max
-# 31 extra clients after server area which starts at zero, thus 256k.
-
-
-def _prepare_mailbox(path, size=99999999999):     # Force an error if missing
-    '''Starts with mailbox base name, returns an fd to open file.'''
-
-    gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
-    for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
-        try:
-            gr_gid = grp.getgrnam(gr_name).gr_gid
-            break
-        except Exception as e:
-            pass
-    if '/' not in path:
-        path = '/dev/shm/' + path
-    oldumask = os.umask(0)
-    try:
-        if not os.path.isfile(path):
-            fd = os.open(path, os.O_RDWR | os.O_CREAT, mode=0o666)
-            os.posix_fallocate(fd, 0, size)
-            os.fchown(fd, -1, gr_gid)
-        else:   # Re-condition and re-use
-            STAT = os.path.stat         # for constants
-            lstat = os.lstat(path)
-            assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
-            assert lstat.st_size >= size, 'size is < %d' % size
-            if lstat.st_gid != gr_gid and gr_gid > 0:
-                print('Changing %s to group %s' % (path, gr_name))
-                os.chown(path, -1, gr_gid)
-            if lstat.st_mode & 0o660 != 0o660:  # at least
-                print('Changing %s to permissions 666' % path)
-                os.chmod(path, 0o666)
-            fd = os.open(path, os.O_RDWR)
-    except Exception as e:
-        raise SystemExit('Problem with %s: %s' % (path, str(e)))
-
-    os.umask(oldumask)
-    return fd
-
-###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,
 # interwoven with passing this constructor.  This approach hides
 # all the twisted things in this module.
@@ -261,8 +221,7 @@ class FactoryIVSHMSG(TIPFactory):
         'foreground':   True,       # Only affects logging choice in here
         'logfile':      '/tmp/ivshmem_log',
         'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
-        'mailbox_size': 8192 * (IVSHMEM_PEER_SLOTS),  # See _prepare_mailbox
-        'nVectors':     1,
+        'nSlots':       4,
         'silent':       True,       # Does NOT participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
         'verbose':      0,
@@ -270,7 +229,7 @@ class FactoryIVSHMSG(TIPFactory):
 
     def __init__(self, args=None):
         '''Args must be an object with the following attributes:
-           foreground, logfile, mailbox, nVectors, silent, socketpath, verbose
+           foreground, logfile, mailbox, nSlots, silent, socketpath, verbose
            Suitable defaults will be supplied.'''
 
         # Pass command line args to ProtocolIVSHMSG, then open logging.
@@ -278,8 +237,7 @@ class FactoryIVSHMSG(TIPFactory):
             args = argparse.Namespace()
         for arg, default in self._required_arg_defaults.items():
             setattr(args, arg, getattr(args, arg, default))
-        if not hasattr(args, 'mailbox_fd'):     # They could open it themselves
-            args.mailbox_fd = _prepare_mailbox(args.mailbox, args.mailbox_size)
+        args.mailbox_fd = prepare_mailbox(args.mailbox, args.nSlots)
 
         self.args = args
         if args.foreground:

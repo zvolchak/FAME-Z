@@ -15,6 +15,9 @@ from daemonize import Daemonize
 
 from ivshmem_twisted.ivshmem_twisted import FactoryIVSHMSG
 
+# FIXME: this needs better separation from the "ivshmem_twisted" module space
+from ivshmem_twisted.famez_mailbox import MAILBOX_MAX_SLOTS
+
 ###########################################################################
 
 
@@ -41,8 +44,8 @@ def parse_cmdline(cmdline_args):
         help='Name of mailbox that exists in POSIX shared memory',
         default='famez_mailbox'
     )
-    parser.add_argument('--nVectors', '-n', metavar='<integer>',
-        help='Number of interrupt vectors per client (8 max)',
+    parser.add_argument('--nSlots', '-n', metavar='<integer>',
+        help='Number of actor slots; max peer count is two fewer',
         default=4
     )
     parser.add_argument('--silent', '-s',
@@ -62,8 +65,9 @@ def parse_cmdline(cmdline_args):
     args = parser.parse_args(cmdline_args)
 
     # Idiot checking.
-    args.nVectors = int(args.nVectors)
-    assert 1 <= args.nVectors <= 8, 'nVectors not in range 1-8'
+    args.nSlots = int(args.nSlots)
+    assert 4 <= args.nSlots <= MAILBOX_MAX_SLOTS, \
+        'nSlots not in range 4 - %d' % MAILBOX_MAX_SLOTS
     assert not '/' in args.mailbox, 'mailbox cannot have slashes'
     assert not os.path.exists(args.socketpath), 'Remove %s' % args.socketpath
 
