@@ -211,13 +211,19 @@ class ProtocolIVSHMSG(TIPProtocol):
 
     @staticmethod
     def ERcallback(vectorobj):
+        # Strings are known to be null padded.
         selph = vectorobj.cbdata
         index = vectorobj.num * 512     # start of nodename
-        nodename, msglen = struct.unpack('32sQ',
+        selph.nodename, msglen = struct.unpack('32sQ',
             selph.mailbox_mm[index:index + 40])
-        selph.logmsg('CALLBACK %d' % (vectorobj.num), msglen, nodename)
+        selph.nodename = selph.nodename.split(b'\0', 1)[0].decode()
         index += 128
-        print(dir(selph))
+        fmt = '%ds' % msglen
+        selph.msg = struct.unpack(fmt, selph.mailbox_mm[index:index + msglen])
+        selph.msg = selph.msg[0].split(b'\0', 1)[0].decode()
+        print(msglen, len(selph.msg))
+        selph.logmsg('"%s" (%d) sends "%s"' %
+            (selph.nodename, vectorobj.num, selph.msg))
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,
