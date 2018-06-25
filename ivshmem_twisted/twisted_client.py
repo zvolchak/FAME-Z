@@ -65,16 +65,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self.my_id = None       # Until initial info; state machine key
         self.server_id = None
         self.peer_list = OrderedDict()
-        self.nVectors = None
         self.mailbox_fd = None
         self._latest_fd = None
 
     def fileDescriptorReceived(self, latest_fd):
         assert self._latest_fd is None, 'Latest fd has not been consumed'
         self._latest_fd = latest_fd
-        print('New FD=%d: My ID %s, mbox %s, server ID %s, peer list %s' %
-            (latest_fd, self.my_id, self.mailbox_fd,
-             self.server_id, self.peer_list.keys()))
+        if self.args.verbose:
+            print('New FD=%d: My ID %s, mbox %s, server ID %s, peer list %s' %
+                  (latest_fd, self.my_id, self.mailbox_fd,
+                  self.server_id, self.peer_list.keys()))
 
     @property
     def latest_fd(self):
@@ -97,8 +97,12 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             assert version == self.IVSHMEM_PROTOCOL_VERSION, \
                 'Unxpected protocol version %d' % version
             assert minusone == -1, 'Did not get -1 with mailbox fd'
-            print('My ID = %d' % (self.my_id))
+            if self.args.verbose:
+                print('My ID = %d' % (self.my_id))
             return
+
+        # Now into the stream of <peer id><eventfd> pairs.
+        latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
         assert this >= 0, 'Latest data is negative number'
@@ -107,22 +111,30 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # One batch for each existing peer, then the server (see
         # the "voodoo" comment in twisted_server.py).  In general the
         # batch lengths could be different for each peer, but in famez
-        # they're all the same.
-        if this != self.my_id:
-            if this not in self.peer_list:
-                self.peer_list[this] = []
-                print('peer list is now %s' % str(self.peer_list.keys()))
-            return
+        # they're all the same.  Just shove all fds in, including mine.
 
-        # My peer id
-        if self.nVectors is None:  # first time
-            self.nVectors = 1
-            self.server_id = list(self.peer_list.keys())[-1]
-            print('Server ID =', self.server_id)
+        if this == self.my_id:  # It's the last group, so retrieve server ID
+            if self.server_id is None:
+                self.server_id = list(self.peer_list.keys())[-1]
+
+        try:
+            self.peer_list[this].append(latest_fd)
+        except KeyError as e:
+            self.peer_list[this] = [latest_fd, ]
+
+        # Got to do this inband because nothing more may be coming.
+        if this == self.my_id and (
+            len(self.peer_list[self.my_id]) ==
+            len(self.peer_list[self.server_id])
+        ):
+            print('Last pass through, right?  Set up event id handlers')
+
+
+        if self.args.verbose == 1:
             print('peer list is now %s' % str(self.peer_list.keys()))
-        else:
-            self.nVectors += 1
-        print('nVectors is now %d' % self.nVectors)
+        elif self.args.verbose > 1:
+            for id, eventfds in self.peer_list.items():
+                print(id, eventfds)
 
     def connectionMade(self):
         print('Connection made on fd', self.transport.fileno())
