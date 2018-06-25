@@ -13,7 +13,7 @@ import sys
 
 from daemonize import Daemonize
 
-from ivshmem_twisted.ivshmem_twisted import FactoryIVSHMSG
+from ivshmem_twisted.twisted_server import FactoryIVSHMSGServer
 
 # FIXME: this needs better separation from the "ivshmem_twisted" module space
 from ivshmem_twisted.famez_mailbox import MAILBOX_MAX_SLOTS
@@ -91,7 +91,7 @@ def forever(cmdline_args=None):
             print(Daemonize.__doc__)    # The website is WRONG
         d = Daemonize('famez_server', '/dev/null', None, auto_close_fds=None)
         d.start()
-    server = FactoryIVSHMSG(args)
+    server = FactoryIVSHMSGServer(args)
     server.run()
 
 ###########################################################################

@@ -39,14 +39,13 @@ except ImportError as e:
 IVSHMEM_UNUSED_ID = 0
 
 ###########################################################################
+# See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
+# qemu/contrib/ivshmem-server.c::ivshmem_server_handle_new_conn() calling
+# qemu/contrib/ivshmem-server.c::ivshmem_server_send_initial_info(), then
+# qemu/contrib/ivshmem-client.c::ivshmem_client_connect()
 
 
-class ProtocolIVSHMSG(TIPProtocol):
-
-    # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
-    # qemu/contrib/ivshmem-server.c::ivshmem_server_handle_new_conn() calling
-    # qemu/contrib/ivshmem-server.c::ivshmem_server_send_initial_info(), then
-    # qemu/contrib/ivshmem-client.c::ivshmem_client_connect()
+class ProtocolIVSHMSGServer(TIPProtocol):
 
     IVSHMEM_PROTOCOL_VERSION = 0
 
@@ -221,7 +220,6 @@ class ProtocolIVSHMSG(TIPProtocol):
         fmt = '%ds' % msglen
         selph.msg = struct.unpack(fmt, selph.mailbox_mm[index:index + msglen])
         selph.msg = selph.msg[0].split(b'\0', 1)[0].decode()
-        print(msglen, len(selph.msg))
         selph.logmsg('"%s" (%d) sends "%s"' %
             (selph.nodename, vectorobj.num, selph.msg))
 
@@ -231,7 +229,7 @@ class ProtocolIVSHMSG(TIPProtocol):
 # all the twisted things in this module.
 
 
-class FactoryIVSHMSG(TIPFactory):
+class FactoryIVSHMSGServer(TIPFactory):
 
     _required_arg_defaults = {
         'foreground':   True,       # Only affects logging choice in here
@@ -280,7 +278,7 @@ class FactoryIVSHMSG(TIPFactory):
     def buildProtocol(self, useless_addr):
         # Docs mislead, have to explicitly pass something to get persistent
         # state across protocol/transport invocations.  Send this factory.
-        return ProtocolIVSHMSG(self)
+        return ProtocolIVSHMSGServer(self)
 
     def run(self):
         TIreactor.run()
