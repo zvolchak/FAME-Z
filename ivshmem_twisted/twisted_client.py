@@ -32,10 +32,10 @@ from zope.interface import implementer
 
 try:
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
-    from famez_mailbox import place_in_slot
+    from famez_mailbox import place_in_slot, pickup_from_slot
 except ImportError as e:
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
-    from .famez_mailbox import place_in_slot
+    from .famez_mailbox import place_in_slot, pickup_from_slot
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -133,19 +133,31 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             for id, eventfds in self.peer_list.items():
                 print(id, eventfds)
 
-        # Got to do this inband NOW because nothing more may be coming.
-        if this == self.my_id and (
-            len(self.peer_list[self.my_id]) ==
+        # Do the final housekeeping after the final message.  ASS-U-MES all
+        # vector lists are the same length.
+        if this != self.my_id or (
+            len(self.peer_list[self.my_id]) !=
             len(self.peer_list[self.server_id])
         ):
-            # Do the batch conversion now
-            newlist = OrderedDict()
-            for id, fds in self.peer_list.items():
-                newlist[id] = ivshmem_event_notifier_list(fds)
-            self.peer_list = newlist
-            print('Announce myself to server, now set up event id handlers')
-            place_in_slot(self.mailbox_mm, self.my_id, 'Ready player one')
-            self.peer_list[self.server_id][self.my_id].incr()
+            return      # Not the end
+
+        # First convert all fds to event notifier objects for both signalling
+        # to other peers and waiting on signals to me.
+        newlist = OrderedDict()
+        for id, fds in self.peer_list.items():
+            newlist[id] = ivshmem_event_notifier_list(fds)
+        self.peer_list = newlist
+
+        # Now set up waiters on my incoming stuff.
+        for i, this_notifier in enumerate(self.peer_list[self.my_id]):
+            this_notifier.num = i
+            tmp = EventfdReader(this_notifier, self.ERcallback, self)
+            tmp.start()
+
+        # NOW I'm done.  FIXME handle other peer deaths
+        print('Announcing myself to server')
+        place_in_slot(self.mailbox_mm, self.my_id, 'Ready player one')
+        self.peer_list[self.server_id][self.my_id].incr()
 
     def connectionMade(self):
         print('Connection made on fd', self.transport.fileno())
@@ -160,18 +172,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     @staticmethod
     def ERcallback(vectorobj):
-        # Strings are known to be null padded.
         selph = vectorobj.cbdata
-        index = vectorobj.num * 512     # start of nodename
-        selph.nodename, msglen = struct.unpack('32sQ',
-            selph.mailbox_mm[index:index + 40])
-        selph.nodename = selph.nodename.split(b'\0', 1)[0].decode()
-        index += 128
-        fmt = '%ds' % msglen
-        selph.msg = struct.unpack(fmt, selph.mailbox_mm[index:index + msglen])
-        selph.msg = selph.msg[0].split(b'\0', 1)[0].decode()
-        selph.logmsg('"%s" (%d) sends "%s"' %
-            (selph.nodename, vectorobj.num, selph.msg))
+        nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
+        print('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
 
     def startedConnecting(self, connector):
         print('Started connecting')

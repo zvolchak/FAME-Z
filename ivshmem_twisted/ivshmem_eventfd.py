@@ -108,7 +108,6 @@ def ivshmem_event_notifier_list(list_or_count):
 
 ###########################################################################
 # https://stackoverflow.com/questions/28449455/integrating-hid-access-with-evdev-on-linux-with-python-twisted
-# It also implicitly realizes IFDbizmumble
 
 
 @implementer(IReadDescriptor)

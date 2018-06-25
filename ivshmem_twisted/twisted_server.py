@@ -57,7 +57,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     # Non-standard addition to IVSHMEM server role: this server can be
     # interrupted and messaged to particpate in client activity.
-    server_vectors = None
+    event_notifiers = None
 
     def __init__(self, factory):
         # First do class-level initialization of singletons
@@ -75,12 +75,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 # itself, don't send "self" because this is destined to
                 # be a true peer object.  Pad out the eventfd object with
                 # attributes to assist the callback.
-                self.__class__.server_vectors = ivshmem_event_notifier_list(
+                self.__class__.event_notifiers = ivshmem_event_notifier_list(
                     self.args.nSlots)
-                for i, server_vector in enumerate(self.server_vectors):
-                    server_vector.num = i
-                    tmp = EventfdReader(server_vector,
-                        self.ERcallback, self).start()
+                for i, this_notifier in enumerate(self.event_notifiers):
+                    this_notifier.num = i
+                    tmp = EventfdReader(this_notifier, self.ERcallback, self)
+                    tmp.start()
 
         # Finish with any actual instance attributes.
         self.create_new_peer_id()
@@ -136,7 +136,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         # Non-standard voodoo: advertise me (this server) to the new peer.
         if not self.args.silent:
-            for server_vector in self.server_vectors:
+            for server_vector in self.event_notifiers:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
                     self.server_id,
