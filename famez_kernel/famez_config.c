@@ -8,14 +8,19 @@
 //-------------------------------------------------------------------------
 // Return positive on success, negative on error, never 0.
 
-int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
-		   struct famez_configuration *config)
+int famez_sendmsg(uint32_t peer_id, char *msg, ssize_t msglen,
+		  struct famez_configuration *config)
 {
-	struct ringer ringer;
+	// The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
+	// the lower 16 bits.  The combo must be assigned atomically.
+	union __attribute__ ((packed)) {
+		struct { uint16_t vector, peer; };
+		uint32_t push;
+	} ringer;
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
-	// Keep nodename and msg pointer, update msglen and msg contents
+	// Keep nodename and msg pointer; update msglen and msg contents.
 	memset(config->my_slot->msg, 0, config->max_msglen);
 	config->my_slot->msglen = msglen;
 	memcpy(config->my_slot->msg, msg, msglen);
@@ -106,7 +111,7 @@ int famez_config(struct famez_configuration *config)
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
-	if ((ret = famez_sendmail(
+	if ((ret = famez_sendmsg(
 		config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
 			goto undo;
 

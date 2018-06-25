@@ -34,13 +34,6 @@ struct ivshmem_BAR0_registers {
 			Doorbell;	// Upper and lower half
 };
 
-__attribute__ ((packed)) struct ringer {
-	union {
-		struct { uint16_t vector, peer; };	// vector is low 16
-		uint32_t push;				// Assigned atomically
-	};
-};
-
 struct ivshmem_BAR1_msi_x_msi_pba {	// Not sure if this is needed?
 	uint32_t junk;
 };
@@ -82,8 +75,10 @@ extern int famez_verbose;
 int famez_config(struct famez_configuration *config);
 void famez_unconfig(struct famez_configuration *config);
 
+int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
+
 //-------------------------------------------------------------------------
-// famez_interrupts.c
+// famez_MSI-X.c
 
 int famez_setupMSIX(struct famez_configuration *, struct pci_dev *);
 
