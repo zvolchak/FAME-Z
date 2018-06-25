@@ -21,7 +21,7 @@ from twisted.internet import reactor as TIreactor
 
 from twisted.internet.endpoints import UNIXServerEndpoint
 
-from twisted.internet.protocol import Factory as TIPFactory
+from twisted.internet.protocol import ServerFactory as TIPServerFactory
 from twisted.internet.protocol import Protocol as TIPProtocol
 
 try:
@@ -62,7 +62,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def __init__(self, factory):
         # First do class-level initialization of singletons
         if self.args is None:
-            assert isinstance(factory, TIPFactory), 'arg0 not my Factory'
+            assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
@@ -229,7 +229,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 # all the twisted things in this module.
 
 
-class FactoryIVSHMSGServer(TIPFactory):
+class FactoryIVSHMSGServer(TIPServerFactory):
 
     _required_arg_defaults = {
         'foreground':   True,       # Only affects logging choice in here

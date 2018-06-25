@@ -23,9 +23,12 @@ from twisted.internet import reactor as TIreactor
 
 from twisted.internet.endpoints import UNIXClientEndpoint
 
+from twisted.internet.interfaces import IFileDescriptorReceiver
+
 from twisted.internet.protocol import ClientFactory as TIPClientFactory
 from twisted.internet.protocol import Protocol as TIPProtocol
 
+from zope.interface import implementer
 
 try:
     from ivshmem_sendrecv import ivshmem_send_one_msg, ivshmem_recv_one_msg
@@ -40,11 +43,22 @@ except ImportError as e:
 # qemu/contrib/ivshmem-server.c::ivshmem_server_send_initial_info(), then
 # qemu/contrib/ivshmem-client.c::ivshmem_client_connect()
 
+# The UNIX transport in the middle of this, at
+# /usr/lib/python3/dist-packages/twisted/internet/unix.py line 174
+# will properly glean a file descriptor if present.  There must be
+# real data to go with this ancillary data.  Then, if this protocol
+# is recognized as implementing IFileDescriptorReceiver, it will FIRST
+# call fileDescriptorReceived before dataReceived.  So for the initial
+# info exchange, version and my (new) id are put out without an fd,
+# then a -1 is put out with the mailbox fd.   What triggers here is
+# one fileDescriptorReceived, THEN a dataReceived of thre quad words.
+# Then it pingpongs evenly between an fd and a single quadword for
+# each grouping.
 
+@implementer(IFileDescriptorReceiver)
 class ProtocolIVSHMSGClient(TIPProtocol):
 
     IVSHMEM_PROTOCOL_VERSION = 0
-
 
     def __init__(self, cmdlineargs):
         self.args = cmdlineargs
@@ -52,41 +66,48 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self.server_id = None
         self.peer_list = OrderedDict()
         self.nVectors = None
+        self.mailbox_fd = None
+        self._latest_fd = None
 
-    # /usr/lib/python3/dist-packages/twisted/internet/unix.py line 174
-    def fileDescriptorReceived(self, *data):
-        print('FD received:', data)
+    def fileDescriptorReceived(self, latest_fd):
+        assert self._latest_fd is None, 'Latest fd has not been consumed'
+        self._latest_fd = latest_fd
+        print('New FD=%d: My ID %s, mbox %s, server ID %s, peer list %s' %
+            (latest_fd, self.my_id, self.mailbox_fd,
+             self.server_id, self.peer_list.keys()))
+
+    @property
+    def latest_fd(self):
+        '''This is NOT idempotent!  Could return -1 like the C version does
+           but I'm partial to exceptions.'''
+        assert self._latest_fd is not None, 'No fd to consume'
+        tmp = self._latest_fd
+        self._latest_fd = None
+        return tmp
 
     def dataReceived(self, data):
-        '''sendmsg sends data here, not sure where eventfds are...'''
-        # print('dataReceived', str(data))
-        if self.my_id is None:
+        if self.my_id is None:      # Initial info
             # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
-            # and then a -1 with the FD of the IVSHMEM file.  But by
-            # the time I reach here, where is the FD?  Ancillary data
-            # does show up in the library at
-            # /usr/lib/python3/dist-packages/twisted/internet/unix.py line 174
-            # but I need to get my fileDescriptorReceived in the path...
-            # or the FileDescriptorReady event taken over...or something.
-            # Raise an AssertionError here to get a stack trace and see the
-            # unix.py thing I need to commandeer.
-            try:
-                version, self.my_id, junk = struct.unpack('QQQ', data)
-            except Exception as e:
-                raise SystemExit('Error while reading version: %s' % str(e))
+            # and then a -1 with the FD of the IVSHMEM file which is
+            # delivered before this.
+            assert self.mailbox_fd is None, 'mailbox fd already set'
+            self.mailbox_fd = self.latest_fd
+            assert len(data) == 24, 'Initial data needs three quadwords'
+            version, self.my_id, minusone = struct.unpack('qqq', data)
             assert version == self.IVSHMEM_PROTOCOL_VERSION, \
-                'Wrong protocol version'
+                'Unxpected protocol version %d' % version
+            assert minusone == -1, 'Did not get -1 with mailbox fd'
             print('My ID = %d' % (self.my_id))
-            self.nVectors = None
             return
+        assert len(data) == 8, 'Expecting a signed long long'
+        this = struct.unpack('q', data)[0]
+        assert this >= 0, 'Latest data is negative number'
 
         # Get a stream of batched integers, batch length == nVectors.
         # One batch for each existing peer, then the server (see
         # the "voodoo" comment in twisted_server.py).  In general the
         # batch lengths could be different for each peer, but in famez
-        # they're all the same.  FIXME: somewhere a recvmsg should be
-        # plucking the event fds.
-        this = struct.unpack('Q', data)[0]
+        # they're all the same.
         if this != self.my_id:
             if this not in self.peer_list:
                 self.peer_list[this] = []
@@ -171,6 +192,7 @@ class FactoryIVSHMSGClient(TIPClientFactory):
     def buildProtocol(self, useless_addr):
         print('buildProtocol')
         return ProtocolIVSHMSGClient(self.args)
+        return JFDI(self.args)
 
     def startedConnecting(self, connector):
         print('Started connecting')
