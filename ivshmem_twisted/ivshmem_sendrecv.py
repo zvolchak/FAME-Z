@@ -32,3 +32,6 @@ def ivshmem_send_one_msg(thesocket, data, fd=None):
     ret = thesocket.sendmsg(bdata_iovec, cmsg)
     assert ret == 8, 'sendmsg could not write 8 bytes'
 
+
+def ivshmem_recv_one_msg(thesocket):
+    print(thesocket.recvmsg(64, 64))
