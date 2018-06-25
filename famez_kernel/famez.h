@@ -63,11 +63,12 @@ struct famez_mailbox_slot {
 struct famez_configuration {		// Slots 1 - (nSlots-1); last == server
 	struct pci_dev *pci_dev;
 	uint64_t max_msglen;
-	uint16_t my_id, server_id;			// match ringer.peer 
+	uint16_t my_id, server_id;		// match ringer.peer 
 	struct ivshmem_BAR0_registers *regs;
 	struct ivshmem_BAR1_msi_x_msi_pba *msix;
-	struct famez_globals *globals;			// Base of BAR2
-	struct famez_mailbox_slot *my_slot;		// Calculated into BAR2
+	struct famez_globals *globals;		// Base of BAR2
+	struct famez_mailbox_slot *my_slot;	// Calculated into BAR2
+	struct msix_entry *msix_entries;	// kzalloc an array
 };
 
 //-------------------------------------------------------------------------
@@ -80,6 +81,11 @@ extern int famez_verbose;
 
 int famez_config(struct famez_configuration *config);
 void famez_unconfig(struct famez_configuration *config);
+
+//-------------------------------------------------------------------------
+// famez_interrupts.c
+
+int famez_setupMSIX(struct famez_configuration *, struct pci_dev *);
 
 //-------------------------------------------------------------------------
 // Debug assistance

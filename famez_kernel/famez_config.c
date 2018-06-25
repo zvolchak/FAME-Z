@@ -1,6 +1,5 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG device
 
-#include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/utsname.h>
 
@@ -69,64 +68,6 @@ static int mapthings(struct famez_configuration *config, struct pci_dev *dev)
 }
 
 //-------------------------------------------------------------------------
-// https://elixir.bootlin.com/linux/latest/source/drivers/pci/msi.c#L32
-// gets the vector count.  The table is global because the IRQ handler
-// needs something with an integer corresponding to the MSI vector.
-// Rather than make a new array of integers, just use the .entry.
-
-static struct msix_entry *msix_entries = NULL;
-
-irqreturn_t all_msix(int theint, void *thepointer) {
-	return IRQ_RETVAL(1);
-}
-
-static int setupMSIX(struct famez_configuration *config, struct pci_dev *dev)
-{
-	int i, ret, nvectors = 0;
-
-	if ((nvectors = pci_msix_vec_count(dev)) < 0) {
-		pr_err(FZ "Error retrieving MSI-X vector count\n");
-		return nvectors;
-	}
-	pr_info(FZSP "%d MSI-X vectors (%s)\n",
-		nvectors, dev->msix_enabled ? "en" : "dis");
-	if (!nvectors) {
-		pr_err(FZ "Zero MSI-X vectors\n");	// QEMU invocation
-		return -EINVAL;
-	}
-	if (config->globals->nSlots > nvectors) {
-		pr_err(FZ "not enough MSI-X vectors\n");
-		return -EDOM;
-	}
-	if (!(msix_entries = kzalloc(nvectors * sizeof(struct msix_entry), GFP_KERNEL))) {
-		pr_err(FZ "Can't create MSI-X entries table\n");
-		return -ENOMEM;
-	}
-	for (i = 0; i < nvectors; i++) 		// .vector zeroed by kzalloc
-		msix_entries[i].entry  = i;
-	if ((ret = pci_enable_msix_exact(dev, msix_entries, nvectors))) {
-		pr_err(FZ "Can't enable MSI-X vectors\n");
-		return ret;
-	}
-
-	// Attach each IRQ to the same handler.  FIXME pass in something
-	// with a backpointer to dev.
-	for (i = 0; i < nvectors; i++) {
-		if ((ret = request_irq(
-			msix_entries[i].vector,
-			all_msix,
-			0,
-			"FAME-Z",
-			&msix_entries[i]))) {
-		pr_err(FZ "Can't request IRQ for entry %d\n", i);
-		return ret;
-		}
-	}
-
-	return 0;
-}
-
-//-------------------------------------------------------------------------
 // Find the first one with two BARs and MSI-X (slightly redundant).
 
 int famez_config(struct famez_configuration *config)
@@ -156,25 +97,25 @@ int famez_config(struct famez_configuration *config)
 		return -ENODEV;
 
 	if ((ret = mapthings(config, dev)))
-		goto unmapthings;
+		goto undo;
 	pr_info(FZSP "slot size = %llu, server ID = %d\n",
 		config->globals->slotsize, config->server_id);
 
-	if ((ret = setupMSIX(config, dev)))
-		goto unIRQ;
+	if ((ret = famez_setupMSIX(config, dev)))
+		goto undo;
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
 	if ((ret = famez_sendmail(
 		config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
-			return ret;
+			goto undo;
 
-	pci_dev_get(dev);	// Keep it
-	config->pci_dev = dev;
+	// Now pci_dev_put|get(config->pci_dev) works, so keep it
+	config->pci_dev = dev;		
+	pci_dev_get(config->pci_dev);
 	return 0;
 
-unIRQ:
-unmapthings:
+undo:
 	famez_unconfig(config);
 	return ret;
 }
@@ -186,7 +127,10 @@ unmapthings:
 void famez_unconfig(struct famez_configuration *config)
 {
 	pci_disable_msix(config->pci_dev);
-	kfree(msix_entries);
+	if (config->msix_entries) {
+		kfree(config->msix_entries);
+		config->msix_entries = NULL;
+	}
 	if (config->globals) iounmap(config->globals);
 	if (config->msix) iounmap(config->msix);
 	if (config->regs) iounmap(config->regs);
