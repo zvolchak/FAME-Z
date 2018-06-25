@@ -37,11 +37,15 @@ class IVSHMEM_Event_Notifier(object):  # Probably overkill
 
     _libc = cdll.LoadLibrary('libc.so.6')
 
-    def __init__(self, init_val=0, active=False):
+    def __init__(self, init_val=0, active=False, valid_eventfd = -1):
+        '''valid_eventfd is from client; server always makes a new one.'''
+        self.cbdata = None
+        if valid_eventfd >= 0:
+            self.rfd = self.wfd = valid_eventfd
+            return
         self.rfd = self.wfd = self._libc.eventfd(
             init_val, self.EFD_NONBLOCK | self.EFD_CLOEXEC)
         assert self.rfd >= 0, 'eventfd() failed'
-        self.cbdata = None
         if active:
             self.incr()
 
@@ -90,8 +94,17 @@ class IVSHMEM_Event_Notifier(object):  # Probably overkill
         self.rfd = self.wfd = -1
 
 
-def ivshmem_event_notifier_list(count):
-    return [ IVSHMEM_Event_Notifier() for _ in range(count) ]
+def ivshmem_event_notifier_list(list_or_count):
+    '''Polymorphic.  If list_or_count is an integer, create that many event
+       objects with new fds.  If it's a list of ints, assume they are fds
+       and create a list of objects re-using those ints.'''
+    if isinstance(list_or_count, int):
+        return [ IVSHMEM_Event_Notifier()
+            for _ in range(list_or_count) ]
+    if isinstance(list_or_count, (list, tuple)):
+        return [ IVSHMEM_Event_Notifier(valid_eventfd=fd)
+            for fd in list_or_count ]
+
 
 ###########################################################################
 # https://stackoverflow.com/questions/28449455/integrating-hid-access-with-evdev-on-linux-with-python-twisted

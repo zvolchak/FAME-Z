@@ -32,10 +32,10 @@ from zope.interface import implementer
 
 try:
     from ivshmem_sendrecv import ivshmem_send_one_msg, ivshmem_recv_one_msg
-    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg, ivshmem_recv_one_msg
-    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -71,10 +71,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def fileDescriptorReceived(self, latest_fd):
         assert self._latest_fd is None, 'Latest fd has not been consumed'
         self._latest_fd = latest_fd
-        if self.args.verbose:
-            print('New FD=%d: My ID %s, mbox %s, server ID %s, peer list %s' %
-                  (latest_fd, self.my_id, self.mailbox_fd,
-                  self.server_id, self.peer_list.keys()))
 
     @property
     def latest_fd(self):
@@ -97,11 +93,18 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             assert version == self.IVSHMEM_PROTOCOL_VERSION, \
                 'Unxpected protocol version %d' % version
             assert minusone == -1, 'Did not get -1 with mailbox fd'
-            if self.args.verbose:
-                print('My ID = %d' % (self.my_id))
+            print('My ID = %d' % (self.my_id))
+            # Post my name to mailbox
+            tmp = 'famezcli%02d' % self.my_id
+            tmp = tmp.encode()
+            self.mailbox_mm = mmap.mmap(self.mailbox_fd, 0)
+            index = self.my_id * 512     # start of nodename
+            self.mailbox_mm[index:index + len(tmp)] = tmp
             return
 
-        # Now into the stream of <peer id><eventfd> pairs.
+        # Now into the stream of <peer id><eventfd> pairs.  That's one set
+        # for each true client, one for the server (famez "voodoo") and
+        # finally one set for me.
         latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
@@ -113,28 +116,36 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # batch lengths could be different for each peer, but in famez
         # they're all the same.  Just shove all fds in, including mine.
 
-        if this == self.my_id:  # It's the last group, so retrieve server ID
+        if this == self.my_id:  # It's the last group, so deduce the server ID
             if self.server_id is None:
                 self.server_id = list(self.peer_list.keys())[-1]
+                print('Server ID =', self.server_id)
 
+        # Just save the eventfd now, generate objects later.
         try:
-            self.peer_list[this].append(latest_fd)
+            self.peer_list[this].append(latest_fd)   # order matters
         except KeyError as e:
             self.peer_list[this] = [latest_fd, ]
-
-        # Got to do this inband because nothing more may be coming.
-        if this == self.my_id and (
-            len(self.peer_list[self.my_id]) ==
-            len(self.peer_list[self.server_id])
-        ):
-            print('Last pass through, right?  Set up event id handlers')
-
 
         if self.args.verbose == 1:
             print('peer list is now %s' % str(self.peer_list.keys()))
         elif self.args.verbose > 1:
             for id, eventfds in self.peer_list.items():
                 print(id, eventfds)
+
+        # Got to do this inband NOW because nothing more may be coming.
+        if this == self.my_id and (
+            len(self.peer_list[self.my_id]) ==
+            len(self.peer_list[self.server_id])
+        ):
+            # Do the batch conversion now
+            newlist = OrderedDict()
+            for id, fds in self.peer_list.items():
+                newlist[id] = ivshmem_event_notifier_list(fds)
+            self.peer_list = newlist
+            # Tell the server I'm here and FIXME set up my event listeners
+            print('Announce myself to server, now set up event id handlers')
+            self.peer_list[self.server_id][self.my_id].incr()
 
     def connectionMade(self):
         print('Connection made on fd', self.transport.fileno())
