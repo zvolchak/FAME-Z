@@ -31,11 +31,11 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 from zope.interface import implementer
 
 try:
-    from ivshmem_sendrecv import ivshmem_send_one_msg, ivshmem_recv_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
+    from famez_mailbox import place_in_slot
 except ImportError as e:
-    from .ivshmem_sendrecv import ivshmem_send_one_msg, ivshmem_recv_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
+    from .famez_mailbox import place_in_slot
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -143,8 +143,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             for id, fds in self.peer_list.items():
                 newlist[id] = ivshmem_event_notifier_list(fds)
             self.peer_list = newlist
-            # Tell the server I'm here and FIXME set up my event listeners
             print('Announce myself to server, now set up event id handlers')
+            place_in_slot(self.mailbox_mm, self.my_id, 'Ready player one')
             self.peer_list[self.server_id][self.my_id].incr()
 
     def connectionMade(self):

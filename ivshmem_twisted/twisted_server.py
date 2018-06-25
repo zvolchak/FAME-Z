@@ -27,11 +27,11 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS
+    from famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from .famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS
+    from .famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot
 
 # Don't use peer ID 0, certain documentation implies it's reserved.  Put the
 # server ID at the end of the list (nSlots-1) and use the middle for clients.
@@ -102,7 +102,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         server_peer_list = self.peer_list
 
         if len(server_peer_list) >= self.args.nSlots - 2 or self.id == -1:
-            self.logerr('Max clients reached (%d)' % IVSHMEM_MAX_CLIENTS)
+            self.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
             return
 
@@ -210,18 +210,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     @staticmethod
     def ERcallback(vectorobj):
-        # Strings are known to be null padded.
         selph = vectorobj.cbdata
-        index = vectorobj.num * 512     # start of nodename
-        selph.nodename, msglen = struct.unpack('32sQ',
-            selph.mailbox_mm[index:index + 40])
-        selph.nodename = selph.nodename.split(b'\0', 1)[0].decode()
-        index += 128
-        fmt = '%ds' % msglen
-        selph.msg = struct.unpack(fmt, selph.mailbox_mm[index:index + msglen])
-        selph.msg = selph.msg[0].split(b'\0', 1)[0].decode()
+        nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
         selph.logmsg('"%s" (%d) sends "%s"' %
-            (selph.nodename, vectorobj.num, selph.msg))
+            (nodename, vectorobj.num, msg))
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,

@@ -74,6 +74,42 @@ def prepare_mailbox(path, nSlots=MAILBOX_MAX_SLOTS):
     _populate_mailbox(fd, nSlots)
     return fd
 
+###########################################################################
+
+
+def pickup_from_slot(mailbox_mm, slotnum, asbytes=False):
+    assert 1 <= slotnum < MAILBOX_MAX_SLOTS, 'Slotnum is out of domain'
+    index = slotnum * 512     # start of nodename
+    nodename, msglen = struct.unpack('32sQ', mailbox_mm[index:index + 40])
+    nodename = nodename.split(b'\0', 1)[0].decode()
+    index += 128
+    fmt = '%ds' % msglen
+    msg = struct.unpack(fmt, mailbox_mm[index:index + msglen])
+    # Returned a single element tuple that should be NUL-padded to end.
+    msg = msg[0].split(b'\0', 1)[0]
+    if not asbytes:
+        msg = msg.decode()
+    return nodename, msg
+
+###########################################################################
+
+
+def place_in_slot(mailbox_mm, slotnum, msg):
+    assert 1 <= slotnum < MAILBOX_MAX_SLOTS, 'Slotnum is out of domain'
+    if isinstance(msg, str):
+        msg = msg.encode()
+    assert isinstance(msg, bytes), 'msg must be string or bytes'
+    msglen = len(msg)   # It's bytes now
+    assert msglen < 384, 'Message too long'
+
+    index = slotnum * 512 + 32    # Start of msglen
+    mailbox_mm[index:index + 8] = struct.pack('Q', msglen)
+    index = slotnum * 512 + 128   # Start of msg
+    mailbox_mm[index:index + msglen] = msg
+
+###########################################################################
+
+
 if __name__ == '__main__':
     fd = prepare_mailbox('/tmp/junk', 4)
     _populate_mailbox(fd, 4)
