@@ -13,6 +13,8 @@ import os
 import struct
 import sys
 
+from collections import OrderedDict
+
 from twisted.python import log as TPlog
 from twisted.python.logfile import DailyLogFile
 
@@ -27,11 +29,11 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot
+    from famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot, place_in_slot
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from .famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot
+    from .famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot, place_in_slot
 
 # Don't use peer ID 0, certain documentation implies it's reserved.  Put the
 # server ID at the end of the list (nSlots-1) and use the middle for clients.
@@ -212,8 +214,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
-        selph.logmsg('"%s" (%d) sends "%s"' %
-            (nodename, vectorobj.num, msg))
+        selph.logmsg('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
+        if msg == 'ping':
+            place_in_slot(selph.mailbox_mm, selph.server_id, 'pong')
+            print(selph.peer_list, selph.vectors, file=sys.stderr)
+            # selph.peer_list[vectorobj.num][selph.server_id].incr()
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,

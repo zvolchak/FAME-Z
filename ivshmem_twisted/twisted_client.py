@@ -176,9 +176,36 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         selph = vectorobj.cbdata
         nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
         print('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
+        if msg == 'ping':
+            place_in_slot(selph.mailbox_mm, selph.my_id, 'pong')
+            selph.peer_list[vectorobj.num][selph.my_id].incr()
 
-    def startedConnecting(self, connector):
-        print('Started connecting')
+    def doCommand(self, cmdline):
+        print('By your command: ', end='')
+        if not cmdline:
+            print('<empty>')
+            return
+        print(cmdline)
+        elems = cmdline.split()
+        cmd = elems.pop(0)
+        try:    # Errors in here break things
+            if cmd == 'send':
+                assert len(elems) >= 2, 'usage: %s target message....'
+                target = elems.pop(0)
+                msg = ' '.join(elems)
+                if target == 'server':
+                    target = self.peer_list[self.server_id][self.my_id]
+                else:
+                    target = self.peer_list[int(target)][self.my_id]
+                place_in_slot(self.mailbox_mm, self.my_id, msg)
+                target.incr()
+                return
+            if cmd == 'dir':
+                print(dir(self))
+                return
+
+        except Exception as e:
+            print('Error: %s' % str(e), file=sys.stderr)
 
 ###########################################################################
 # An error in here breaks the connection to the server.
@@ -189,13 +216,16 @@ class Commander(basic.LineReceiver):
     prompt = b'cmd> '
 
     def __init__(self, jfdi):
-        self.jfdi = jfdi
+        self.jfdi = jfdi if hasattr(jfdi, 'doCommand') else None
 
     # Skip on connectionMade so it doesn't overwrite Client protocol
 
     def lineReceived(self, line):
         if line:
-            self.sendLine(b'Echo: ' + line)
+            if self.jfdi:
+                self.jfdi.doCommand(line.decode())
+            else:
+                self.sendLine(b'IGNORE: ' + line)
         self.transport.write(self.prompt)
 
 ###########################################################################
