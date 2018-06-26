@@ -15,11 +15,11 @@ import sys
 
 from collections import OrderedDict
 
-from twisted.python import log as TPlog
-from twisted.python.logfile import DailyLogFile
-
+from twisted.internet import stdio
 from twisted.internet import error as TIError
 from twisted.internet import reactor as TIreactor
+
+from twisted.protocols import basic
 
 from twisted.internet.endpoints import UNIXClientEndpoint
 
@@ -55,12 +55,13 @@ except ImportError as e:
 # Then it pingpongs evenly between an fd and a single quadword for
 # each grouping.
 
-@implementer(IFileDescriptorReceiver)
+@implementer(IFileDescriptorReceiver)   # Energizes fileDescriptorReceived
 class ProtocolIVSHMSGClient(TIPProtocol):
 
     IVSHMEM_PROTOCOL_VERSION = 0
 
     def __init__(self, cmdlineargs):
+        print(cmdlineargs)
         self.args = cmdlineargs
         self.my_id = None       # Until initial info; state machine key
         self.server_id = None
@@ -180,6 +181,24 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         print('Started connecting')
 
 ###########################################################################
+# An error in here breaks the connection to the server.
+
+class Commander(basic.LineReceiver):
+
+    delimiter = os.linesep.encode('ascii')      # For stdin
+    prompt = b'cmd> '
+
+    def __init__(self, jfdi):
+        self.jfdi = jfdi
+
+    # Skip on connectionMade so it doesn't overwrite Client protocol
+
+    def lineReceived(self, line):
+        if line:
+            self.sendLine(b'Echo: ' + line)
+        self.transport.write(self.prompt)
+
+###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,
 # interwoven with passing this constructor.  This approach hides
 # all the twisted things in this module.
@@ -213,12 +232,12 @@ class FactoryIVSHMSGClient(TIPClientFactory):
             timeout=1,
             checkPID=False)
         E.connect(self)
-        print('Connecting to %s' % args.socketpath)
 
-    def buildProtocol(self, useless_addr):
-        print('buildProtocol')
-        return ProtocolIVSHMSGClient(self.args)
-        return JFDI(self.args)
+    def buildProtocol(self, addr):
+        print('buildProtocol', addr.name)
+        tmp = ProtocolIVSHMSGClient(self.args)
+        stdio.StandardIO(Commander(tmp))
+        return tmp
 
     def startedConnecting(self, connector):
         print('Started connecting')
@@ -232,3 +251,7 @@ class FactoryIVSHMSGClient(TIPClientFactory):
     def run(self):
         TIreactor.run()
 
+if __name__ == '__main__':
+    from pdb import set_trace
+    set_trace()
+    pass
