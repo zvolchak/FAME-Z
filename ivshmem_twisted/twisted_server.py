@@ -54,12 +54,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     args = None        # Invariant across instances
     logmsg = None
     logerr = None
-    peer_list = []     # Map transport fds to list of eventfds
+    peer_list = []     # Map peer IDs to list of eventfds
     server_id = None
 
     # Non-standard addition to IVSHMEM server role: this server can be
     # interrupted and messaged to particpate in client activity.
-    event_notifiers = None
+    famez_notifiers = None
 
     def __init__(self, factory):
         # First do class-level initialization of singletons
@@ -71,21 +71,20 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.server_id = self.args.nSlots - 1
             self.__class__.mailbox_mm = mmap.mmap(self.args.mailbox_fd, 0)
 
+            # Usually create eventfds for receiving messages in IVSHMSG and
+            # set up a callback.  This early arming is not a race condition
+            # as the peer for which this is destined has not yet been told
+            # of the fds it would use to trigger here.
+            print(self.args, file=sys.stderr)
             if not self.args.silent:
-                # Create eventfds for receiving messages in IVSHMEM fashion
-                # then add a callback.  The object right now is the eventfd
-                # itself, don't send "self" because this is destined to
-                # be a true peer object.  Pad out the eventfd object with
-                # attributes to assist the callback.
-                self.__class__.event_notifiers = ivshmem_event_notifier_list(
+                self.__class__.famez_notifiers = ivshmem_event_notifier_list(
                     self.args.nSlots)
-                for i, this_notifier in enumerate(self.event_notifiers):
+                for i, this_notifier in enumerate(self.famez_notifiers):
                     this_notifier.num = i
                     tmp = EventfdReader(this_notifier, self.ERcallback, self)
                     tmp.start()
 
-        # Finish with any actual instance attributes.
-        self.create_new_peer_id()
+        self.create_new_peer_id()   # Check if it worked after connection is up
 
     def logPrefix(self):    # This override works after instantiation
         return 'ProtocolIVSHMSG'
@@ -95,32 +94,33 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         self.logerr('dataReceived')
         raise NotImplementedError(self)
 
-    def connectionMade(self):
-        self.logmsg(
-            'Peer id %d @ socket %d' % (self.id, self.transport.fileno()))
-
-        # Introduce variables that resemble the QEMU "ivshmem-server" code.
-        peer = self
-        server_peer_list = self.peer_list
-
-        if len(server_peer_list) >= self.args.nSlots - 2 or self.id == -1:
-            self.logerr('Max clients reached')
+    # Use variables that resemble the QEMU "ivshmem-server.c":  peer == self.
+    # If errors occur early enough, send a bad revision to the client so it
+    # terminates the connection.
+    def connectionMade(peer):
+        peer.logmsg(
+            'Peer id %d @ socket %d' % (peer.id, peer.transport.fileno()))
+        if peer.id == -1:
+            peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
             return
+        server_peer_list = peer.peer_list
 
-        # Server line 175: create specified number of eventfds, mixed with
-        # Server line 183: send peer id and shm fd
+        # Server line 175: create specified number of eventfds.  These are
+        # shared with all other clients who use them to signal each other.
         try:
-            peer.vectors = ivshmem_event_notifier_list(self.args.nSlots)
+            peer.vectors = ivshmem_event_notifier_list(peer.args.nSlots)
         except Exception as e:
-            self.logerr('Event notifiers failed: %s' % str(e))
+            peer.logerr('Event notifiers failed: %s' % str(e))
             peer.send_initial_info(False)
             return
+
+        # Server line 183: send version, peer id, shm fd
         peer.send_initial_info()
 
         # Server line 189: advertise the new peer to others.  Note that
-        # this new "peer" has not yet been added to the list, so this
-        # loop is not traversed for the first client.
+        # this new peer has not yet been added to the list; this loop is
+        # NOT traversed for the first peer to connect.
         for other_peer in server_peer_list:
             for peer_vector in peer.vectors:
                 ivshmem_send_one_msg(
@@ -128,7 +128,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     peer.id,
                     peer_vector.wfd)
 
-        # Server line 197: advertise the other peers to the new one
+        # Server line 197: advertise the other peers to the new one.
         for other_peer in server_peer_list:
             for other_peer_vector in other_peer.vectors:
                 ivshmem_send_one_msg(
@@ -136,15 +136,21 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     other_peer.id,
                     other_peer_vector.wfd)
 
-        # Non-standard voodoo: advertise me (this server) to the new peer.
-        if not self.args.silent:
-            for server_vector in self.event_notifiers:
+        # Non-standard voodoo: advertise me (this server) to the new one.
+        # It's just one more grouping in the previous batch.
+        if peer.famez_notifiers:
+            peer.logmsg('FAMEZ voodoo: sending server (ID=%d) notifiers' %
+                peer.server_id)
+            for server_vector in peer.famez_notifiers:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
-                    self.server_id,
+                    peer.server_id,
                     server_vector.wfd)
 
-        # Server line 205: advertise the new peer to itself
+        # Server line 205: advertise the new peer to itself, ie, send the
+        # eventfds it needs for receiving messages.  This final batch
+        # where the embedded peer.id matches the initial_info id is the
+        # sentinel that communications are finished.
         for peer_vector in peer.vectors:
             ivshmem_send_one_msg(
                 peer.transport.socket,
@@ -155,7 +161,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         server_peer_list.append(peer)
 
     def connectionLost(self, reason):
-        '''Tell the other peers that I have died.'''
+        '''Tell the other peers that this one has died.'''
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
             txt = 'Dirty'
             logit = self.logerr
@@ -166,8 +172,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         try:
             if self in self.peer_list:     # Only if everything was done
                 self.peer_list.remove(self)
-                for other_peer in self.peer_list:
-                    ivshmem_send_one_msg(other_peer.transport.socket, self.id)
+            for other_peer in self.peer_list:
+                ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
             for vector in self.vectors:
                 vector.cleanup()
@@ -189,26 +195,22 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                   frozenset((IVSHMEM_UNUSED_ID, self.server_id ))
         self.id = sorted(max_ids - current_ids)[0]
 
-    def send_initial_info(self, ok=True):
-        # Server line 103 and client line 210:
-        # Protocol version, with no explicit mention of an fd.
-        thesocket = self.transport.socket
-        if not ok:
-            # Will violate the version check and bomb the client.
+    def send_initial_info(peer, ok=True):   # keep the convention self=="peer"
+        # Protocol version without fd.
+        thesocket = peer.transport.socket
+        if not ok:  # Violate the version check and bomb the client.
             ivshmem_send_one_msg(thesocket, -1)
-            self.transport.loseConnection()
-            self.id = -1
+            peer.transport.loseConnection()
+            peer.id = -1
             return
-        ivshmem_send_one_msg(thesocket, self.IVSHMEM_PROTOCOL_VERSION)
+        ivshmem_send_one_msg(thesocket, peer.IVSHMEM_PROTOCOL_VERSION)
 
-        # Server line 111 and client line 217:
-        # our index/id and explicit need for fd == -1 on client side
-        ivshmem_send_one_msg(thesocket, self.id)
+        # The client's id, without an fd.
+        ivshmem_send_one_msg(thesocket, peer.id)
 
-        # Server line 119 and client line 225:
-        # -1 "index" and a real FD that still seems to be used.  It
-        # may supersede the QEMU 2.5 explicit declaration of ivshmem.
-        ivshmem_send_one_msg(thesocket, -1, self.args.mailbox_fd)
+        # -1 for data and the fd of the ivshmem file.  Using this protocol
+        # a valid fd is required.
+        ivshmem_send_one_msg(thesocket, -1, peer.args.mailbox_fd)
 
     @staticmethod
     def ERcallback(vectorobj):
@@ -216,9 +218,16 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
         selph.logmsg('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
-            place_in_slot(selph.mailbox_mm, selph.server_id, 'pong')
-            print(selph.peer_list, selph.vectors, file=sys.stderr)
-            # selph.peer_list[vectorobj.num][selph.server_id].incr()
+            place_in_slot(selph.mailbox_mm, selph.server_id, 'PONG')
+            # print(selph.peer_list, '\n', selph.vectors, file=sys.stderr)
+            for peer in selph.peer_list:
+                if peer.id == vectorobj.num:
+                    print('Matched peer object at index', peer.id)
+                    break
+            else:   # The peer disappeared?
+                selph.logmsg('Disappeering act')
+                return
+            peer.vectors[selph.server_id].incr()
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,
@@ -233,7 +242,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         'logfile':      '/tmp/ivshmem_log',
         'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
         'nSlots':       4,
-        'silent':       True,       # Does NOT participate in eventfds/mailbox
+        'silent':       False,      # Does participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
         'verbose':      0,
     }
