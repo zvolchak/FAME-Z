@@ -60,13 +60,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     IVSHMEM_PROTOCOL_VERSION = 0
 
     def __init__(self, cmdlineargs):
-        print(cmdlineargs)
         self.args = cmdlineargs
         self.my_id = None       # Until initial info; state machine key
+        self.my_name = None     # Generate it for myself, retrieve for peers
         self.server_id = None
         self.peer_list = OrderedDict()
         self.mailbox_fd = None
         self._latest_fd = None
+        self.id2nodename = None
 
     def fileDescriptorReceived(self, latest_fd):
         assert self._latest_fd is None, 'Latest fd has not been consumed'
@@ -74,12 +75,42 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     @property
     def latest_fd(self):
-        '''This is NOT idempotent!  Could return -1 like the C version does
-           but I'm partial to exceptions.'''
-        assert self._latest_fd is not None, 'No fd to consume'
+        '''This is NOT idempotent!'''
         tmp = self._latest_fd
-        self._latest_fd = None
+        self._latest_fd = None  # legacy client routine returns -1
         return tmp
+
+    def parse_target(self, instr):
+        if instr.lower() == 'server':
+            return self.server_id
+        try:
+            index = int(instr)
+        except ValueError as e:
+            for id, nodename in self.id2nodename.items():
+                if nodename == instr:
+                    index = id
+                    break
+            else:
+                index = -1
+        if index not in self.peer_list:
+            print('Non-existent target "%s"' % instr)
+            return None
+        return index
+
+    def get_nodenames(self):
+        self.id2nodename = OrderedDict()
+        for id in self.peer_list:   # integer keys: their ID
+            nodename, _ = pickup_from_slot(self.mailbox_mm, id)
+            self.id2nodename[id] = nodename
+
+    def place_and_go(self, dest, msg, src=None):
+        dest_index = self.parse_target(dest)
+        if src is None:
+            src_index = self.my_id
+        else:
+            src_index = self.parse_target(src)
+        place_in_slot(self.mailbox_mm, src_index, msg)
+        self.peer_list[dest_index][src_index].incr()
 
     def dataReceived(self, data):
         if self.my_id is None:      # Initial info
@@ -92,11 +123,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             version, self.my_id, minusone = struct.unpack('qqq', data)
             assert version == self.IVSHMEM_PROTOCOL_VERSION, \
                 'Unxpected protocol version %d' % version
-            assert minusone == -1, 'Did not get -1 with mailbox fd'
-            print('My ID = %d' % (self.my_id))
+            assert minusone == -1, \
+                'Expected -1 with mailbox fd, got %d' % minuseone
+            self.my_name = 'z%02d' % self.my_id
+            print('This ID = %2d (%s)' % (self.my_id, self.my_name))
+
             # Post my name to mailbox
-            tmp = 'famezcli%02d' % self.my_id
-            tmp = tmp.encode()
+            tmp = self.my_name.encode()
             self.mailbox_mm = mmap.mmap(self.mailbox_fd, 0)
             index = self.my_id * 512     # start of nodename
             self.mailbox_mm[index:index + len(tmp)] = tmp
@@ -109,6 +142,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
         assert this >= 0, 'Latest data is negative number'
+
+        if latest_fd is None:
+            print('Client %d disconnect??????' % this)
+            return
 
         # Get a stream of batched integers, batch length == nVectors.
         # One batch for each existing peer, then the server (see
@@ -158,13 +195,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             tmp = EventfdReader(this_notifier, self.ERcallback, self)
             tmp.start()
 
-        # NOW I'm done.  FIXME handle other peer deaths
-        print('Announcing myself to server')
-        place_in_slot(self.mailbox_mm, self.my_id, 'Ready player one')
-        self.peer_list[self.server_id][self.my_id].incr()
+        # NOW I'm almost done.  FIXME handle other peer deaths
+        self.get_nodenames()
+        if self.args.verbose:
+            print('Setup finished, announcing myself to server ID',
+                self.server_id)
+        self.place_and_go('server', 'Ready player one')
 
     def connectionMade(self):
-        print('Connection made on fd', self.transport.fileno())
+        if self.args.verbose:
+            print('Connection made on fd', self.transport.fileno())
 
     def connectionLost(self, reason):
         '''Tell the other peers that I have died.'''
@@ -183,6 +223,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             place_in_slot(selph.mailbox_mm, selph.my_id, 'pong')
             selph.peer_list[vectorobj.num][selph.my_id].incr()
 
+    #----------------------------------------------------------------------
+    # Command line parsing.  I'm just trying to get it to work.
+
     def doCommand(self, cmdline):
         if not cmdline:
             print('<empty>', file=sys.stderr)
@@ -193,24 +236,42 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         try:    # Errors in here break things
             if cmd in ('ping', 'send'):
                 if cmd == 'ping':
-                    assert len(elems) == 1, 'usage: ping target'
+                    assert len(elems) == 1, 'Missing dest'
                     cmd = 'send'
-                    elems.append('ping')
+                    elems.append('ping')    # Message payload
                 else:
-                    assert len(elems) >= 2, 'usage: send target [message....]'
-                target = elems.pop(0)
-                msg = ' '.join(elems)
-                if target == 'server':
-                    target = self.peer_list[self.server_id][self.my_id]
-                else:
-                    target = self.peer_list[int(target)][self.my_id]
-                place_in_slot(self.mailbox_mm, self.my_id, msg)
-                target.incr()
+                    assert len(elems) >= 1, 'Missing dest'
+                dest = elems.pop(0)
+                msg = ' '.join(elems)       # Empty list -> empty string
+                self.place_and_go(dest, msg)
+                return
+
+            if cmd == 'int':
+                assert len(elems) >= 2, 'Missing dest and/or src'
+                dest = elems.pop(0)
+                src = elems.pop(0)
+                msg = ' '.join(elems)       # Empty list -> empty string
+                self.place_and_go(dest, msg, src)
                 return
 
             if cmd == 'help' or '?' in cmd:
-                print('help ping send')
+                print('dest and src can be integer, hostname, or "server"\n')
+                print('help\n\tThis message')
+                print('ping dest\n\tShorthand for "send dest ping"')
+                print('send dest [text...]\n\tLike "int", implicit src=me')
+
+                print('\nLegacy commands from QEMU "ivshmem-client":\n')
+                print('int dest src [text...]\n\tCan spoof src')
+
+                print('\nThis ID = %2d (%s)' % (self.my_id, self.my_name))
+                self.get_nodenames()
+                for id, nodename in self.id2nodename.items():
+                    if id == self.my_id:
+                        continue
+                    print('Peer ID = %2d (%s)' % (id, nodename))
                 return
+
+            print('Unrecognized command "%s", try "help"' % cmd)
 
         except Exception as e:
             print('Error: %s' % str(e), file=sys.stderr)
