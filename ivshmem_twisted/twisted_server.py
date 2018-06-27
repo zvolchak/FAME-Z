@@ -216,13 +216,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
-        selph.logmsg('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
+        selph.logmsg('"%s" (%d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
             place_in_slot(selph.mailbox_mm, selph.server_id, 'PONG')
-            # print(selph.peer_list, '\n', selph.vectors, file=sys.stderr)
             for peer in selph.peer_list:
                 if peer.id == vectorobj.num:
-                    print('Matched peer object at index', peer.id)
                     break
             else:   # The peer disappeared?
                 selph.logmsg('Disappeering act')
