@@ -23,16 +23,30 @@ MAILBOX_SLOTSIZE = 512
 MAILBOX_MESSAGE_OFFSET = 128    # Leaves 384 bytes for message
 MAILBOX_MAX_SLOTS = 64
 
+###########################################################################
+# Globals at offset 0 (slot 0)
+# Server mailbox at slot (nSlots - 1), first 32 bytes are host name.
+
 
 def _populate_mailbox(fd, nSlots):
     mapped = mmap.mmap(fd, 0)
-    data = b'\0' * (nSlots * MAILBOX_SLOTSIZE)      # Never very big
+
+    # Empty it.  Simple from a code standpoint, never too demanding on size
+    data = b'\0' * (nSlots * MAILBOX_SLOTSIZE)
     mapped[0:len(data)] = data
 
     # Slot size, message area start within a slot, nSlots
     data = struct.pack('QQQ', MAILBOX_SLOTSIZE, MAILBOX_MESSAGE_OFFSET, nSlots)
     mapped[0:len(data)] = data
+
+    # My "hostname", zero-padded
+    data = b'FAME-Z Server'
+    index = (nSlots - 1) * MAILBOX_SLOTSIZE
+    mapped[index:index + len(data)] = data
+
     mapped.close()
+
+###########################################################################
 
 
 def prepare_mailbox(path, nSlots=MAILBOX_MAX_SLOTS):
