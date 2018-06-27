@@ -9,7 +9,6 @@
 import argparse
 import grp
 import mmap
-import os
 import struct
 import sys
 
@@ -18,8 +17,6 @@ from collections import OrderedDict
 from twisted.internet import stdio
 from twisted.internet import error as TIError
 from twisted.internet import reactor as TIreactor
-
-from twisted.protocols import basic
 
 from twisted.internet.endpoints import UNIXClientEndpoint
 
@@ -33,9 +30,11 @@ from zope.interface import implementer
 try:
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
     from famez_mailbox import place_in_slot, pickup_from_slot
+    from commander import Commander
 except ImportError as e:
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
     from .famez_mailbox import place_in_slot, pickup_from_slot
+    from .commander import Commander
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -87,9 +86,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
             # and then a -1 with the FD of the IVSHMEM file which is
             # delivered before this.
+            assert len(data) == 24, 'Initial data needs three quadwords'
             assert self.mailbox_fd is None, 'mailbox fd already set'
             self.mailbox_fd = self.latest_fd
-            assert len(data) == 24, 'Initial data needs three quadwords'
             version, self.my_id, minusone = struct.unpack('qqq', data)
             assert version == self.IVSHMEM_PROTOCOL_VERSION, \
                 'Unxpected protocol version %d' % version
@@ -117,10 +116,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # batch lengths could be different for each peer, but in famez
         # they're all the same.  Just shove all fds in, including mine.
 
-        if this == self.my_id:  # It's the last group, so deduce the server ID
+        if this == self.my_id:  # It's the last group, so recover the server ID
             if self.server_id is None:
-                self.server_id = list(self.peer_list.keys())[-1]
-                print('Server ID =', self.server_id)
+                if self.peer_list:
+                    self.server_id = list(self.peer_list.keys())[-1]
+                    assert self.prevthis == self.server_id, 'Uh oh'
+                else:
+                    self.server_id = self.prevthis
+        self.prevthis = this     # For corner case where I am first contact
 
         # Just save the eventfd now, generate objects later.
         try:
@@ -181,16 +184,20 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             selph.peer_list[vectorobj.num][selph.my_id].incr()
 
     def doCommand(self, cmdline):
-        print('By your command: ', end='')
         if not cmdline:
-            print('<empty>')
+            print('<empty>', file=sys.stderr)
             return
-        print(cmdline)
         elems = cmdline.split()
         cmd = elems.pop(0)
+
         try:    # Errors in here break things
-            if cmd == 'send':
-                assert len(elems) >= 2, 'usage: %s target message....'
+            if cmd in ('ping', 'send'):
+                if cmd == 'ping':
+                    assert len(elems) == 1, 'usage: ping target'
+                    cmd = 'send'
+                    elems.append('ping')
+                else:
+                    assert len(elems) >= 2, 'usage: send target [message....]'
                 target = elems.pop(0)
                 msg = ' '.join(elems)
                 if target == 'server':
@@ -200,33 +207,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 place_in_slot(self.mailbox_mm, self.my_id, msg)
                 target.incr()
                 return
-            if cmd == 'dir':
-                print(dir(self))
+
+            if cmd == 'help' or '?' in cmd:
+                print('help ping send')
                 return
 
         except Exception as e:
             print('Error: %s' % str(e), file=sys.stderr)
-
-###########################################################################
-# An error in here breaks the connection to the server.
-
-class Commander(basic.LineReceiver):
-
-    delimiter = os.linesep.encode('ascii')      # For stdin
-    prompt = b'cmd> '
-
-    def __init__(self, jfdi):
-        self.jfdi = jfdi if hasattr(jfdi, 'doCommand') else None
-
-    # Skip on connectionMade so it doesn't overwrite Client protocol
-
-    def lineReceived(self, line):
-        if line:
-            if self.jfdi:
-                self.jfdi.doCommand(line.decode())
-            else:
-                self.sendLine(b'IGNORE: ' + line)
-        self.transport.write(self.prompt)
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,
@@ -265,9 +252,9 @@ class FactoryIVSHMSGClient(TIPClientFactory):
 
     def buildProtocol(self, addr):
         print('buildProtocol', addr.name)
-        tmp = ProtocolIVSHMSGClient(self.args)
-        stdio.StandardIO(Commander(tmp))
-        return tmp
+        protobj = ProtocolIVSHMSGClient(self.args)
+        Commander(protobj)
+        return protobj
 
     def startedConnecting(self, connector):
         print('Started connecting')
