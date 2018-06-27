@@ -49,7 +49,7 @@ def parse_cmdline(cmdline_args):
         default=4
     )
     parser.add_argument('--silent', '-s',
-        help='Do NOT participate in EventFDs as another peer',
+        help='Do NOT participate in EventFDs/mailbox as another peer',
         action='store_true',
         default=False
     )
