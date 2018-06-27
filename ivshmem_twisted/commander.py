@@ -38,6 +38,9 @@ class _proxyCommander(LineReceiver):
         if hasattr(commProto, 'doCommand'):
             self.__class__._commProto = commProto
 
+    def connectionMade(self):   # First contact
+        self.transport.write(self._prompt)
+
     def lineReceived(self, line):
         if line:
             if self._commProto:
