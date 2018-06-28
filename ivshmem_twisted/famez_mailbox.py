@@ -135,15 +135,19 @@ def place_in_slot(mailbox_mm, slotnum, msg):
     mailbox_mm[index:index + msglen] = msg
 
 ###########################################################################
-# Called only by client.  mmap() the file, set hostname, return some globals
+# Called only by client.  mmap() the file, set hostname, return some globals.
+# Polymorphic.
 
 
-def init_mailslot(mailbox_fd, slotnum, nodename):
-    buf = os.fstat(mailbox_fd)
-    assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
-    assert 1 <= slotnum <= buf.st_size // MAILBOX_SLOT_SIZE, \
-        'Slotnum %d is out of range' % slotnum
-    mailbox_mm = mmap.mmap(mailbox_fd, 0)
+def init_mailslot(mailbox_XX, slotnum, nodename):
+    if not isinstance(mailbox_XX, int):
+        mailbox_mm = mailbox_XX
+    else:
+        buf = os.fstat(mailbox_XX)
+        assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
+        assert 1 <= slotnum <= buf.st_size // MAILBOX_SLOT_SIZE, \
+            'Slotnum %d is out of range' % slotnum
+        mailbox_mm = mmap.mmap(mailbox_XX, 0)
     nSlots = struct.unpack(
         'Q',
         mailbox_mm[GLOBALS_NSLOTS_OFFSET:GLOBALS_NSLOTS_OFFSET + 8])[0]

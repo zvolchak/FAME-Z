@@ -114,18 +114,20 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             src_index = self.my_id
         else:
             src_index = self.parse_target(src)
-        print(type(dest_index), type(src_index))
-        print('P&G dest %s=%s src %s=%s' % (dest, dest_index, src, src_index))
+        if self.args.verbose > 1:
+            print(type(dest_index), type(src_index))
+            print('P&G dest %s=%s src %s=%s' %
+                      (dest, dest_index, src, src_index))
         if src_index is -1 or dest_index is -1:
             print('P&G: bad index')
             return False
         place_in_slot(self.mailbox_mm, src_index, msg)
         try:
             self.peer_list[dest_index][src_index].incr()
-            print('P&G has gone')
             return True
         except Exception as e:
-            print('P&G failed: %s' % str(e))
+            print('place_and_go(%s, "%s", %s) failed: %s' %
+                (dest, msg, src, str(e)))
         return False
 
     def dataReceived(self, data):
@@ -155,19 +157,19 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
-        print('Just got index %s, fd %s' % (this, latest_fd))
+        if self.args.verbose > 1:
+            print('Just got index %s, fd %s' % (this, latest_fd))
         assert this >= 0, 'Latest data is negative number'
 
-        if latest_fd is None:
-            raise RuntimeError('\nNull fd for %d ???????????\n' % this)
-        if False:
+        if latest_fd is None:   # This is a disconnect notification
+            print('%s (%d) has left the building' %
+                (self.id2nodename[this], this))
             for collection in (self.peer_list, self.id2nodename, self.fd_list):
                 try:
                     del collection[this]
                 except Exception as e:
                     pass
-            # FIXME Server needs to cleanup mailbox slot first,
-            # then I can run 'get_nodenames' here.
+            init_mailslot(self.mailbox_mm, this, '')
             return
 
         # Get a stream of batched integers, batch length == nSlots.
@@ -199,13 +201,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print(id, eventfds)
 
         # Do the final housekeeping after the final batch.  ASS-U-MES all
-        # vector lists are the same length.  My vectors come last.
-        if this != self.my_id or len(self.fd_list[this]) < self.nSlots:
+        # vector lists are the same length.  My vectors come last during
+        # first pass.  During a new client join it's only their info.
+        if ((self.firstpass and this != self.my_id) or
+            (len(self.fd_list[this]) < self.nSlots)):
             return
 
         # First convert all fds to event notifier objects for both signalling
         # to other peers and waiting on signals to me.
-        print('--------- Finish housekeeping')
+        if self.args.verbose:
+            print('--------- Finish housekeeping')
         for id in self.fd_list:     # For triggering message pickup
             if id not in self.peer_list:
                 self.peer_list[id] = ivshmem_event_notifier_list(
@@ -220,10 +225,12 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         # NOW I'm almost done.
         self.get_nodenames()
-        print('Setup for peer id %d is finished' % this)
+        if self.args.verbose:
+            print('Setup for peer id %d is finished' % this)
         if self.firstpass:
-            print('Announcing myself to server ID', self.server_id)
-            self.place_and_go('server', 'Ready player one')
+            if self.args.verbose:
+                print('Announcing myself to server ID', self.server_id)
+            self.place_and_go('server', 'Ready player %s' % self.my_name)
 
         self.firstpass = False
 
@@ -262,8 +269,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         cmd = elems.pop(0)
 
         try:    # Errors in here break things
-            if cmd in ('ping', 'send'):
-                if cmd == 'ping':
+            if cmd in ('p', 'ping', 's', 'send'):
+                if cmd.startswith('p'):
                     assert len(elems) == 1, 'Missing dest'
                     cmd = 'send'
                     elems.append('ping')    # Message payload
@@ -274,7 +281,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 self.place_and_go(dest, msg)
                 return
 
-            if cmd == 'int':
+            if cmd in ('i', 'int'):
                 assert len(elems) >= 2, 'Missing dest and/or src'
                 dest = elems.pop(0)
                 src = elems.pop(0)
@@ -282,7 +289,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 self.place_and_go(dest, msg, src)
                 return
 
-            if cmd == 'dump':
+            if cmd in ('d', 'dump'):
                 print('Actor event fds:')
                 for key in sorted(self.fd_list.keys()):
                     print('\t%2d %s' % (key, self.fd_list[key]))
@@ -295,14 +302,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print('\t%s' % sorted(self.peer_list.keys()))
                 return
 
-            if cmd == 'help' or '?' in cmd:
+            if cmd in ('h', 'help') or '?' in cmd:
                 print('dest and src can be integer, hostname, or "server"\n')
-                print('help\n\tThis message')
-                print('ping dest\n\tShorthand for "send dest ping"')
-                print('send dest [text...]\n\tLike "int", implicit src=me')
+                print('h[elp]\n\tThis message')
+                print('p[ing] dest\n\tShorthand for "send dest ping"')
+                print('s[end] dest [text...]\n\tLike "int", implicit src=me')
 
                 print('\nLegacy commands from QEMU "ivshmem-client":\n')
-                print('int dest src [text...]\n\tCan spoof src')
+                print('i[nt] dest src [text...]\n\tCan spoof src')
 
                 print('\nThis ID = %2d (%s)' % (self.my_id, self.my_name))
                 self.get_nodenames()
@@ -353,7 +360,8 @@ class FactoryIVSHMSGClient(TIPClientFactory):
         E.connect(self)
 
     def buildProtocol(self, addr):
-        print('buildProtocol', addr.name)
+        if self.args.verbose > 1:
+            print('buildProtocol', addr.name)
         protobj = ProtocolIVSHMSGClient(self.args)
         Commander(protobj)
         return protobj
