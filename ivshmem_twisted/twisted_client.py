@@ -93,42 +93,58 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.id2nodename[id] = nodename
 
     def parse_target(self, instr):
+        '''Always return a list, for consistency with keywords ALL and
+           OTHERS.'''
         self.get_nodenames()
-        index = -1  # Similar to the default in the original QEMU programs.
+        indices = tuple()
         try:
-            index = int(instr)
+            indices = (int(instr), )
         except TypeError as e:
-            index = -99
+            return indices
         except ValueError as e:
             if instr.lower() == 'server':
-                return self.server_id
+                return (self.server_id,)
+            elif instr.lower() == 'all':
+                return sorted(self.id2nodename.keys())
+            elif instr.lower() == 'others':
+                tmp = list(self.id2nodename.keys())
+                del tmp[self.my_id]
+                return sorted(tmp)
+
             for id, nodename in self.id2nodename.items():
                 if nodename == instr:
-                    index = id
+                    indices = (id, )
                     break
-        return index
+        return indices
 
     def place_and_go(self, dest, msg, src=None):
-        dest_index = self.parse_target(dest)
+        dest_indices = self.parse_target(dest)
         if src is None:
-            src_index = self.my_id
+            src_indices = (self.my_id,)
         else:
-            src_index = self.parse_target(src)
+            src_indices = self.parse_target(src)
         if self.args.verbose > 1:
-            print(type(dest_index), type(src_index))
             print('P&G dest %s=%s src %s=%s' %
-                      (dest, dest_index, src, src_index))
-        if src_index is -1 or dest_index is -1:
-            print('P&G: bad index')
+                      (dest, dest_indices, src, src_indices))
+        if  not (src_indices and dest_indices):
+            print('P&G: bad indices')
             return False
-        place_in_slot(self.mailbox_mm, src_index, msg)
-        try:
-            self.peer_list[dest_index][src_index].incr()
-            return True
-        except Exception as e:
-            print('place_and_go(%s, "%s", %s) failed: %s' %
-                (dest, msg, src, str(e)))
-        return False
+        for S in src_indices:
+            place_in_slot(self.mailbox_mm, S, msg)
+            for D in dest_indices:
+                if self.args.verbose > 1:
+                    print('P&G(%s, "%s", %s)' % (D, msg, S))
+                try:
+                    self.peer_list[D][S].incr()
+                except Exception as e:
+                    print('place_and_go(%s, "%s", %s) failed: %s' %
+                        (D, msg, S, str(e)))
+                    return False
+        return True
+
+    @property
+    def nodename(self):
+        return self.my_name
 
     def dataReceived(self, data):
         if self.my_id is None and self.firstpass:      # Initial info
@@ -250,7 +266,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
-        print('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
+        print('%s (%d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
             try:
                 print('and now I will pong')
@@ -262,8 +278,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     # Command line parsing.  I'm just trying to get it to work.
 
     def doCommand(self, cmdline):
-        if not cmdline:
-            print('<empty>', file=sys.stderr)
+        if not cmdline.strip():
             return
         elems = cmdline.split()
         cmd = elems.pop(0)
