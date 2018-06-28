@@ -29,11 +29,11 @@ from zope.interface import implementer
 
 try:
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
-    from famez_mailbox import place_in_slot, pickup_from_slot
+    from famez_mailbox import init_mailslot, place_in_slot, pickup_from_slot
     from commander import Commander
 except ImportError as e:
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
-    from .famez_mailbox import place_in_slot, pickup_from_slot
+    from .famez_mailbox import init_mailslot, place_in_slot, pickup_from_slot
     from .commander import Commander
 
 ###########################################################################
@@ -64,10 +64,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self.my_id = None       # Until initial info; state machine key
         self.my_name = None     # Generate it for myself, retrieve for peers
         self.server_id = None
-        self.peer_list = OrderedDict()
+        self.fd_list = OrderedDict()    # Sent to me
+        self.peer_list = OrderedDict()  # Calculated at end
         self.mailbox_fd = None
         self._latest_fd = None
         self.id2nodename = None
+        self.nSlots = 0
+        # The state machine major decisions about the semantics of blocks of
+        # data have one predicate.   While technically unecessary, firstpass
+        # guards against server errors.
+        self.firstpass = True
 
     def fileDescriptorReceived(self, latest_fd):
         assert self._latest_fd is None, 'Latest fd has not been consumed'
@@ -80,28 +86,27 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self._latest_fd = None  # legacy client routine returns -1
         return tmp
 
+    def get_nodenames(self):
+        self.id2nodename = OrderedDict()
+        for id in sorted(self.fd_list):   # integer keys: their ID
+            nodename, _ = pickup_from_slot(self.mailbox_mm, id)
+            self.id2nodename[id] = nodename
+
     def parse_target(self, instr):
-        if instr.lower() == 'server':
-            return self.server_id
+        self.get_nodenames()
+        index = -1  # Similar to the default in the original QEMU programs.
         try:
             index = int(instr)
+        except TypeError as e:
+            index = -99
         except ValueError as e:
+            if instr.lower() == 'server':
+                return self.server_id
             for id, nodename in self.id2nodename.items():
                 if nodename == instr:
                     index = id
                     break
-            else:
-                index = -1
-        if index not in self.peer_list:
-            print('Non-existent target "%s"' % instr)
-            return None
         return index
-
-    def get_nodenames(self):
-        self.id2nodename = OrderedDict()
-        for id in self.peer_list:   # integer keys: their ID
-            nodename, _ = pickup_from_slot(self.mailbox_mm, id)
-            self.id2nodename[id] = nodename
 
     def place_and_go(self, dest, msg, src=None):
         dest_index = self.parse_target(dest)
@@ -109,11 +114,22 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             src_index = self.my_id
         else:
             src_index = self.parse_target(src)
+        print(type(dest_index), type(src_index))
+        print('P&G dest %s=%s src %s=%s' % (dest, dest_index, src, src_index))
+        if src_index is -1 or dest_index is -1:
+            print('P&G: bad index')
+            return False
         place_in_slot(self.mailbox_mm, src_index, msg)
-        self.peer_list[dest_index][src_index].incr()
+        try:
+            self.peer_list[dest_index][src_index].incr()
+            print('P&G has gone')
+            return True
+        except Exception as e:
+            print('P&G failed: %s' % str(e))
+        return False
 
     def dataReceived(self, data):
-        if self.my_id is None:      # Initial info
+        if self.my_id is None and self.firstpass:      # Initial info
             # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
             # and then a -1 with the FD of the IVSHMEM file which is
             # delivered before this.
@@ -128,11 +144,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.my_name = 'z%02d' % self.my_id
             print('This ID = %2d (%s)' % (self.my_id, self.my_name))
 
-            # Post my name to mailbox
-            tmp = self.my_name.encode()
-            self.mailbox_mm = mmap.mmap(self.mailbox_fd, 0)
-            index = self.my_id * 512     # start of nodename
-            self.mailbox_mm[index:index + len(tmp)] = tmp
+            # Post my name to mailbox FIXME move this to famez_mailbox.py
+            self.mailbox_mm, self.nSlots = init_mailslot(
+                self.mailbox_fd, self.my_id, self.my_name)
             return
 
         # Now into the stream of <peer id><eventfd> pairs.  That's one set
@@ -141,66 +155,77 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
+        print('Just got index %s, fd %s' % (this, latest_fd))
         assert this >= 0, 'Latest data is negative number'
 
         if latest_fd is None:
-            print('Client %d disconnect??????' % this)
+            raise RuntimeError('\nNull fd for %d ???????????\n' % this)
+        if False:
+            for collection in (self.peer_list, self.id2nodename, self.fd_list):
+                try:
+                    del collection[this]
+                except Exception as e:
+                    pass
+            # FIXME Server needs to cleanup mailbox slot first,
+            # then I can run 'get_nodenames' here.
             return
 
-        # Get a stream of batched integers, batch length == nVectors.
+        # Get a stream of batched integers, batch length == nSlots.
         # One batch for each existing peer, then the server (see
         # the "voodoo" comment in twisted_server.py).  In general the
         # batch lengths could be different for each peer, but in famez
         # they're all the same.  Just shove all fds in, including mine.
 
-        if this == self.my_id:  # It's the last group, so recover the server ID
-            if self.server_id is None:
-                if self.peer_list:
-                    self.server_id = list(self.peer_list.keys())[-1]
-                    assert self.prevthis == self.server_id, 'Uh oh'
-                else:
-                    self.server_id = self.prevthis
+        # Am I starting the last batch (eventfds for me that need notifiers?)
+        if this == self.my_id and self.server_id is None:
+            self.server_id = self.prevthis
         self.prevthis = this     # For corner case where I am first contact
 
         # Just save the eventfd now, generate objects later.
         try:
-            self.peer_list[this].append(latest_fd)   # order matters
+            tmp = len(self.fd_list[this])
+            assert tmp <= self.nSlots, 'fd list is too long'
+            if tmp == self.nSlots:      # Beginning of client reconnect
+                assert this != self.my_id, 'Updating MY eventfds????'
+                raise KeyError('Forced update')
+            self.fd_list[this].append(latest_fd)   # order matters
         except KeyError as e:
-            self.peer_list[this] = [latest_fd, ]
+            self.fd_list[this] = [latest_fd, ]
 
         if self.args.verbose == 1:
-            print('peer list is now %s' % str(self.peer_list.keys()))
+            print('fd list is now %s' % str(self.fd_list.keys()))
         elif self.args.verbose > 1:
-            for id, eventfds in self.peer_list.items():
+            for id, eventfds in self.fd_list.items():
                 print(id, eventfds)
 
-        # Do the final housekeeping after the final message.  ASS-U-MES all
-        # vector lists are the same length.
-        if this != self.my_id or (
-            len(self.peer_list[self.my_id]) !=
-            len(self.peer_list[self.server_id])
-        ):
-            return      # Not the end
+        # Do the final housekeeping after the final batch.  ASS-U-MES all
+        # vector lists are the same length.  My vectors come last.
+        if this != self.my_id or len(self.fd_list[this]) < self.nSlots:
+            return
 
         # First convert all fds to event notifier objects for both signalling
         # to other peers and waiting on signals to me.
-        newlist = OrderedDict()
-        for id, fds in self.peer_list.items():
-            newlist[id] = ivshmem_event_notifier_list(fds)
-        self.peer_list = newlist
+        print('--------- Finish housekeeping')
+        for id in self.fd_list:     # For triggering message pickup
+            if id not in self.peer_list:
+                self.peer_list[id] = ivshmem_event_notifier_list(
+                    self.fd_list[id])
 
         # Now set up waiters on my incoming stuff.
-        for i, this_notifier in enumerate(self.peer_list[self.my_id]):
-            this_notifier.num = i
-            tmp = EventfdReader(this_notifier, self.ERcallback, self)
-            tmp.start()
+        if self.firstpass and this == self.my_id:
+            for i, this_notifier in enumerate(self.peer_list[self.my_id]):
+                this_notifier.num = i
+                tmp = EventfdReader(this_notifier, self.ERcallback, self)
+                tmp.start()
 
-        # NOW I'm almost done.  FIXME handle other peer deaths
+        # NOW I'm almost done.
         self.get_nodenames()
-        if self.args.verbose:
-            print('Setup finished, announcing myself to server ID',
-                self.server_id)
-        self.place_and_go('server', 'Ready player one')
+        print('Setup for peer id %d is finished' % this)
+        if self.firstpass:
+            print('Announcing myself to server ID', self.server_id)
+            self.place_and_go('server', 'Ready player one')
+
+        self.firstpass = False
 
     def connectionMade(self):
         if self.args.verbose:
@@ -220,8 +245,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
         print('"%s" (%d) sends "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
-            place_in_slot(selph.mailbox_mm, selph.my_id, 'pong')
-            selph.peer_list[vectorobj.num][selph.my_id].incr()
+            try:
+                print('and now I will pong')
+                selph.place_and_go(vectorobj.num, 'pong')
+            except Exception as e:
+                print('pong bombed:', str(e))
 
     #----------------------------------------------------------------------
     # Command line parsing.  I'm just trying to get it to work.
@@ -252,6 +280,19 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 src = elems.pop(0)
                 msg = ' '.join(elems)       # Empty list -> empty string
                 self.place_and_go(dest, msg, src)
+                return
+
+            if cmd == 'dump':
+                print('Actor event fds:')
+                for key in sorted(self.fd_list.keys()):
+                    print('\t%2d %s' % (key, self.fd_list[key]))
+
+                print('\nClient node/host names:')
+                for key in sorted(self.id2nodename.keys()):
+                    print('\t%2d %s' % (key, self.id2nodename[key]))
+
+                print('\nPeer list keys:')
+                print('\t%s' % sorted(self.peer_list.keys()))
                 return
 
             if cmd == 'help' or '?' in cmd:
