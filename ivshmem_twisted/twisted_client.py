@@ -93,8 +93,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.id2nodename[id] = nodename
 
     def parse_target(self, instr):
-        '''Always return a list, for consistency with keywords ALL and
-           OTHERS.'''
+        '''Return a list even for one item for consistency with keywords
+           ALL and OTHERS.'''
         self.get_nodenames()
         indices = tuple()
         try:

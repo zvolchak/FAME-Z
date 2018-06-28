@@ -133,6 +133,7 @@ def place_in_slot(mailbox_mm, slotnum, msg):
     mailbox_mm[index:index + 8] = struct.pack('Q', msglen)
     index = slotnum * MAILBOX_SLOT_SIZE + MAILSLOT_MESSAGE_OFFSET
     mailbox_mm[index:index + msglen] = msg
+    mailbox_mm[index + msglen] = 0	# The kernel will appreciate this :-)
 
 ###########################################################################
 # Called only by client.  mmap() the file, set hostname, return some globals.
@@ -153,7 +154,7 @@ def init_mailslot(mailbox_XX, slotnum, nodename):
         mailbox_mm[GLOBALS_NSLOTS_OFFSET:GLOBALS_NSLOTS_OFFSET + 8])[0]
     index = slotnum * MAILBOX_SLOT_SIZE    # mailbox slot starts with nodename
     zeros = b'\0' * MAILSLOT_NODENAME_SIZE
-    mailbox_mm[index:index + len(zeros) ] = zeros
+    mailbox_mm[index:index + len(zeros)] = zeros
     tmp = nodename.encode()
     mailbox_mm[index:index + len(tmp)] = tmp
     return mailbox_mm, nSlots
