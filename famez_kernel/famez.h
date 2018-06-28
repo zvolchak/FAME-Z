@@ -50,12 +50,13 @@ struct famez_globals {			// Start of IVSHMEM, not a mailslot
 struct famez_mailbox_slot {
 	char nodename[32];
 	uint64_t msglen;
-	char *msg;			// @ globals->msg_offset
+	// padding in here, calculate at runtime...
+	char *msg;				// ...via globals->msg_offset
 };
 
-struct famez_configuration {		// Slots 1 - (nSlots-1); last == server
+struct famez_configuration {
 	struct pci_dev *pci_dev;
-	uint64_t max_msglen;
+	uint64_t max_msglen;			// Currently 384
 	uint16_t my_id, server_id;		// match ringer.peer 
 	struct ivshmem_BAR0_registers *regs;
 	struct ivshmem_BAR1_msi_x_msi_pba *msix;
@@ -80,7 +81,8 @@ int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
 //-------------------------------------------------------------------------
 // famez_MSI-X.c
 
-int famez_setupMSIX(struct famez_configuration *, struct pci_dev *);
+int famez_MSIX_setup(struct famez_configuration *, struct pci_dev *);
+void famez_MSIX_teardown(struct famez_configuration *);
 
 //-------------------------------------------------------------------------
 // Debug assistance

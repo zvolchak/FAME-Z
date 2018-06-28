@@ -61,14 +61,14 @@ static int mapthings(struct famez_configuration *config, struct pci_dev *dev)
 			     config->globals->msg_offset;
 
 	// My slot and invariant info.
-	config->my_slot = (void *)((uint64_t)config->globals +
-		config->my_id * config->globals->slotsize);
+	config->my_slot = (void *)(
+		(uint64_t)config->globals + config->my_id * config->globals->slotsize);
 	memset(config->my_slot, 0, config->globals->slotsize);
+	config->my_slot->msg = (void *)(
+		(uint64_t)config->my_slot + config->globals->msg_offset);
 	snprintf(config->my_slot->nodename,
 		 sizeof(config->my_slot->nodename) - 1,
 		 utsname()->nodename);
-	config->my_slot->msg = (void *)((uint64_t)config->my_slot +
-		config->globals->msg_offset);
 	return 0;
 }
 
@@ -103,10 +103,12 @@ int famez_config(struct famez_configuration *config)
 
 	if ((ret = mapthings(config, dev)))
 		goto undo;
-	pr_info(FZSP "slot size = %llu, server ID = %d\n",
-		config->globals->slotsize, config->server_id);
+	pr_info(FZSP "slot size = %llu, message offset = %llu, server = %d\n",
+		config->globals->slotsize,
+		config->globals->msg_offset,
+		config->server_id);
 
-	if ((ret = famez_setupMSIX(config, dev)))
+	if ((ret = famez_MSIX_setup(config, dev)))
 		goto undo;
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
@@ -131,11 +133,7 @@ undo:
 
 void famez_unconfig(struct famez_configuration *config)
 {
-	pci_disable_msix(config->pci_dev);
-	if (config->msix_entries) {
-		kfree(config->msix_entries);
-		config->msix_entries = NULL;
-	}
+	famez_MSIX_teardown(config);
 	if (config->globals) iounmap(config->globals);
 	if (config->msix) iounmap(config->msix);
 	if (config->regs) iounmap(config->regs);
