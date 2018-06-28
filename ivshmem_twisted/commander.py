@@ -35,18 +35,19 @@ class _proxyCommander(LineReceiver):
         if self._once:
             return
         self._once = True   # be paranoid.
-        if hasattr(commProto, 'doCommand'):
+        if hasattr(commProto, 'doCommand') and hasattr(commProto, 'nodename'):
             self.__class__._commProto = commProto
 
     def connectionMade(self):   # First contact
-        self.transport.write(self._prompt)
+        pass    # Could write first prompt now
 
     def lineReceived(self, line):
-        if line:
-            if self._commProto:
-                self._commProto.doCommand(line.decode())
-            else:
-                self.sendLine(b'IGNORE: ' + line)
+        if self._commProto:
+            self._commProto.doCommand(line.decode())
+            tmp = '%s> ' %self._commProto.nodename
+            self.__class__._prompt = tmp.encode()
+        else:
+            self.sendLine(b'IGNORE: ' + line)
         self.transport.write(self._prompt)
 
 ###########################################################################
