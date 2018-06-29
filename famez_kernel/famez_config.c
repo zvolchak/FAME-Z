@@ -1,29 +1,70 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG device
 
-#include <linux/pci.h>
+#include <linux/module.h>
 #include <linux/utsname.h>
 
 #include "famez.h"
 
+static struct pci_device_id famez_PCI_ID[] = {
+    { PCI_DEVICE_SUB(
+    	PCI_VENDOR_ID_REDHAT_QUMRANET,
+	PCI_ANY_ID,
+	PCI_ANY_ID,
+	PCI_SUBDEVICE_ID_QEMU
+      ),
+    }, // Function 0
+    { 0 },
+};
+
+MODULE_DEVICE_TABLE(pci, famez_PCI_ID);		// depmod, hotplug, modinfo
+
 //-------------------------------------------------------------------------
-// Return positive on success, negative on error, never 0.
 
-int famez_sendmsg(uint32_t peer_id, char *msg, ssize_t msglen,
-		  struct famez_configuration *config)
-{
-	union ringer ringer;
+STATIC int famez_probe(struct pci_dev *pdev,
+		       const struct pci_device_id *pdev_id) {
+	int ret;
+	struct resource *bar1;
 
-	if (msglen >= config->max_msglen)
-		return -E2BIG;
-	// Keep nodename and msg pointer; update msglen and msg contents.
-	memset(config->my_slot->msg, 0, config->max_msglen);
-	config->my_slot->msglen = msglen;
-	memcpy(config->my_slot->msg, msg, msglen);
-	ringer.vector = config->my_id;		// from this
-	ringer.peer = peer_id;			// to this
-	config->regs->Doorbell = ringer.push;
-	return 0;
+	if ((ret = pci_enable_device(pdev)) < 0) {
+		pr_err(FZ "pci_enable_device failed\n");
+		goto err_out;
+	}
+	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
+		pr_err(FZ "pci_enable_device failed\n");
+		goto err_pci_disable_device;
+	}
+
+	// Don't pci_iomap(BARs) in here because there's no way to put
+	// the pointers (which come from ioremap, BTW).
+
+	bar1 = &(pdev->resource[1]);
+	if (!bar1->start || pdev->revision != 1 || !pdev->msix_cap) {
+		pr_info(FZSP "IVSHMEM @ %s is not my circus\n", bar1->name);
+		ret = -ENODEV;
+		goto err_pci_release_regions;
+	}
+
+err_pci_release_regions:
+	pci_release_regions(pdev);
+
+err_pci_disable_device:
+	pci_disable_device(pdev);
+
+err_out:
+	return ret;
 }
+
+static void famez_remove(struct pci_dev *pdev)
+{
+}
+
+static struct pci_driver zhpe_pci_driver = {
+    .name      = FAMEZ_NAME,
+    .id_table  = famez_PCI_ID,
+    .probe     = famez_probe,
+    .remove    = famez_remove,
+};
+
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -134,5 +175,25 @@ void famez_unconfig(struct famez_configuration *config)
 	if (config->regs) iounmap(config->regs);
 	pci_dev_put(config->pci_dev);
 	memset(config, 0, sizeof(*config));
+}
+
+//-------------------------------------------------------------------------
+// Return positive on success, negative on error, never 0.
+
+int famez_sendmsg(uint32_t peer_id, char *msg, ssize_t msglen,
+		  struct famez_configuration *config)
+{
+	union ringer ringer;
+
+	if (msglen >= config->max_msglen)
+		return -E2BIG;
+	// Keep nodename and msg pointer; update msglen and msg contents.
+	memset(config->my_slot->msg, 0, config->max_msglen);
+	config->my_slot->msglen = msglen;
+	memcpy(config->my_slot->msg, msg, msglen);
+	ringer.vector = config->my_id;		// from this
+	ringer.peer = peer_id;			// to this
+	config->regs->Doorbell = ringer.push;
+	return 0;
 }
 

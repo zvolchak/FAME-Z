@@ -12,12 +12,11 @@
 #define IVSHMEM_DEVICE	0x1110
 
 // When stable, git commit, then git tag, then commit again (for the tag)
-#define FAMEZ_VERSION	"famez v0.6: no interrupts"
+#define FAMEZ_VERSION	"famez v0.7: interrupts, correctly"
 
 #include <linux/delay.h>
-#include <linux/mmzone.h>
 #include <linux/configfs.h>
-#include <linux/list.h>
+#include <linux/pci.h>
 
 #define STREQ(s1, s2) (!strcmp(s1, s2))
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
@@ -82,7 +81,6 @@ extern int famez_verbose;
 
 int famez_config(struct famez_configuration *config);
 void famez_unconfig(struct famez_configuration *config);
-
 int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
