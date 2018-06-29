@@ -47,7 +47,7 @@ struct famez_globals {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
 };
 
-struct famez_mailbox_slot {
+struct famez_mailslot {
 	char nodename[32];
 	uint64_t msglen;
 	// padding in here, calculate at runtime...
@@ -68,7 +68,7 @@ struct famez_configuration {
 	struct ivshmem_registers __iomem *regs;		// BAR0
 	struct ivshmem_msi_x_msi_pba __iomem *msix;	// BAR1
 	struct famez_globals __iomem *globals;		// BAR2
-	struct famez_mailbox_slot *my_slot;		// End of BAR2
+	struct famez_mailslot *my_slot;			// Last slot of BAR2
 	struct msix_entry *msix_entries;		// kzalloc an array
 };
 

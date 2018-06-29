@@ -7,37 +7,54 @@
 
 //-------------------------------------------------------------------------
 
+struct famez_mailslot __iomem *famez_get_mailslot(
+	struct famez_configuration *config,
+	unsigned slotnum)
+{
+	struct famez_mailslot __iomem *slot;
+
+	// Slot 0 is the globals data, don't play in there.  The last slot
+	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2]
+	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
+		pr_err(FZ ": %u is out of range\n", slotnum);
+		return NULL;
+	}
+	slot = (void *)(
+		(uint64_t)config->globals + slotnum * config->globals->slotsize);
+	slot->msg = (void *)((uint64_t)slot + config->globals->msg_offset);
+	return slot;
+}
+
 static irqreturn_t all_msix(int vector, void *data) {
 	struct famez_configuration *config = data;
-	int i;
-	uint64_t peer_id;
-	struct famez_mailbox_slot *peer_slot;
+	int slotnum;
+	uint16_t peer_id = 0;	// see pci.h for msix_entry
+	struct famez_mailslot __iomem *peer_slot;
 
-	// Match the IRQ vector to entry/vector pair, which yields the sender.
-	for (i = 0; i < config->globals->nSlots; i++) {
-		if (vector == config->msix_entries[i].vector)
+	// Match the IRQ vector to entry/vector pair which yields the sender.
+	// Turns out i and msix_entries[i].entry are identical in famez.
+	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
+		if (vector == config->msix_entries[slotnum].vector) {
+			peer_id = config->msix_entries[slotnum].entry;
 			break;
+		}
 	}
-	if (i >= config->globals->nSlots) {
+	if (slotnum >= config->globals->nSlots) {
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
-	// Turns out i and msix_entries[i].entry are identical, but anyhow...
-	// Just read the message, don't copy it in this simple handler.
-
-	peer_id = config->msix_entries[i].entry;
-	peer_slot = (void *)(
-		(uint64_t)config->globals + peer_id * config->globals->slotsize);
-	peer_slot->msg = (void *)(
-		(uint64_t)peer_slot + config->globals->msg_offset);
-
-	pr_info(FZ "IRQ %d == peer ID %llu: \"%s\"\n",
+	if (!(peer_slot = famez_get_mailslot(config, peer_id))) {
+		pr_err(FZ "Could not match peer %u\n", peer_id);
+		return IRQ_HANDLED;
+	}
+	pr_info(FZ "IRQ %d == peer %u -> \"%s\"\n",
 		vector, peer_id, peer_slot->msg);
 
-	// I know, bad form in a handler.  Is it tasklets I need?
+	// Easy way to see if this thing is alive.  5 == len('Pong') + NUL
 	if STREQ(peer_slot->msg, "ping")
 		famez_sendmsg(peer_id, "Pong", 5, config);
 
+	// FIXME send this info off to somewhere useful :-)
 	return IRQ_HANDLED;
 }
 
