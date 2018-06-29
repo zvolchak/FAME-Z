@@ -29,11 +29,11 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot, place_in_slot
+    from famez_mailbox import FAMEZ_MailBox
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from .famez_mailbox import prepare_mailbox, MAILBOX_MAX_SLOTS, pickup_from_slot, place_in_slot
+    from .famez_mailbox import FAMEZ_MailBox
 
 # Don't use peer ID 0, certain documentation implies it's reserved.  Put the
 # server ID at the end of the list (nSlots-1) and use the middle for clients.
@@ -49,7 +49,7 @@ IVSHMEM_UNUSED_ID = 0
 
 class ProtocolIVSHMSGServer(TIPProtocol):
 
-    IVSHMEM_PROTOCOL_VERSION = 0
+    SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
     args = None        # Invariant across instances
     logmsg = None
@@ -69,7 +69,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
             self.__class__.server_id = self.args.nSlots - 1
-            self.__class__.mailbox_mm = mmap.mmap(self.args.mailbox_fd, 0)
+            self.__class__.mailbox = self.args.mailbox
 
             # Usually create eventfds for receiving messages in IVSHMSG and
             # set up a callback.  This early arming is not a race condition
@@ -83,8 +83,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     this_notifier.num = i
                     tmp = EventfdReader(this_notifier, self.ERcallback, self)
                     tmp.start()
-
         self.create_new_peer_id()   # Check if it worked after connection is up
+
+    @property
+    def nodename(self):
+        '''For Commander prompt'''
+        return self.mailbox.nodename
 
     def logPrefix(self):    # This override works after instantiation
         return 'ProtocolIVSHMSG'
@@ -99,7 +103,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # terminates the connection.
     def connectionMade(peer):
         peer.logmsg(
-            'Peer id %d @ socket %d' % (peer.id, peer.transport.fileno()))
+            'new peer gets id %d @ socket %d' % (
+                peer.id, peer.transport.fileno()))
         if peer.id == -1:
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
@@ -139,8 +144,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Non-standard voodoo: advertise me (this server) to the new one.
         # It's just one more grouping in the previous batch.
         if peer.famez_notifiers:
-            peer.logmsg('FAMEZ voodoo: sending server (ID=%d) notifiers' %
-                peer.server_id)
+            peer.logmsg('sending my notifiers')
             for server_vector in peer.famez_notifiers:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
@@ -203,22 +207,23 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             peer.transport.loseConnection()
             peer.id = -1
             return
-        ivshmem_send_one_msg(thesocket, peer.IVSHMEM_PROTOCOL_VERSION)
+        ivshmem_send_one_msg(thesocket, peer.SERVER_IVSHMEM_PROTOCOL_VERSION)
 
         # The client's id, without an fd.
         ivshmem_send_one_msg(thesocket, peer.id)
 
         # -1 for data and the fd of the ivshmem file.  Using this protocol
         # a valid fd is required.
-        ivshmem_send_one_msg(thesocket, -1, peer.args.mailbox_fd)
+        # FIXME does send_one message belong in mailbox.py?
+        ivshmem_send_one_msg(thesocket, -1, peer.mailbox.fd)
 
     @staticmethod
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
-        nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
+        nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
         selph.logmsg('"%s" (%d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
-            place_in_slot(selph.mailbox_mm, selph.server_id, 'PONG')
+            selph.mailbox.place_in_slot(selph.server_id, 'PONG')
             for peer in selph.peer_list:
                 if peer.id == vectorobj.num:
                     break
@@ -255,7 +260,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             args = argparse.Namespace()
         for arg, default in self._required_arg_defaults.items():
             setattr(args, arg, getattr(args, arg, default))
-        args.mailbox_fd = prepare_mailbox(args.mailbox, args.nSlots)
+        args.mailbox = FAMEZ_MailBox(args.mailbox, nSlots=args.nSlots)
 
         self.args = args
         if args.foreground:
