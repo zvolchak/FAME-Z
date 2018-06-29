@@ -21,147 +21,168 @@ import struct
 from os.path import stat as STAT     # for constants
 from pdb import set_trace
 
-MAILBOX_MAX_SLOTS = 64
-MAILBOX_SLOT_SIZE = 512
+class FAMEZ_MailBox(object):
 
-GLOBALS_SLOT_SIZE_OFFSET = 0    # in the space of mailslot 0
-GLOBALS_MESSAGE_OFFSET_OFFSET = 8
-GLOBALS_NSLOTS_OFFSET = 16
+    MAILBOX_MAX_SLOTS = 64
+    MAILBOX_SLOT_SIZE = 512
 
-MAILSLOT_NODENAME_OFFSET = 0
-MAILSLOT_NODENAME_SIZE = 32     # NULL padded
-MAILSLOT_MSGLEN_OFFSET = MAILSLOT_NODENAME_SIZE
-MAILSLOT_MESSAGE_OFFSET = 128   # To the end of the slot, currently 384 bytes
-MAILSLOT_MESSAGE_SIZE = 384
+    GLOBALS_SLOT_SIZE_OFFSET = 0    # in the space of mailslot 0
+    GLOBALS_MESSAGE_OFFSET_OFFSET = 8
+    GLOBALS_NSLOTS_OFFSET = 16
 
-assert MAILSLOT_MESSAGE_OFFSET + MAILSLOT_MESSAGE_SIZE == MAILBOX_SLOT_SIZE, \
-    'Fix this NOW'
+    MAILSLOT_NODENAME_OFFSET = 0
+    MAILSLOT_NODENAME_SIZE = 32     # NULL padded
+    MAILSLOT_MSGLEN_OFFSET = MAILSLOT_NODENAME_SIZE
+    MAILSLOT_MESSAGE_OFFSET = 128   # To end of slot, currently 384 bytes
+    MAILSLOT_MESSAGE_SIZE = 384
 
-###########################################################################
-# Globals at offset 0 (slot 0)
-# Server mailbox at slot (nSlots - 1), first 32 bytes are host name.
+    #-----------------------------------------------------------------------
+    # Globals at offset 0 (slot 0)
+    # Server mailbox at slot (nSlots - 1), first 32 bytes are host name.
 
+    def _populate(self):
+        self.mm = mmap.mmap(self.fd, 0)
 
-def _populate_mailbox(fd, nSlots):
-    mapped = mmap.mmap(fd, 0)
+        # Empty it.  Simple code that's never too demanding on size
+        data = b'\0' * (self.nSlots * self.MAILBOX_SLOT_SIZE)
+        self.mm[0:len(data)] = data
 
-    # Empty it.  Simple from a code standpoint, never too demanding on size
-    data = b'\0' * (nSlots * MAILBOX_SLOT_SIZE)
-    mapped[0:len(data)] = data
+        # Fill in the globals.  Must match the C struct in famez.ko.
+        data = struct.pack('QQQ',
+            self.MAILBOX_SLOT_SIZE,self. MAILSLOT_MESSAGE_OFFSET, self.nSlots)
+        self.mm[0:len(data)] = data
 
-    # Slot size, message area start within a slot, nSlots
-    data = struct.pack('QQQ', MAILBOX_SLOT_SIZE, MAILSLOT_MESSAGE_OFFSET, nSlots)
-    mapped[0:len(data)] = data
+        # My "hostname", zero-padded
+        data = self.nodename.encode()
+        index = (self.nSlots - 1) * self.MAILBOX_SLOT_SIZE
+        self.mm[index:index + len(data)] = data
 
-    # My "hostname", zero-padded
-    data = b'FAME-Z Server'
-    index = (nSlots - 1) * MAILBOX_SLOT_SIZE
-    mapped[index:index + len(data)] = data
+    #----------------------------------------------------------------------
+    # Polymorphic.  Someday I'll learn about metaclasses.
 
-    mapped.close()
+    def __init__(self, pathORfd, nSlots=None, peer_id=-1, nodename=None):
+        '''Server: Starts with string and slot count from command line.
+           Client: starts with an fd and id.'''
 
-###########################################################################
+        assert (self.MAILSLOT_MESSAGE_OFFSET + self.MAILSLOT_MESSAGE_SIZE
+            == self.MAILBOX_SLOT_SIZE), 'Fix this NOW'
 
+        if isinstance(pathORfd, int):
+            assert peer_id > 0 and nodename is not None, 'Bad call, ump!'
+            self.fd = pathORfd
+            self.peer_id = peer_id
+            self.nodename = nodename
+            self._init_client_mailslot()
+            return
+        assert isinstance(pathORfd, str), 'Need a path OR open fd'
+        path = pathORfd     # Match previously written code
 
-def prepare_mailbox(path, nSlots=MAILBOX_MAX_SLOTS):
-    '''Starts with mailbox base name, returns an fd to a populated file.'''
+        # One for global, one for server, 4 slots is max two clients
+        assert 4 <= nSlots <= self.MAILBOX_MAX_SLOTS, 'Bad nSlots'
 
-    size = nSlots * MAILBOX_SLOT_SIZE
-    gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
-    for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
+        size = nSlots * self.MAILBOX_SLOT_SIZE
+        gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
+        for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
+            try:
+                gr_gid = grp.getgrnam(gr_name).gr_gid
+                break
+            except Exception as e:
+                pass
+
+        if '/' not in path:
+            path = '/dev/shm/' + path
+        oldumask = os.umask(0)
         try:
-            gr_gid = grp.getgrnam(gr_name).gr_gid
-            break
+            if not os.path.isfile(path):
+                fd = os.open(path, os.O_RDWR | os.O_CREAT, mode=0o666)
+                os.posix_fallocate(fd, 0, size)
+                os.fchown(fd, -1, gr_gid)
+            else:   # Re-condition and re-use
+                lstat = os.lstat(path)
+                assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
+                assert lstat.st_size >= size, \
+                    'existing size (%d) is < required (%d)' % (
+                        lstat.st_size, size)
+                if lstat.st_gid != gr_gid and gr_gid > 0:
+                    print('Changing %s to group %s' % (path, gr_name))
+                    os.chown(path, -1, gr_gid)
+                if lstat.st_mode & 0o660 != 0o660:  # at least
+                    print('Changing %s to permissions 666' % path)
+                    os.chmod(path, 0o666)
+                fd = os.open(path, os.O_RDWR)
         except Exception as e:
-            pass
-    if '/' not in path:
-        path = '/dev/shm/' + path
-    oldumask = os.umask(0)
-    try:
-        if not os.path.isfile(path):
-            fd = os.open(path, os.O_RDWR | os.O_CREAT, mode=0o666)
-            os.posix_fallocate(fd, 0, size)
-            os.fchown(fd, -1, gr_gid)
-        else:   # Re-condition and re-use
-            lstat = os.lstat(path)
-            assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
-            assert lstat.st_size >= size, \
-                'existing size (%d) is < required (%d)' % (lstat.st_size, size)
-            if lstat.st_gid != gr_gid and gr_gid > 0:
-                print('Changing %s to group %s' % (path, gr_name))
-                os.chown(path, -1, gr_gid)
-            if lstat.st_mode & 0o660 != 0o660:  # at least
-                print('Changing %s to permissions 666' % path)
-                os.chmod(path, 0o666)
-            fd = os.open(path, os.O_RDWR)
-    except Exception as e:
-        raise SystemExit('Problem with %s: %s' % (path, str(e)))
+            raise RuntimeError('Problem with %s: %s' % (path, str(e)))
 
-    os.umask(oldumask)
-    _populate_mailbox(fd, nSlots)
-    return fd
+        os.umask(oldumask)
 
-###########################################################################
+        # Just some stuff that's probably very handy
+        self.path = path            # Final absolute path
+        self.fd = fd
+        self.nSlots = nSlots
+        self.server_id = nSlots - 1   # Because that's the rule
+        self.nodename = 'FAME-Z Server'
+        self._populate()
 
+    #----------------------------------------------------------------------
 
-def pickup_from_slot(mailbox_mm, slotnum, asbytes=False):
-    assert 1 <= slotnum < MAILBOX_MAX_SLOTS, 'Slotnum is out of domain'
-    index = slotnum * MAILBOX_SLOT_SIZE     # start of nodename
-    nodename, msglen = struct.unpack('32sQ', mailbox_mm[index:index + 40])
-    nodename = nodename.split(b'\0', 1)[0].decode()
-    index += MAILSLOT_MESSAGE_OFFSET
-    fmt = '%ds' % msglen
-    msg = struct.unpack(fmt, mailbox_mm[index:index + msglen])
-    # Returned a single element tuple that should be NUL-padded to end.
-    msg = msg[0].split(b'\0', 1)[0]
-    if not asbytes:
-        msg = msg.decode()
-    return nodename, msg
+    def pickup_from_slot(self, slotnum, asbytes=False):
+        '''Return the nodename and message.'''
+        assert 1 <= slotnum <= self.server_id, \
+            'Slotnum is out of domain 1 - %d' % (self.server_id)
+        index = slotnum * self.MAILBOX_SLOT_SIZE     # start of nodename
+        nodename, msglen = struct.unpack('32sQ', self.mm[index:index + 40])
+        nodename = nodename.split(b'\0', 1)[0].decode()
+        index += self.MAILSLOT_MESSAGE_OFFSET
+        fmt = '%ds' % msglen
+        msg = struct.unpack(fmt, self.mm[index:index + msglen])
+        # Returned a single element tuple that should be NUL-padded to end.
+        msg = msg[0].split(b'\0', 1)[0]
+        if not asbytes:
+            msg = msg.decode()
+        return nodename, msg
 
-###########################################################################
+    #----------------------------------------------------------------------
 
+    def place_in_slot(self, slotnum, msg):
+        assert 1 <= slotnum <= self.server_id, \
+            'Slotnum is out of domain 1 - %d' % (self.server_id)
+        if isinstance(msg, str):
+            msg = msg.encode()
+        assert isinstance(msg, bytes), 'msg must be string or bytes'
+        msglen = len(msg)   # It's bytes now
+        assert msglen < self.MAILSLOT_MESSAGE_SIZE, 'Message too long'
 
-def place_in_slot(mailbox_mm, slotnum, msg):
-    assert 1 <= slotnum < MAILBOX_MAX_SLOTS, 'Slotnum is way out of domain'
-    if isinstance(msg, str):
-        msg = msg.encode()
-    assert isinstance(msg, bytes), 'msg must be string or bytes'
-    msglen = len(msg)   # It's bytes now
-    assert msglen < MAILSLOT_MESSAGE_SIZE, 'Message too long'
+        index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MSGLEN_OFFSET
+        self.mm[index:index + 8] = struct.pack('Q', msglen)
+        index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MESSAGE_OFFSET
+        self.mm[index:index + msglen] = msg
+        self.mm[index + msglen] = 0	# The kernel will appreciate this :-)
 
-    index = slotnum * MAILBOX_SLOT_SIZE + MAILSLOT_MSGLEN_OFFSET
-    mailbox_mm[index:index + 8] = struct.pack('Q', msglen)
-    index = slotnum * MAILBOX_SLOT_SIZE + MAILSLOT_MESSAGE_OFFSET
-    mailbox_mm[index:index + msglen] = msg
-    mailbox_mm[index + msglen] = 0	# The kernel will appreciate this :-)
+    #----------------------------------------------------------------------
+    # Called only by client.  mmap() the file, set hostname.
 
-###########################################################################
-# Called only by client.  mmap() the file, set hostname, return some globals.
-# Polymorphic.
+    def _init_client_mailslot(self):
 
-
-def init_mailslot(mailbox_XX, slotnum, nodename):
-    if not isinstance(mailbox_XX, int):
-        mailbox_mm = mailbox_XX
-    else:
-        buf = os.fstat(mailbox_XX)
+        buf = os.fstat(self.fd)
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
-        assert 1 <= slotnum <= buf.st_size // MAILBOX_SLOT_SIZE, \
-            'Slotnum %d is out of range' % slotnum
-        mailbox_mm = mmap.mmap(mailbox_XX, 0)
-    nSlots = struct.unpack(
-        'Q',
-        mailbox_mm[GLOBALS_NSLOTS_OFFSET:GLOBALS_NSLOTS_OFFSET + 8])[0]
-    index = slotnum * MAILBOX_SLOT_SIZE    # mailbox slot starts with nodename
-    zeros = b'\0' * MAILSLOT_NODENAME_SIZE
-    mailbox_mm[index:index + len(zeros)] = zeros
-    tmp = nodename.encode()
-    mailbox_mm[index:index + len(tmp)] = tmp
-    return mailbox_mm, nSlots
+        assert 1 <= self.peer_id <= buf.st_size // self.MAILBOX_SLOT_SIZE, \
+            'Slotnum %d is out of range' % peer_id
+        self.mm = mmap.mmap(self.fd, 0)
+        self.nSlots = struct.unpack(
+            'Q',
+            self.mm[self.GLOBALS_NSLOTS_OFFSET:self.GLOBALS_NSLOTS_OFFSET + 8]
+        )[0]
+        self.server_id = self.nSlots - 1
+
+        # mailbox slot starts with nodename
+        index = self.peer_id * self.MAILBOX_SLOT_SIZE
+        zeros = b'\0' * self.MAILSLOT_NODENAME_SIZE
+        self.mm[index:index + len(zeros)] = zeros
+        tmp = self.nodename.encode()
+        self.mm[index:index + len(tmp)] = tmp
 
 ###########################################################################
 
 
 if __name__ == '__main__':
-    fd = prepare_mailbox('/tmp/junk', 4)
-    _populate_mailbox(fd, 4)
+    mbox = FAMEZ_MailBox('/tmp/junk', 4)

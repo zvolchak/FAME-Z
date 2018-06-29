@@ -15,9 +15,6 @@ from daemonize import Daemonize
 
 from ivshmem_twisted.twisted_server import FactoryIVSHMSGServer
 
-# FIXME: this needs better separation from the "ivshmem_twisted" module space
-from ivshmem_twisted.famez_mailbox import MAILBOX_MAX_SLOTS
-
 ###########################################################################
 
 
@@ -66,8 +63,6 @@ def parse_cmdline(cmdline_args):
 
     # Idiot checking.
     args.nSlots = int(args.nSlots)
-    assert 4 <= args.nSlots <= MAILBOX_MAX_SLOTS, \
-        'nSlots not in range 4 - %d' % MAILBOX_MAX_SLOTS
     assert not '/' in args.mailbox, 'mailbox cannot have slashes'
     assert not os.path.exists(args.socketpath), 'Remove %s' % args.socketpath
 

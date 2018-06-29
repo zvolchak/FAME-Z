@@ -29,11 +29,11 @@ from zope.interface import implementer
 
 try:
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
-    from famez_mailbox import init_mailslot, place_in_slot, pickup_from_slot
+    from famez_mailbox import FAMEZ_MailBox
     from commander import Commander
 except ImportError as e:
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
-    from .famez_mailbox import init_mailslot, place_in_slot, pickup_from_slot
+    from .famez_mailbox import FAMEZ_MailBox
     from .commander import Commander
 
 ###########################################################################
@@ -66,7 +66,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self.server_id = None
         self.fd_list = OrderedDict()    # Sent to me
         self.peer_list = OrderedDict()  # Calculated at end
-        self.mailbox_fd = None
+        self.mailbox = None
         self._latest_fd = None
         self.id2nodename = None
         self.nSlots = 0
@@ -89,14 +89,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def get_nodenames(self):
         self.id2nodename = OrderedDict()
         for id in sorted(self.fd_list):   # integer keys: their ID
-            nodename, _ = pickup_from_slot(self.mailbox_mm, id)
+            nodename, _ = self.mailbox.pickup_from_slot(id)
             self.id2nodename[id] = nodename
 
     def parse_target(self, instr):
         '''Return a list even for one item for consistency with keywords
            ALL and OTHERS.'''
         self.get_nodenames()
-        indices = tuple()
+        indices = tuple()       # Default return is nothing
         try:
             indices = (int(instr), )
         except TypeError as e:
@@ -130,7 +130,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('P&G: bad indices')
             return False
         for S in src_indices:
-            place_in_slot(self.mailbox_mm, S, msg)
+            self.mailbox.place_in_slot(S, msg)
             for D in dest_indices:
                 if self.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
@@ -142,29 +142,26 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     return False
         return True
 
-    @property
-    def nodename(self):
-        return self.my_name
-
     def dataReceived(self, data):
         if self.my_id is None and self.firstpass:      # Initial info
             # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
             # and then a -1 with the FD of the IVSHMEM file which is
             # delivered before this.
             assert len(data) == 24, 'Initial data needs three quadwords'
-            assert self.mailbox_fd is None, 'mailbox fd already set'
-            self.mailbox_fd = self.latest_fd
+            assert self.mailbox is None, 'mailbox already set'
+            mailbox_fd = self.latest_fd
             version, self.my_id, minusone = struct.unpack('qqq', data)
             assert version == self.IVSHMEM_PROTOCOL_VERSION, \
                 'Unxpected protocol version %d' % version
             assert minusone == -1, \
                 'Expected -1 with mailbox fd, got %d' % minuseone
-            self.my_name = 'z%02d' % self.my_id
-            print('This ID = %2d (%s)' % (self.my_id, self.my_name))
+            self.nodename = 'z%02d' % self.my_id
+            print('This ID = %2d (%s)' % (self.my_id, self.nodename))
 
-            # Post my name to mailbox FIXME move this to famez_mailbox.py
-            self.mailbox_mm, self.nSlots = init_mailslot(
-                self.mailbox_fd, self.my_id, self.my_name)
+            # Initialize my mailbox slot
+            self.mailbox = FAMEZ_MailBox(
+                mailbox_fd, peer_id=self.my_id, nodename=self.nodename)
+            self.nSlots = self.mailbox.nSlots
             return
 
         # Now into the stream of <peer id><eventfd> pairs.  That's one set
@@ -185,7 +182,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     del collection[this]
                 except Exception as e:
                     pass
-            init_mailslot(self.mailbox_mm, this, '')
             return
 
         # Get a stream of batched integers, batch length == nSlots.
@@ -265,12 +261,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     @staticmethod
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
-        nodename, msg = pickup_from_slot(selph.mailbox_mm, vectorobj.num)
+        nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
         print('%s (%d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
             try:
-                print('and now I will pong')
-                selph.place_and_go(vectorobj.num, 'pong')
+                selph.mailbox.place_and_go(vectorobj.num, 'pong')
             except Exception as e:
                 print('pong bombed:', str(e))
 

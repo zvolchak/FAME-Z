@@ -17,9 +17,6 @@ import sys
 
 from ivshmem_twisted.twisted_client import FactoryIVSHMSGClient
 
-# FIXME: this needs better separation from the "ivshmem_twisted" module space
-from ivshmem_twisted.famez_mailbox import MAILBOX_MAX_SLOTS
-
 ###########################################################################
 
 

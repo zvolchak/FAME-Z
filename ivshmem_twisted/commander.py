@@ -28,26 +28,20 @@ class _proxyCommander(LineReceiver):
     delimiter = os.linesep.encode('ascii')      # Override for LineReceiver
 
     _prompt = b'cmd> '                          # Local use
-    _once = False                               # Singleton
     _commProto = None                           # Not an instance var
 
     def __init__(self, commProto):
-        if self._once:
+        if self._commProto is not None:
             return
-        self._once = True   # be paranoid.
-        if hasattr(commProto, 'doCommand') and hasattr(commProto, 'nodename'):
-            self.__class__._commProto = commProto
+        self.__class__._commProto = commProto
 
     def connectionMade(self):   # First contact
         pass    # Could write first prompt now
 
     def lineReceived(self, line):
-        if self._commProto:
-            self._commProto.doCommand(line.decode())
-            tmp = '%s> ' %self._commProto.nodename
-            self.__class__._prompt = tmp.encode()
-        else:
-            self.sendLine(b'IGNORE: ' + line)
+        self._commProto.doCommand(line.decode())
+        tmp = '%s> ' %self._commProto.nodename
+        self.__class__._prompt = tmp.encode()
         self.transport.write(self._prompt)
 
 ###########################################################################
