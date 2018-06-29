@@ -57,12 +57,12 @@ except ImportError as e:
 @implementer(IFileDescriptorReceiver)   # Energizes fileDescriptorReceived
 class ProtocolIVSHMSGClient(TIPProtocol):
 
-    IVSHMEM_PROTOCOL_VERSION = 0
+    CLIENT_IVSHMEM_PROTOCOL_VERSION = 0
 
     def __init__(self, cmdlineargs):
         self.args = cmdlineargs
         self.my_id = None       # Until initial info; state machine key
-        self.my_name = None     # Generate it for myself, retrieve for peers
+        self._nodename = None   # Generate it for myself, retrieve for peers
         self.server_id = None
         self.fd_list = OrderedDict()    # Sent to me
         self.peer_list = OrderedDict()  # Calculated at end
@@ -75,16 +75,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # guards against server errors.
         self.firstpass = True
 
-    def fileDescriptorReceived(self, latest_fd):
-        assert self._latest_fd is None, 'Latest fd has not been consumed'
-        self._latest_fd = latest_fd
-
-    @property
-    def latest_fd(self):
-        '''This is NOT idempotent!'''
-        tmp = self._latest_fd
-        self._latest_fd = None  # legacy client routine returns -1
-        return tmp
+    @property   # For Commander prompt
+    def nodename(self):
+        return self._nodename
 
     def get_nodenames(self):
         self.id2nodename = OrderedDict()
@@ -126,9 +119,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if self.args.verbose > 1:
             print('P&G dest %s=%s src %s=%s' %
                       (dest, dest_indices, src, src_indices))
-        if  not (src_indices and dest_indices):
-            print('P&G: bad indices')
-            return False
+        assert src_indices and dest_indices, 'P&G: bad indices'
         for S in src_indices:
             self.mailbox.place_in_slot(S, msg)
             for D in dest_indices:
@@ -139,8 +130,18 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 except Exception as e:
                     print('place_and_go(%s, "%s", %s) failed: %s' %
                         (D, msg, S, str(e)))
-                    return False
-        return True
+                    pass    # Soldier on!
+
+    def fileDescriptorReceived(self, latest_fd):
+        assert self._latest_fd is None, 'Latest fd has not been consumed'
+        self._latest_fd = latest_fd     # See the next property
+
+    @property
+    def latest_fd(self):
+        '''This is NOT idempotent!'''
+        tmp = self._latest_fd
+        self._latest_fd = None
+        return tmp
 
     def dataReceived(self, data):
         if self.my_id is None and self.firstpass:      # Initial info
@@ -149,13 +150,15 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             # delivered before this.
             assert len(data) == 24, 'Initial data needs three quadwords'
             assert self.mailbox is None, 'mailbox already set'
+
+            # Enough idiot checks.
             mailbox_fd = self.latest_fd
             version, self.my_id, minusone = struct.unpack('qqq', data)
-            assert version == self.IVSHMEM_PROTOCOL_VERSION, \
+            assert version == self.CLIENT_IVSHMEM_PROTOCOL_VERSION, \
                 'Unxpected protocol version %d' % version
             assert minusone == -1, \
                 'Expected -1 with mailbox fd, got %d' % minuseone
-            self.nodename = 'z%02d' % self.my_id
+            self._nodename = 'z%02d' % self.my_id
             print('This ID = %2d (%s)' % (self.my_id, self.nodename))
 
             # Initialize my mailbox slot
@@ -164,9 +167,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.nSlots = self.mailbox.nSlots
             return
 
-        # Now into the stream of <peer id><eventfd> pairs.  That's one set
-        # for each true client, one for the server (famez "voodoo") and
-        # finally one set for me.
+        # Now into the stream of <peer id><eventfd> pairs.  Unless it's
+        # a single <peer id> which is a disconnect notification.
         latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
@@ -174,7 +176,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Just got index %s, fd %s' % (this, latest_fd))
         assert this >= 0, 'Latest data is negative number'
 
-        if latest_fd is None:   # This is a disconnect notification
+        if latest_fd is None:   # "this" is a disconnect notification
             print('%s (%d) has left the building' %
                 (self.id2nodename[this], this))
             for collection in (self.peer_list, self.id2nodename, self.fd_list):
@@ -206,9 +208,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except KeyError as e:
             self.fd_list[this] = [latest_fd, ]
 
-        if self.args.verbose == 1:
+        if self.args.verbose > 1:
             print('fd list is now %s' % str(self.fd_list.keys()))
-        elif self.args.verbose > 1:
             for id, eventfds in self.fd_list.items():
                 print(id, eventfds)
 
@@ -242,7 +243,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if self.firstpass:
             if self.args.verbose:
                 print('Announcing myself to server ID', self.server_id)
-            self.place_and_go('server', 'Ready player %s' % self.my_name)
+            self.place_and_go('server', 'Ready player %s' % self.nodename)
 
         self.firstpass = False
 
@@ -262,10 +263,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
-        print('%s (%d) -> "%s"' % (nodename, vectorobj.num, msg))
+        print('%10s (%2d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
             try:
-                selph.mailbox.place_and_go(vectorobj.num, 'pong')
+                selph.place_and_go(vectorobj.num, 'pong')
             except Exception as e:
                 print('pong bombed:', str(e))
 
@@ -321,7 +322,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print('\nLegacy commands from QEMU "ivshmem-client":\n')
                 print('i[nt] dest src [text...]\n\tCan spoof src')
 
-                print('\nThis ID = %2d (%s)' % (self.my_id, self.my_name))
+                print('\nThis ID = %2d (%s)' % (self.my_id, self.nodename))
                 self.get_nodenames()
                 for id, nodename in self.id2nodename.items():
                     if id == self.my_id:

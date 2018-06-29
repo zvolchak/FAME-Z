@@ -49,7 +49,7 @@ IVSHMEM_UNUSED_ID = 0
 
 class ProtocolIVSHMSGServer(TIPProtocol):
 
-    IVSHMEM_PROTOCOL_VERSION = 0
+    SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
     args = None        # Invariant across instances
     logmsg = None
@@ -103,7 +103,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # terminates the connection.
     def connectionMade(peer):
         peer.logmsg(
-            'Peer id %d @ socket %d' % (peer.id, peer.transport.fileno()))
+            'new peer gets id %d @ socket %d' % (
+                peer.id, peer.transport.fileno()))
         if peer.id == -1:
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
@@ -143,8 +144,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Non-standard voodoo: advertise me (this server) to the new one.
         # It's just one more grouping in the previous batch.
         if peer.famez_notifiers:
-            peer.logmsg('FAMEZ voodoo: sending server (ID=%d) notifiers' %
-                peer.server_id)
+            peer.logmsg('sending my notifiers')
             for server_vector in peer.famez_notifiers:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
@@ -207,7 +207,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             peer.transport.loseConnection()
             peer.id = -1
             return
-        ivshmem_send_one_msg(thesocket, peer.IVSHMEM_PROTOCOL_VERSION)
+        ivshmem_send_one_msg(thesocket, peer.SERVER_IVSHMEM_PROTOCOL_VERSION)
 
         # The client's id, without an fd.
         ivshmem_send_one_msg(thesocket, peer.id)

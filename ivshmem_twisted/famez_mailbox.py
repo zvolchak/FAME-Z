@@ -120,7 +120,7 @@ class FAMEZ_MailBox(object):
         self.fd = fd
         self.nSlots = nSlots
         self.server_id = nSlots - 1   # Because that's the rule
-        self.nodename = 'FAME-Z Server'
+        self.nodename = 'Z-Server'
         self._populate()
 
     #----------------------------------------------------------------------
