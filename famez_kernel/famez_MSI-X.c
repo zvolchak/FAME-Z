@@ -71,16 +71,34 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 	// .vector was zeroed by kzalloc
 	for (i = 0; i < nvectors; i++)
 		config->msix_entries[i].entry  = i;
-	if ((ret = pci_enable_msix_exact(dev, config->msix_entries, nvectors))) {
-		pr_err(FZ "Can't enable MSI-X vectors\n");
-		return ret;
-	}
-	pr_info(FZSP "%2d MSI-X vectors (%sabled)\n",
-		nvectors, dev->msix_enabled ? "en" : "dis");
 
-	// Attach each IRQ to the same handler.
+	if ((ret = pci_alloc_irq_vectors(
+		dev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
+			pr_err(FZ "Can't allocate MSI-X vectors\n");
+			return ret;
+		}
+	pr_info(FZSP "%2d MSI-X vectors (%sabled)\n",
+		ret, dev->msix_enabled ? "en" : "dis");
+	if (ret < nvectors) {
+		pr_err(FZ "%d vectors are not enough\n", ret);
+		ret = -ENOSPC;		// Akin to pci_alloc_irq_vectors
+		goto cleanup_on_aisle_43;
+	}
+
+	// Attach each IRQ to the same handler.  pci_irq_vector() walks a
+	// list and returns info on a match.  The only failure is if a 
+	// match isn't found, nothing is allocated.  Do it up front and
+	// reuse the table from the old pci_msix_xxx calls.  Then there's
+	// nothing to clean up.
 	for (i = 0; i < nvectors; i++) {
-		pr_info(FZSP "%d = %d\n", i, config->msix_entries[i].vector);
+		if ((ret = pci_irq_vector(dev, i)) < 0) {
+			pr_err("pci_irq_vector(%d) failed: %d\n", i, ret);
+			goto cleanup_on_aisle_43;
+		}
+		config->msix_entries[i].vector = ret;
+	}
+	// Now that they're all batched, assign them.
+	for (i = 0; i < nvectors; i++) {
 		if ((ret = request_irq(
 			config->msix_entries[i].vector,
 			all_msix,
@@ -88,24 +106,31 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 			"FAME-Z",
 			config))) {
 				pr_err(FZ "request_irq(%d) failed: %d\n", i, ret);
-				return ret;
+				goto cleanup_on_aisle_43;
 		}
+		pr_info(FZSP "%d = %d\n", i, config->msix_entries[i].vector);
 	}
 	return 0;
+
+cleanup_on_aisle_43:
+	famez_MSIX_teardown(config);
+	return ret;
 }
 
 //-------------------------------------------------------------------------
+// There is no disable control on this "device", hope one doesn't fire...
+// Can be called from setup() above.
 
 void famez_MSIX_teardown(struct famez_configuration *config)
 {
 	int i;
 
-	// There is no disable control, hope one doesn't fire...
+	if (!config->msix_entries)	// Been there, done that
+		return;
+	
 	for (i = 0; i < config->globals->nSlots; i++)
 		free_irq(config->msix_entries[i].vector, config);
-	pci_disable_msix(config->pci_dev);
-	if (config->msix_entries) {
-		kfree(config->msix_entries);
-		config->msix_entries = NULL;
-	}
+	pci_free_irq_vectors(config->pci_dev);
+	kfree(config->msix_entries);
+	config->msix_entries = NULL;
 }
