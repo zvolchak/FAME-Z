@@ -21,7 +21,7 @@ static struct famez_configuration famez_single;	// as opposed to list_head
 
 //-------------------------------------------------------------------------
 
-int famez_init(void)
+STATIC int __init famez_init(void)
 {
 	int ret;
 	

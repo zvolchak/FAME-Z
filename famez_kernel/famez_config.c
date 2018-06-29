@@ -11,12 +11,7 @@
 int famez_sendmsg(uint32_t peer_id, char *msg, ssize_t msglen,
 		  struct famez_configuration *config)
 {
-	// The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
-	// the lower 16 bits.  The combo must be assigned atomically.
-	union __attribute__ ((packed)) {
-		struct { uint16_t vector, peer; };
-		uint32_t push;
-	} ringer;
+	union ringer ringer;
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
@@ -35,7 +30,7 @@ int famez_sendmsg(uint32_t peer_id, char *msg, ssize_t msglen,
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
 // do it with proscribed calls here to do the start/end/length math.
 
-static int mapthings(struct famez_configuration *config, struct pci_dev *dev)
+STATIC int mapthings(struct famez_configuration *config, struct pci_dev *dev)
 {
 	int ret = -EFAULT;
 

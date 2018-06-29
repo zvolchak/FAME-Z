@@ -27,14 +27,14 @@
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
-struct ivshmem_BAR0_registers {
+struct ivshmem_registers {		// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
 			Rev1Reserved2,	// Rev 0: Interrupt status
 			IVPosition,	// My peer id
 			Doorbell;	// Upper and lower half
 };
 
-struct ivshmem_BAR1_msi_x_msi_pba {	// Not sure if this is needed?
+struct ivshmem_msi_x_msi_pba {		// BAR 1: Not sure if this is needed?
 	uint32_t junk;
 };
 
@@ -43,7 +43,7 @@ struct ivshmem_BAR1_msi_x_msi_pba {	// Not sure if this is needed?
 // work in the doorbell.  The last slot (with ID == nSlots - 1) is for the
 // server.  The remaining slots are for client IDs 1 - (nSlots -2).
 
-struct famez_globals {			// Start of IVSHMEM, not a mailslot
+struct famez_globals {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
 };
 
@@ -54,15 +54,22 @@ struct famez_mailbox_slot {
 	char *msg;				// ...via globals->msg_offset
 };
 
+// The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
+// the lower 16 bits.  The combo must be assigned atomically.
+union __attribute__ ((packed)) ringer {
+	struct { uint16_t vector, peer; };
+	uint32_t push;
+};
+
 struct famez_configuration {
 	struct pci_dev *pci_dev;
-	uint64_t max_msglen;			// Currently 384
-	uint16_t my_id, server_id;		// match ringer.peer 
-	struct ivshmem_BAR0_registers *regs;
-	struct ivshmem_BAR1_msi_x_msi_pba *msix;
-	struct famez_globals *globals;		// Base of BAR2
-	struct famez_mailbox_slot *my_slot;	// Calculated into BAR2
-	struct msix_entry *msix_entries;	// kzalloc an array
+	uint64_t max_msglen;				// Currently 384
+	uint16_t my_id, server_id;			// match ringer.peer 
+	struct ivshmem_registers __iomem *regs;		// BAR0
+	struct ivshmem_msi_x_msi_pba __iomem *msix;	// BAR1
+	struct famez_globals __iomem *globals;		// BAR2
+	struct famez_mailbox_slot *my_slot;		// End of BAR2
+	struct msix_entry *msix_entries;		// kzalloc an array
 };
 
 //-------------------------------------------------------------------------

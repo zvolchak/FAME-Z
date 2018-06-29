@@ -51,7 +51,7 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 		pr_err(FZ "Error retrieving MSI-X vector count\n");
 		return nvectors;
 	}
-	pr_info(FZSP "%2d MSI-X vectors (%sabled)\n",
+	pr_info(FZSP "%2d MSI-X vectors available (%sabled)\n",
 		nvectors, dev->msix_enabled ? "en" : "dis");
 	if (!nvectors) {
 		pr_err(FZ "Zero MSI-X vectors\n");	// QEMU invocation
@@ -77,7 +77,7 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 			pr_err(FZ "Can't allocate MSI-X vectors\n");
 			return ret;
 		}
-	pr_info(FZSP "%2d MSI-X vectors (%sabled)\n",
+	pr_info(FZSP "%2d MSI-X vectors used      (%sabled)\n",
 		ret, dev->msix_enabled ? "en" : "dis");
 	if (ret < nvectors) {
 		pr_err(FZ "%d vectors are not enough\n", ret);
