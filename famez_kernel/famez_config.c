@@ -10,42 +10,44 @@
 #define pci_resource_name(dev, bar) ((dev)->resource[(bar)].name)
 #endif
 
-static struct pci_device_id famez_PCI_ID[] = {	// Only function 0
+STATIC struct pci_device_id famez_PCI_ID_table[] = {	// Only function 0
+    { 0 },
     { PCI_DEVICE_SUB(
-    	PCI_VENDOR_ID_REDHAT_QUMRANET,
+    	0x42, 	// PCI_VENDOR_ID_REDHAT_QUMRANET,
 	PCI_ANY_ID,
 	PCI_ANY_ID,
-	PCI_SUBDEVICE_ID_QEMU
+	0x43 	// PCI_SUBDEVICE_ID_QEMU
       ),
     },
     { 0 },
 };
 
-MODULE_DEVICE_TABLE(pci, famez_PCI_ID);		// depmod, hotplug, modinfo
+MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
 // do it with proscribed calls here to do the start/end/length math.
 
-STATIC int mapBARs(struct famez_configuration *config, struct pci_dev *dev)
+STATIC int mapBARs(struct pci_dev *pdev)
 {
+	struct famez_configuration *config = pci_get_drvdata(pdev);
 	int ret;
 
 	ret = -ENOSPC;
 	pr_info(FZSP "Mapping BAR0 regs, size = %llu\n",
-		pci_resource_len(dev, 0));
-	if (!(config->regs = pci_iomap(dev, 0, 0))) {
+		pci_resource_len(pdev, 0));
+	if (!(config->regs = pci_iomap(pdev, 0, 0))) {
 		pr_err(FZ "can't map memory for registers\n");
 		return ret;
 	}
 	pr_info(FZSP "Mapping BAR1 MSI-X\n");
-	if (!(config->msix = pci_iomap(dev, 1, 0))) {
+	if (!(config->msix = pci_iomap(pdev, 1, 0))) {
 		pr_err(FZ "can't map memory for MSI-X\n");
 		return ret;
 	}
 	pr_info(FZSP "Mapping BAR2 globals/mailbox\n");
-	if (!(config->globals = pci_iomap(dev, 2, 0))) {
+	if (!(config->globals = pci_iomap(pdev, 2, 0))) {
 		pr_err(FZ "can't map memory for mailxbox\n");
 		return ret;
 	}
@@ -72,7 +74,7 @@ STATIC int mapBARs(struct famez_configuration *config, struct pci_dev *dev)
 
 //-------------------------------------------------------------------------
 
-STATIC int famez_probe(struct pci_dev *pdev,
+int famez_probe(struct pci_dev *pdev,
 		       const struct pci_device_id *pdev_id)
 {
 	struct famez_configuration *config = (void *)pdev_id->driver_data;
@@ -108,7 +110,7 @@ STATIC int famez_probe(struct pci_dev *pdev,
 	}
 
 	pci_set_drvdata(pdev, config);	// Now everyone has it
-	mapBARs(config, pdev);
+	mapBARs(pdev);
 
 	return 0;
 
@@ -122,15 +124,23 @@ err_out:
 	return ret;
 }
 
-static void famez_remove(struct pci_dev *pdev)
+void famez_remove(struct pci_dev *pdev)
 {
+	struct famez_configuration *config = pci_get_drvdata(pdev);
+
+	// famez_MSIX_teardown(config);
+	if (config->globals) pci_iounmap(pdev, config->globals);
+	if (config->msix) pci_iounmap(pdev, config->msix);
+	if (config->regs) pci_iounmap(pdev, config->regs);
+	pci_release_regions(pdev);
+	pci_disable_device(pdev);
 }
 
 static struct pci_driver pci_driver_table = {
 	.name      = FAMEZ_NAME,
-	.id_table  = famez_PCI_ID,
+	.id_table  = famez_PCI_ID_table,
 	.probe     = famez_probe,
-	.remove    = famez_remove,
+	.remove    = famez_remove
 };
 
 //-------------------------------------------------------------------------
@@ -144,10 +154,10 @@ int famez_config(struct famez_configuration *config)
 	memset(config, 0, sizeof(*config));
 
 	// Get config into probe()
-	famez_PCI_ID[0].driver_data = (kernel_ulong_t)config;
+	famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
 
 	pr_info("-----------------------------------------------------------");
-	pr_info(FZ FAMEZ_VERSION "; module loaded with\n");
+	pr_info(FZ FAMEZ_VERSION "; parms:\n");
 	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
 
 	// Out with the old:
@@ -185,10 +195,6 @@ undo:
 
 void famez_unconfig(struct famez_configuration *config)
 {
-	famez_MSIX_teardown(config);
-	if (config->globals) iounmap(config->globals);
-	if (config->msix) iounmap(config->msix);
-	if (config->regs) iounmap(config->regs);
 	pci_unregister_driver(&pci_driver_table);
 	memset(config, 0, sizeof(*config));
 }

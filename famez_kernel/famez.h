@@ -12,7 +12,7 @@
 #define IVSHMEM_DEVICE	0x1110
 
 // When stable, git commit, then git tag, then commit again (for the tag)
-#define FAMEZ_VERSION	"famez v0.7: interrupts, correctly"
+#define FAMEZ_VERSION	"famez v0.7.1: newfangled probe and interrupts"
 
 #include <linux/delay.h>
 #include <linux/configfs.h>
