@@ -1,6 +1,7 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG device
 
 #include <linux/module.h>
+#include <linux/pci.h>
 #include <linux/utsname.h>
 
 #include "famez.h"
@@ -10,15 +11,8 @@
 #define pci_resource_name(dev, bar) ((dev)->resource[(bar)].name)
 #endif
 
-STATIC struct pci_device_id famez_PCI_ID_table[] = {	// Only function 0
-    { 0 },
-    { PCI_DEVICE_SUB(
-    	0x42, 	// PCI_VENDOR_ID_REDHAT_QUMRANET,
-	PCI_ANY_ID,
-	PCI_ANY_ID,
-	0x43 	// PCI_SUBDEVICE_ID_QEMU
-      ),
-    },
+STATIC struct pci_device_id famez_PCI_ID_table[] = {
+    { PCI_VDEVICE(REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU), },
     { 0 },
 };
 
@@ -77,19 +71,19 @@ STATIC int mapBARs(struct pci_dev *pdev)
 int famez_probe(struct pci_dev *pdev,
 		       const struct pci_device_id *pdev_id)
 {
-	struct famez_configuration *config = (void *)pdev_id->driver_data;
+	struct famez_configuration *config;
 	int ret;
-
-	config->pci_dev = pdev;		
-	
-	return -ENODEV;
-
-	pr_info(FZ "Probe 1\n");
 
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZ "pci_enable_device failed\n");
 		goto err_out;
 	}
+	ret = -ENODEV;
+	goto err_pci_disable_device;
+
+	pr_info(FZ "Probe 1\n");
+	config = (void *)pdev_id->driver_data;
+	config->pci_dev = pdev;		
 
 	ret = -ENODEV;	// for now, nothing but failure
 
@@ -154,7 +148,7 @@ int famez_config(struct famez_configuration *config)
 	memset(config, 0, sizeof(*config));
 
 	// Get config into probe()
-	famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
+	// famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
 
 	pr_info("-----------------------------------------------------------");
 	pr_info(FZ FAMEZ_VERSION "; parms:\n");

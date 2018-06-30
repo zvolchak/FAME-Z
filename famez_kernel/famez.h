@@ -14,10 +14,6 @@
 // When stable, git commit, then git tag, then commit again (for the tag)
 #define FAMEZ_VERSION	"famez v0.7.1: newfangled probe and interrupts"
 
-#include <linux/delay.h>
-#include <linux/configfs.h>
-#include <linux/pci.h>
-
 #define STREQ(s1, s2) (!strcmp(s1, s2))
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
