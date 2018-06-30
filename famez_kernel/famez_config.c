@@ -8,8 +8,8 @@
 static struct pci_device_id famez_PCI_ID[] = {
     { PCI_DEVICE_SUB(
     	PCI_VENDOR_ID_REDHAT_QUMRANET,
-	PCI_ANY_ID,
-	PCI_ANY_ID,
+	0,
+	0,
 	PCI_SUBDEVICE_ID_QEMU
       ),
     }, // Function 0
@@ -20,32 +20,45 @@ MODULE_DEVICE_TABLE(pci, famez_PCI_ID);		// depmod, hotplug, modinfo
 
 //-------------------------------------------------------------------------
 
+#ifndef pci_resource_name
+#define pci_resource_name(dev, bar) ((dev)->resource[(bar)].name)
+#endif
+
 STATIC int famez_probe(struct pci_dev *pdev,
 		       const struct pci_device_id *pdev_id) {
 	int ret;
-	struct resource *bar1;
+
+	return -ENODEV;
+
+	pr_info(FZ "Probe 1\n");
 
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZ "pci_enable_device failed\n");
 		goto err_out;
 	}
-	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
-		pr_err(FZ "pci_enable_device failed\n");
+
+	ret = -ENODEV;	// for now, nothing but failure
+
+	pr_info(FZ "Probe 2\n");
+	if (pdev->revision != 1 ||
+	    !pdev->msix_cap ||
+	    !pci_resource_start(pdev, 1)) {
+		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n",
+			pci_resource_name(pdev, 1));
 		goto err_pci_disable_device;
 	}
 
-	// Don't pci_iomap(BARs) in here because there's no way to put
-	// the pointers (which come from ioremap, BTW).
-
-	bar1 = &(pdev->resource[1]);
-	if (!bar1->start || pdev->revision != 1 || !pdev->msix_cap) {
-		pr_info(FZSP "IVSHMEM @ %s is not my circus\n", bar1->name);
-		ret = -ENODEV;
-		goto err_pci_release_regions;
+	pr_info(FZ "Probe 3\n");
+	pr_info(FZ "IVSHMSG @ %s is my monkey\n", pci_resource_name(pdev, 1));
+	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
+		pr_err(FZSP "pci_request_regions failed\n");
+		goto err_pci_disable_device;
 	}
 
-err_pci_release_regions:
-	pci_release_regions(pdev);
+	return 0;
+
+// err_pci_release_regions:
+	// pci_release_regions(pdev);
 
 err_pci_disable_device:
 	pci_disable_device(pdev);
@@ -58,31 +71,28 @@ static void famez_remove(struct pci_dev *pdev)
 {
 }
 
-static struct pci_driver zhpe_pci_driver = {
-    .name      = FAMEZ_NAME,
-    .id_table  = famez_PCI_ID,
-    .probe     = famez_probe,
-    .remove    = famez_remove,
-};
-
-
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
 // do it with proscribed calls here to do the start/end/length math.
 
-STATIC int mapthings(struct famez_configuration *config, struct pci_dev *dev)
+STATIC int mapBARs(struct famez_configuration *config, struct pci_dev *dev)
 {
-	int ret = -EFAULT;
+	int ret;
 
+	ret = -ENOSPC;
+	pr_info(FZSP "Mapping BAR0 regs, size = %llu\n",
+		pci_resource_len(dev, 0));
 	if (!(config->regs = pci_iomap(dev, 0, 0))) {
 		pr_err(FZ "can't map memory for registers\n");
 		return ret;
 	}
+	pr_info(FZSP "Mapping BAR1 MSI-X\n");
 	if (!(config->msix = pci_iomap(dev, 1, 0))) {
 		pr_err(FZ "can't map memory for MSI-X\n");
 		return ret;
 	}
+	pr_info(FZSP "Mapping BAR2 globals/mailbox\n");
 	if (!(config->globals = pci_iomap(dev, 2, 0))) {
 		pr_err(FZ "can't map memory for mailxbox\n");
 		return ret;
@@ -108,6 +118,13 @@ STATIC int mapthings(struct famez_configuration *config, struct pci_dev *dev)
 	return 0;
 }
 
+	static struct pci_driver pci_driver_table = {
+		.name      = FAMEZ_NAME,
+		.id_table  = famez_PCI_ID,
+		.probe     = famez_probe,
+		.remove    = famez_remove,
+	};
+
 //-------------------------------------------------------------------------
 // Find the first one with two BARs and MSI-X (slightly redundant).
 
@@ -123,21 +140,15 @@ int famez_config(struct famez_configuration *config)
 	pr_info(FZ FAMEZ_VERSION "; module loaded with\n");
 	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
 
-	while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev))) {
-		struct resource *bar1;
+	// Out with the old:
+	// while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev)))
 
-		bar1 = &(dev->resource[1]);
-		if (!bar1->start || dev->revision != 1 || !dev->msix_cap) {
-			pr_info(FZSP "skipping an IVSHMEM @ %s\n", bar1->name);
-			continue;
-		}
-		pr_info(FZ "trying the IVSHMEM @ %s\n", bar1->name);
-		break;
+	if ((ret = pci_register_driver(&pci_driver_table)) < 0) {
+            pr_warn(FZ "pci_register_driver() = %d\n", ret);
+	    return ret;
 	}
-	if (!dev)
-		return -ENODEV;
 
-	if ((ret = mapthings(config, dev)))
+	if ((ret = mapBARs(config, dev)))
 		goto undo;
 	pr_info(FZSP "slot size = %llu, message offset = %llu, server = %d\n",
 		config->globals->slotsize,
