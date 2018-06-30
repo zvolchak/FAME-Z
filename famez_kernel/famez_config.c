@@ -5,71 +5,23 @@
 
 #include "famez.h"
 
-static struct pci_device_id famez_PCI_ID[] = {
-    { PCI_DEVICE_SUB(
-    	PCI_VENDOR_ID_REDHAT_QUMRANET,
-	0,
-	0,
-	PCI_SUBDEVICE_ID_QEMU
-      ),
-    }, // Function 0
-    { 0 },
-};
-
-MODULE_DEVICE_TABLE(pci, famez_PCI_ID);		// depmod, hotplug, modinfo
-
-//-------------------------------------------------------------------------
-
+// They missed one...
 #ifndef pci_resource_name
 #define pci_resource_name(dev, bar) ((dev)->resource[(bar)].name)
 #endif
 
-STATIC int famez_probe(struct pci_dev *pdev,
-		       const struct pci_device_id *pdev_id) {
-	int ret;
+static struct pci_device_id famez_PCI_ID[] = {	// Only function 0
+    { PCI_DEVICE_SUB(
+    	PCI_VENDOR_ID_REDHAT_QUMRANET,
+	PCI_ANY_ID,
+	PCI_ANY_ID,
+	PCI_SUBDEVICE_ID_QEMU
+      ),
+    },
+    { 0 },
+};
 
-	return -ENODEV;
-
-	pr_info(FZ "Probe 1\n");
-
-	if ((ret = pci_enable_device(pdev)) < 0) {
-		pr_err(FZ "pci_enable_device failed\n");
-		goto err_out;
-	}
-
-	ret = -ENODEV;	// for now, nothing but failure
-
-	pr_info(FZ "Probe 2\n");
-	if (pdev->revision != 1 ||
-	    !pdev->msix_cap ||
-	    !pci_resource_start(pdev, 1)) {
-		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n",
-			pci_resource_name(pdev, 1));
-		goto err_pci_disable_device;
-	}
-
-	pr_info(FZ "Probe 3\n");
-	pr_info(FZ "IVSHMSG @ %s is my monkey\n", pci_resource_name(pdev, 1));
-	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
-		pr_err(FZSP "pci_request_regions failed\n");
-		goto err_pci_disable_device;
-	}
-
-	return 0;
-
-// err_pci_release_regions:
-	// pci_release_regions(pdev);
-
-err_pci_disable_device:
-	pci_disable_device(pdev);
-
-err_out:
-	return ret;
-}
-
-static void famez_remove(struct pci_dev *pdev)
-{
-}
+MODULE_DEVICE_TABLE(pci, famez_PCI_ID);		// depmod, hotplug, modinfo
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -118,23 +70,81 @@ STATIC int mapBARs(struct famez_configuration *config, struct pci_dev *dev)
 	return 0;
 }
 
-	static struct pci_driver pci_driver_table = {
-		.name      = FAMEZ_NAME,
-		.id_table  = famez_PCI_ID,
-		.probe     = famez_probe,
-		.remove    = famez_remove,
-	};
+//-------------------------------------------------------------------------
+
+STATIC int famez_probe(struct pci_dev *pdev,
+		       const struct pci_device_id *pdev_id)
+{
+	struct famez_configuration *config = (void *)pdev_id->driver_data;
+	int ret;
+
+	config->pci_dev = pdev;		
+	
+	return -ENODEV;
+
+	pr_info(FZ "Probe 1\n");
+
+	if ((ret = pci_enable_device(pdev)) < 0) {
+		pr_err(FZ "pci_enable_device failed\n");
+		goto err_out;
+	}
+
+	ret = -ENODEV;	// for now, nothing but failure
+
+	pr_info(FZ "Probe 2\n");
+	if (pdev->revision != 1 ||
+	    !pdev->msix_cap ||
+	    !pci_resource_start(pdev, 1)) {
+		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n",
+			pci_resource_name(pdev, 1));
+		goto err_pci_disable_device;
+	}
+
+	pr_info(FZ "Probe 3\n");
+	pr_info(FZ "IVSHMSG @ %s is my monkey\n", pci_resource_name(pdev, 1));
+	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
+		pr_err(FZSP "pci_request_regions failed\n");
+		goto err_pci_disable_device;
+	}
+
+	pci_set_drvdata(pdev, config);	// Now everyone has it
+	mapBARs(config, pdev);
+
+	return 0;
+
+// err_pci_release_regions:
+	// pci_release_regions(pdev);
+
+err_pci_disable_device:
+	pci_disable_device(pdev);
+
+err_out:
+	return ret;
+}
+
+static void famez_remove(struct pci_dev *pdev)
+{
+}
+
+static struct pci_driver pci_driver_table = {
+	.name      = FAMEZ_NAME,
+	.id_table  = famez_PCI_ID,
+	.probe     = famez_probe,
+	.remove    = famez_remove,
+};
 
 //-------------------------------------------------------------------------
 // Find the first one with two BARs and MSI-X (slightly redundant).
 
 int famez_config(struct famez_configuration *config)
 {
-	struct pci_dev *dev = NULL;
 	int ret = 0;
 	char buf80[80];
 
 	memset(config, 0, sizeof(*config));
+
+	// Get config into probe()
+	famez_PCI_ID[0].driver_data = (kernel_ulong_t)config;
 
 	pr_info("-----------------------------------------------------------");
 	pr_info(FZ FAMEZ_VERSION "; module loaded with\n");
@@ -148,15 +158,13 @@ int famez_config(struct famez_configuration *config)
 	    return ret;
 	}
 
-	if ((ret = mapBARs(config, dev)))
-		goto undo;
 	pr_info(FZSP "slot size = %llu, message offset = %llu, server = %d\n",
 		config->globals->slotsize,
 		config->globals->msg_offset,
 		config->server_id);
 
-	if ((ret = famez_MSIX_setup(config, dev)))
-		goto undo;
+	// if ((ret = famez_MSIX_setup(config, dev)))
+	//	goto undo;
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
@@ -164,9 +172,6 @@ int famez_config(struct famez_configuration *config)
 		config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
 			goto undo;
 
-	// Now pci_dev_put|get(config->pci_dev) works, so keep it
-	config->pci_dev = dev;		
-	pci_dev_get(config->pci_dev);
 	return 0;
 
 undo:
@@ -184,7 +189,7 @@ void famez_unconfig(struct famez_configuration *config)
 	if (config->globals) iounmap(config->globals);
 	if (config->msix) iounmap(config->msix);
 	if (config->regs) iounmap(config->regs);
-	pci_dev_put(config->pci_dev);
+	pci_unregister_driver(&pci_driver_table);
 	memset(config, 0, sizeof(*config));
 }
 
