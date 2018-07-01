@@ -110,6 +110,8 @@ void famez_MSIX_teardown(struct famez_configuration *);
 // During callgraph generation, "flipping" these values will create a
 // more detailed map.  Otherwise use normal/idiot-proofing/performant values.
 
+#define CALLGRAPH
+
 #ifdef CALLGRAPH
 #define STATIC		
 #define NOINLINE	noinline

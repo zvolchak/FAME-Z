@@ -1,8 +1,8 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG device
 
 #include <linux/module.h>
-#include <linux/pci.h>
 #include <linux/utsname.h>
+#include <linux/pci.h>
 
 #include "famez.h"
 
@@ -12,7 +12,7 @@
 #endif
 
 STATIC struct pci_device_id famez_PCI_ID_table[] = {
-    { PCI_VDEVICE(REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU), },
+    { PCI_VDEVICE(REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU) },
     { 0 },
 };
 
@@ -130,7 +130,7 @@ void famez_remove(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 }
 
-static struct pci_driver pci_driver_table = {
+static struct pci_driver famez_pci_driver = {
 	.name      = FAMEZ_NAME,
 	.id_table  = famez_PCI_ID_table,
 	.probe     = famez_probe,
@@ -144,11 +144,14 @@ int famez_config(struct famez_configuration *config)
 {
 	int ret = 0;
 	char buf80[80];
+	struct pci_driver *pjunk = NULL;
+
+	ret = 1/(uint64_t)pjunk;
 
 	memset(config, 0, sizeof(*config));
 
 	// Get config into probe()
-	// famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
+	famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
 
 	pr_info("-----------------------------------------------------------");
 	pr_info(FZ FAMEZ_VERSION "; parms:\n");
@@ -157,7 +160,9 @@ int famez_config(struct famez_configuration *config)
 	// Out with the old:
 	// while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev)))
 
-	if ((ret = pci_register_driver(&pci_driver_table)) < 0) {
+	pjunk = &famez_pci_driver;
+	pr_warn("%p\n", pjunk);
+	if ((ret = pci_register_driver(pjunk)) < 0) {
             pr_warn(FZ "pci_register_driver() = %d\n", ret);
 	    return ret;
 	}
@@ -189,7 +194,7 @@ undo:
 
 void famez_unconfig(struct famez_configuration *config)
 {
-	pci_unregister_driver(&pci_driver_table);
+	pci_unregister_driver(&famez_pci_driver);
 	memset(config, 0, sizeof(*config));
 }
 
