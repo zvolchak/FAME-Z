@@ -3,5 +3,6 @@
 *.ko
 *.o
 .tmp_versions
+kallsyms
 Module.symvers
 modules.order

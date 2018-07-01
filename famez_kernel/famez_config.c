@@ -63,6 +63,12 @@ STATIC int mapBARs(struct pci_dev *pdev)
 	snprintf(config->my_slot->nodename,
 		 sizeof(config->my_slot->nodename) - 1,
 		 utsname()->nodename);
+
+	pr_info(FZSP "slot size = %llu, message offset = %llu, server = %d\n",
+		config->globals->slotsize,
+		config->globals->msg_offset,
+		config->server_id);
+
 	return 0;
 }
 
@@ -73,19 +79,18 @@ int famez_probe(struct pci_dev *pdev,
 {
 	struct famez_configuration *config;
 	int ret;
+	char buf80[80];
 
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZ "pci_enable_device failed\n");
 		goto err_out;
 	}
-	ret = -ENODEV;
-	goto err_pci_disable_device;
 
 	pr_info(FZ "Probe 1\n");
 	config = (void *)pdev_id->driver_data;
 	config->pci_dev = pdev;		
 
-	ret = -ENODEV;	// for now, nothing but failure
+	ret = -EINVAL;
 
 	pr_info(FZ "Probe 2\n");
 	if (pdev->revision != 1 ||
@@ -95,9 +100,8 @@ int famez_probe(struct pci_dev *pdev,
 			pci_resource_name(pdev, 1));
 		goto err_pci_disable_device;
 	}
-
-	pr_info(FZ "Probe 3\n");
 	pr_info(FZ "IVSHMSG @ %s is my monkey\n", pci_resource_name(pdev, 1));
+
 	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
 		pr_err(FZSP "pci_request_regions failed\n");
 		goto err_pci_disable_device;
@@ -105,11 +109,18 @@ int famez_probe(struct pci_dev *pdev,
 
 	pci_set_drvdata(pdev, config);	// Now everyone has it
 	mapBARs(pdev);
+	
+	if ((ret = famez_MSIX_setup(config, config->pci_dev))) // set by probe
+		goto err_pci_release_regions;
+
+	// Tell the server I'm here.  Cover the NUL terminator in the length.
+	sprintf(buf80, "Client %d is ready", config->my_id);
+	famez_sendmsg(config->server_id, buf80, strlen(buf80) + 1, config);
 
 	return 0;
 
-// err_pci_release_regions:
-	// pci_release_regions(pdev);
+err_pci_release_regions:
+	pci_release_regions(pdev);
 
 err_pci_disable_device:
 	pci_disable_device(pdev);
@@ -142,15 +153,12 @@ static struct pci_driver famez_pci_driver = {
 
 int famez_config(struct famez_configuration *config)
 {
-	int ret = 0;
-	char buf80[80];
-	struct pci_driver *pjunk = NULL;
 
-	ret = 1/(uint64_t)pjunk;
+	int ret;
 
 	memset(config, 0, sizeof(*config));
 
-	// Get config into probe()
+	// Get config into probe().  FIXME how does this work for hotplug>
 	famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
 
 	pr_info("-----------------------------------------------------------");
@@ -160,30 +168,16 @@ int famez_config(struct famez_configuration *config)
 	// Out with the old:
 	// while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev)))
 
-	pjunk = &famez_pci_driver;
-	pr_warn("%p\n", pjunk);
-	if ((ret = pci_register_driver(pjunk)) < 0) {
+	if ((ret = pci_register_driver(&famez_pci_driver)) < 0) {
             pr_warn(FZ "pci_register_driver() = %d\n", ret);
 	    return ret;
 	}
 
-	pr_info(FZSP "slot size = %llu, message offset = %llu, server = %d\n",
-		config->globals->slotsize,
-		config->globals->msg_offset,
-		config->server_id);
-
-	// if ((ret = famez_MSIX_setup(config, dev)))
-	//	goto undo;
-
-	// Tell the server I'm here.  Cover the NUL terminator in the length.
-	sprintf(buf80, "Client %d is ready", config->my_id);
-	if ((ret = famez_sendmsg(
-		config->server_id, buf80, strlen(buf80) + 1, config)) < 0)
-			goto undo;
+	// Everything else depends on probe finishing.
 
 	return 0;
 
-undo:
+// undo:
 	famez_unconfig(config);
 	return ret;
 }

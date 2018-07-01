@@ -24,7 +24,7 @@ static struct famez_configuration famez_single;	// as opposed to list_head
 static int __init famez_init(void)
 {
 	int ret;
-	
+
 	if ((ret = famez_config(&famez_single)))
 		pr_err(FZ "initialization failed\n");
 	else
