@@ -18,6 +18,7 @@
 # severs the network connection established by the protocol object.
 
 import os
+import time
 
 from twisted.internet.stdio import StandardIO
 
@@ -39,10 +40,11 @@ class _proxyCommander(LineReceiver):
         pass    # Could write first prompt now
 
     def lineReceived(self, line):
-        self._commProto.doCommand(line.decode())
-        tmp = '%s> ' %self._commProto.nodename
-        self.__class__._prompt = tmp.encode()
-        self.transport.write(self._prompt)
+        if self._commProto.doCommand(line.decode()):
+            # Else the reactor should be shutting down
+            tmp = '%s> ' %self._commProto.nodename
+            self.__class__._prompt = tmp.encode()
+            self.transport.write(self._prompt)
 
 ###########################################################################
 

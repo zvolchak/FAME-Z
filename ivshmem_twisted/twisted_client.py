@@ -252,12 +252,12 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Connection made on fd', self.transport.fileno())
 
     def connectionLost(self, reason):
-        '''Tell the other peers that I have died.'''
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
             txt = 'Dirty'
         else:
             txt = 'Clean'
         print('%s disconnect' % (txt, ))
+        TIreactor.stop()
 
     @staticmethod
     def ERcallback(vectorobj):
@@ -275,7 +275,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     def doCommand(self, cmdline):
         if not cmdline.strip():
-            return
+            return True     # "Keep going"
         elems = cmdline.split()
         cmd = elems.pop(0)
 
@@ -290,15 +290,15 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 dest = elems.pop(0)
                 msg = ' '.join(elems)       # Empty list -> empty string
                 self.place_and_go(dest, msg)
-                return
+                return True
 
-            if cmd in ('i', 'int'):
+            if cmd in ('i', 'int'):     # Legacy from QEMU ivshmem-client
                 assert len(elems) >= 2, 'Missing dest and/or src'
                 dest = elems.pop(0)
                 src = elems.pop(0)
                 msg = ' '.join(elems)       # Empty list -> empty string
                 self.place_and_go(dest, msg, src)
-                return
+                return True
 
             if cmd in ('d', 'dump'):
                 print('Actor event fds:')
@@ -311,16 +311,19 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
                 print('\nPeer list keys:')
                 print('\t%s' % sorted(self.peer_list.keys()))
-                return
+                return True
 
-            if cmd in ('h', 'help') or '?' in cmd:
-                print('dest and src can be integer, hostname, or "server"\n')
-                print('h[elp]\n\tThis message')
-                print('p[ing] dest\n\tShorthand for "send dest ping"')
-                print('s[end] dest [text...]\n\tLike "int", implicit src=me')
+            if cmd in ('h', 'help', 'l', 'list') or '?' in cmd:
+                if not cmd.startswith('l'):
+                    print('dest/src can be integer, hostname, or "server"\n')
+                    print('h[elp]\n\tThis message')
+                    print('l[ist]\n\tList all peers')
+                    print('p[ing] dest\n\tShorthand for "send dest ping"')
+                    print('q[uit]\n\tJust do it')
+                    print('s[end] dest [text...]\n\tLike "int" where src=me')
 
-                print('\nLegacy commands from QEMU "ivshmem-client":\n')
-                print('i[nt] dest src [text...]\n\tCan spoof src')
+                    print('\nLegacy commands from QEMU "ivshmem-client":\n')
+                    print('i[nt] dest src [text...]\n\tCan spoof src')
 
                 print('\nThis ID = %2d (%s)' % (self.my_id, self.nodename))
                 self.get_nodenames()
@@ -328,12 +331,18 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     if id == self.my_id:
                         continue
                     print('Peer ID = %2d (%s)' % (id, nodename))
-                return
+                return True
+
+            if cmd in ('q', 'quit'):
+                self.transport.loseConnection()
+                return False
 
             print('Unrecognized command "%s", try "help"' % cmd)
 
         except Exception as e:
             print('Error: %s' % str(e), file=sys.stderr)
+
+        return True
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,

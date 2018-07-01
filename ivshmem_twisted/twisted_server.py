@@ -102,9 +102,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # If errors occur early enough, send a bad revision to the client so it
     # terminates the connection.
     def connectionMade(peer):
-        peer.logmsg(
-            'new peer gets id %d @ socket %d' % (
-                peer.id, peer.transport.fileno()))
+        peer.logmsg('new socket %d == peer id %d' %
+            (peer.transport.fileno(), peer.id))
         if peer.id == -1:
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
@@ -282,7 +281,9 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
-        args.logmsg('Listening on %s' % args.socketpath)
+        args.logmsg('IVSHMEM listening on %s' % args.socketpath)
+
+        # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 
     def buildProtocol(self, useless_addr):
         # Docs mislead, have to explicitly pass something to get persistent
