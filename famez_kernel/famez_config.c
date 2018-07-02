@@ -8,11 +8,13 @@
 
 // They missed one...
 #ifndef pci_resource_name
-#define pci_resource_name(dev, bar) ((dev)->resource[(bar)].name)
+#define pci_resource_name(dev, bar) (char *)((dev)->resource[(bar)].name)
 #endif
 
+// PCI_VENDOR_ID_REDHAT_QUMRANET PCI_SUBDEVICE_ID_QEMU PCI_ANY_ID
 STATIC struct pci_device_id famez_PCI_ID_table[] = {
-    { PCI_VDEVICE(REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU) },
+    { PCI_DEVICE(PCI_ANY_ID, PCI_ANY_ID), 0 },
+    // { PCI_VDEVICE(REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU), 0 },
     { 0 },
 };
 
@@ -79,14 +81,16 @@ int famez_probe(struct pci_dev *pdev,
 {
 	struct famez_configuration *config;
 	int ret;
-	char buf80[80];
+	char *mygeo, buf80[80];
 
+	mygeo = pci_resource_name(pdev, 1);
+	pr_info(FZ "%s probe 1\n", mygeo);
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZ "pci_enable_device failed\n");
 		goto err_out;
 	}
 
-	pr_info(FZ "Probe 1\n");
+	pr_info(FZ "%s probe 2\n", mygeo);
 	config = (void *)pdev_id->driver_data;
 	config->pci_dev = pdev;		
 
@@ -96,8 +100,7 @@ int famez_probe(struct pci_dev *pdev,
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
-		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n",
-			pci_resource_name(pdev, 1));
+		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n", mygeo);
 		goto err_pci_disable_device;
 	}
 	pr_info(FZ "IVSHMSG @ %s is my monkey\n", pci_resource_name(pdev, 1));
@@ -120,9 +123,11 @@ int famez_probe(struct pci_dev *pdev,
 	return 0;
 
 err_pci_release_regions:
+	pr_err(FZSP "releasing regions\n");
 	pci_release_regions(pdev);
 
 err_pci_disable_device:
+	pr_err(FZSP "disabling device\n");
 	pci_disable_device(pdev);
 
 err_out:
@@ -174,6 +179,7 @@ int famez_config(struct famez_configuration *config)
 	}
 
 	// Everything else depends on probe finishing.
+        pr_warn(FZ "pci_register_driver() okay, waiting for probe()\n");
 
 	return 0;
 
