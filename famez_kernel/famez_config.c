@@ -13,8 +13,7 @@
 
 // PCI_VENDOR_ID_REDHAT_QUMRANET PCI_SUBDEVICE_ID_QEMU PCI_ANY_ID
 STATIC struct pci_device_id famez_PCI_ID_table[] = {
-    { PCI_DEVICE(PCI_ANY_ID, PCI_ANY_ID), 0 },
-    // { PCI_VDEVICE(REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU), 0 },
+    { PCI_DEVICE(PCI_VENDOR_ID_REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU) },
     { 0 },
 };
 
@@ -52,7 +51,7 @@ STATIC int mapBARs(struct pci_dev *pdev)
 	// Since this is QEMU, direct memory references should work.
 
 	config->my_id = config->regs->IVPosition;
-	config->server_id = config->globals->nSlots - 1;
+	config->server_id = config->globals->nSlots - 1;  // cuz I said so
 	config->max_msglen = config->globals->slotsize -
 			     config->globals->msg_offset;
 
@@ -76,61 +75,59 @@ STATIC int mapBARs(struct pci_dev *pdev)
 
 //-------------------------------------------------------------------------
 
-int famez_probe(struct pci_dev *pdev,
-		       const struct pci_device_id *pdev_id)
+int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
-	struct famez_configuration *config;
+	struct famez_configuration *config = NULL;
 	int ret;
 	char *mygeo, buf80[80];
 
 	mygeo = pci_resource_name(pdev, 1);
-	pr_info(FZ "%s probe 1\n", mygeo);
+	pr_info(FZ "probe %s\n", mygeo);
 	if ((ret = pci_enable_device(pdev)) < 0) {
-		pr_err(FZ "pci_enable_device failed\n");
+		pr_err(FZSP "pci_enable_device failed: %d\n", ret);
 		goto err_out;
 	}
 
-	pr_info(FZ "%s probe 2\n", mygeo);
 	config = (void *)pdev_id->driver_data;
 	config->pci_dev = pdev;		
 
 	ret = -EINVAL;
-
-	pr_info(FZ "Probe 2\n");
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
 		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n", mygeo);
 		goto err_pci_disable_device;
 	}
-	pr_info(FZ "IVSHMSG @ %s is my monkey\n", pci_resource_name(pdev, 1));
+	pr_info(FZ "IVSHMSG @ %s is my monkey\n", mygeo);
 
 	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
-		pr_err(FZSP "pci_request_regions failed\n");
+		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
 		goto err_pci_disable_device;
 	}
 
 	pci_set_drvdata(pdev, config);	// Now everyone has it
 	mapBARs(pdev);
 	
-	if ((ret = famez_MSIX_setup(config, config->pci_dev))) // set by probe
+	if ((ret = famez_MSIX_setup(config, pdev)))
 		goto err_pci_release_regions;
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
 	famez_sendmsg(config->server_id, buf80, strlen(buf80) + 1, config);
+	pr_info(FZSP "%s\n", buf80);
 
 	return 0;
 
 err_pci_release_regions:
-	pr_err(FZSP "releasing regions\n");
+	PR_V2(FZSP "releasing regions %s\n", mygeo);
 	pci_release_regions(pdev);
 
 err_pci_disable_device:
-	pr_err(FZSP "disabling device\n");
+	PR_V2(FZSP "disabling device %s\n", mygeo);
 	pci_disable_device(pdev);
 
 err_out:
+	if (config) config->pci_dev = NULL;
 	return ret;
 }
 
@@ -138,7 +135,7 @@ void famez_remove(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
 
-	// famez_MSIX_teardown(config);
+	famez_MSIX_teardown(config);
 	if (config->globals) pci_iounmap(pdev, config->globals);
 	if (config->msix) pci_iounmap(pdev, config->msix);
 	if (config->regs) pci_iounmap(pdev, config->regs);

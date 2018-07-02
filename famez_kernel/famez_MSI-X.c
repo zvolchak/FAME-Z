@@ -59,10 +59,14 @@ static irqreturn_t all_msix(int vector, void *data) {
 }
 
 //-------------------------------------------------------------------------
+// Since there are only nSlots-1 actual clients (as to make mailslot 0 the 
+// globals area) don't actually activate an IRQ for it.
+
+#define IRQ_LOOP_START	1
 
 int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 {
-	int i, ret, nvectors = 0;
+	int ret, i, nvectors = 0, last_irq_index;
 
 	if ((nvectors = pci_msix_vec_count(dev)) < 0) {
 		pr_err(FZ "Error retrieving MSI-X vector count\n");
@@ -86,51 +90,64 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 		return -ENOMEM;
 	}
 	// .vector was zeroed by kzalloc
-	for (i = 0; i < nvectors; i++)
+	for (i = IRQ_LOOP_START; i < nvectors; i++)
 		config->msix_entries[i].entry  = i;
 
 	if ((ret = pci_alloc_irq_vectors(
 		dev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
 			pr_err(FZ "Can't allocate MSI-X vectors\n");
-			return ret;
+			goto err_kfree_msix_entries;
 		}
 	pr_info(FZSP "%2d MSI-X vectors used      (%sabled)\n",
 		ret, dev->msix_enabled ? "en" : "dis");
 	if (ret < nvectors) {
 		pr_err(FZ "%d vectors are not enough\n", ret);
 		ret = -ENOSPC;		// Akin to pci_alloc_irq_vectors
-		goto cleanup_on_aisle_43;
+		goto err_pci_free_irq_vectors;
 	}
 
 	// Attach each IRQ to the same handler.  pci_irq_vector() walks a
-	// list and returns info on a match.  The only failure is if a 
-	// match isn't found, nothing is allocated.  Do it up front and
-	// reuse the table from the old pci_msix_xxx calls.  Then there's
-	// nothing to clean up.
-	for (i = 0; i < nvectors; i++) {
+	// list and returns info on a match.  Success is merely a lookup,
+	// not an allocation, so there's nothing to clean up from this step.
+	// Reuse the table from the old pci_msix_xxx calls.
+	for (i = IRQ_LOOP_START; i < nvectors; i++) {
 		if ((ret = pci_irq_vector(dev, i)) < 0) {
 			pr_err("pci_irq_vector(%d) failed: %d\n", i, ret);
-			goto cleanup_on_aisle_43;
+			goto err_pci_free_irq_vectors;
 		}
 		config->msix_entries[i].vector = ret;
 	}
-	// Now that they're all batched, assign them.
-	for (i = 0; i < nvectors; i++) {
+	// Now that they're all batched, assign them.  Each successful request
+	// must be balanced by a free_irq() someday. 
+	for (last_irq_index = IRQ_LOOP_START;
+	     last_irq_index < nvectors;
+	     last_irq_index++) {
 		if ((ret = request_irq(
-			config->msix_entries[i].vector,
+			config->msix_entries[last_irq_index].vector,
 			all_msix,
 			0,
 			"FAME-Z",
 			config))) {
-				pr_err(FZ "request_irq(%d) failed: %d\n", i, ret);
-				goto cleanup_on_aisle_43;
+				pr_err(FZ "request_irq(%d) failed: %d\n",
+					last_irq_index, ret);
+				goto err_free_irqs;
 		}
-		pr_info(FZSP "%d = %d\n", i, config->msix_entries[i].vector);
+		pr_info(FZSP "%d = %d\n",
+			last_irq_index,
+			config->msix_entries[last_irq_index].vector);
 	}
 	return 0;
 
-cleanup_on_aisle_43:
-	famez_MSIX_teardown(config);
+err_free_irqs:
+	for (i = IRQ_LOOP_START; i < last_irq_index; i++)
+		free_irq(config->msix_entries[i].vector, config);
+
+err_pci_free_irq_vectors:
+	pci_free_irq_vectors(config->pci_dev);
+
+err_kfree_msix_entries:
+	kfree(config->msix_entries);
+	config->msix_entries = NULL;	// sentinel for teardown
 	return ret;
 }
 
