@@ -50,9 +50,14 @@ static irqreturn_t all_msix(int vector, void *data) {
 	pr_info(FZ "IRQ %d == peer %u -> \"%s\"\n",
 		vector, peer_id, peer_slot->msg);
 
-	// Easy way to see if this thing is alive.  5 == len('Pong') + NUL
-	if STREQ(peer_slot->msg, "ping")
-		famez_sendmsg(peer_id, "Pong", 5, config);
+	// Easy way to see if this thing is alive.
+	if STREQ(peer_slot->msg, "ping") {
+		char pong[32];
+
+		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
+		famez_sendmsg(peer_id, pong, strlen(pong) + 1, config);
+		return IRQ_HANDLED;
+	}
 
 	// FIXME send this info off to somewhere useful :-)
 	return IRQ_HANDLED;
