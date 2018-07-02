@@ -55,7 +55,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     logmsg = None
     logerr = None
     peer_list = []     # Map peer IDs to list of eventfds
-    server_id = None
+    my_id = None
 
     # Non-standard addition to IVSHMEM server role: this server can be
     # interrupted and messaged to particpate in client activity.
@@ -68,7 +68,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
-            self.__class__.server_id = self.args.nSlots - 1
+            self.__class__.my_id = self.args.nSlots - 1  # Cuz that's the rule
             self.__class__.mailbox = self.args.mailbox
 
             # Usually create eventfds for receiving messages in IVSHMSG and
@@ -147,7 +147,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             for server_vector in peer.famez_notifiers:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
-                    peer.server_id,
+                    peer.my_id,
                     server_vector.wfd)
 
         # Server line 205: advertise the new peer to itself, ie, send the
@@ -195,7 +195,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.id = 1
             return
         max_ids = frozenset((range(self.args.nSlots))) - \
-                  frozenset((IVSHMEM_UNUSED_ID, self.server_id ))
+                  frozenset((IVSHMEM_UNUSED_ID, self.my_id ))
         self.id = sorted(max_ids - current_ids)[0]
 
     def send_initial_info(peer, ok=True):   # keep the convention self=="peer"
@@ -222,14 +222,15 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
         selph.logmsg('"%s" (%d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
-            selph.mailbox.place_in_slot(selph.server_id, 'PONG')
+            selph.mailbox.place_in_slot(
+                selph.my_id, 'ping(%2d)' % selph.my_id)
             for peer in selph.peer_list:
                 if peer.id == vectorobj.num:
                     break
             else:   # The peer disappeared?
                 selph.logmsg('Disappeering act')
                 return
-            peer.vectors[selph.server_id].incr()
+            peer.vectors[selph.my_id].incr()
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly,

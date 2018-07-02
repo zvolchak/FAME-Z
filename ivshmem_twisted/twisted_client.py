@@ -266,7 +266,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         print('%10s (%2d) -> "%s"' % (nodename, vectorobj.num, msg))
         if msg == 'ping':
             try:
-                selph.place_and_go(vectorobj.num, 'pong')
+                selph.place_and_go(vectorobj.num, 'pong(%2d)' % selph.my_id)
             except Exception as e:
                 print('pong bombed:', str(e))
 
