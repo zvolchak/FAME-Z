@@ -62,8 +62,6 @@ static irqreturn_t all_msix(int vector, void *data) {
 // Since there are only nSlots-1 actual clients (as to make mailslot 0 the 
 // globals area) don't actually activate an IRQ for it.
 
-#define IRQ_LOOP_START	1
-
 int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 {
 	int ret, i, nvectors = 0, last_irq_index;
@@ -74,25 +72,25 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 	}
 	pr_info(FZSP "%2d MSI-X vectors available (%sabled)\n",
 		nvectors, dev->msix_enabled ? "en" : "dis");
-	if (!nvectors) {
-		pr_err(FZ "Zero MSI-X vectors\n");	// QEMU invocation
-		return -EINVAL;
-	}
+
+	// Remember, don't need a vector for slot 0
 	if (config->globals->nSlots > nvectors) {
-		pr_err(FZ "not enough MSI-X vectors\n");
-		return -EDOM;
+		pr_err(FZ "need %llu MSI-X vectors, only %d available\n",
+			config->globals->nSlots, nvectors);
+		return -ENOSPC;
 	}
 
-	nvectors = config->globals->nSlots;		// Concession to legibility
+	nvectors = config->globals->nSlots;		// legibility
 	if (!(config->msix_entries = kzalloc(
 		nvectors * sizeof(struct msix_entry), GFP_KERNEL))) {
 		pr_err(FZ "Can't create MSI-X entries table\n");
 		return -ENOMEM;
 	}
 	// .vector was zeroed by kzalloc
-	for (i = IRQ_LOOP_START; i < nvectors; i++)
+	for (i = 0; i < nvectors; i++)
 		config->msix_entries[i].entry  = i;
 
+	// There used to be a direct call for "exact match".  Emulate it.
 	if ((ret = pci_alloc_irq_vectors(
 		dev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
 			pr_err(FZ "Can't allocate MSI-X vectors\n");
@@ -109,17 +107,20 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 	// Attach each IRQ to the same handler.  pci_irq_vector() walks a
 	// list and returns info on a match.  Success is merely a lookup,
 	// not an allocation, so there's nothing to clean up from this step.
-	// Reuse the table from the old pci_msix_xxx calls.
-	for (i = IRQ_LOOP_START; i < nvectors; i++) {
+	// Reuse the table from the old pci_msix_xxx calls.  Note that
+	// requested vectors are still option base 0.
+	for (i = 0; i < nvectors; i++) {
 		if ((ret = pci_irq_vector(dev, i)) < 0) {
 			pr_err("pci_irq_vector(%d) failed: %d\n", i, ret);
 			goto err_pci_free_irq_vectors;
 		}
 		config->msix_entries[i].vector = ret;
 	}
+
 	// Now that they're all batched, assign them.  Each successful request
-	// must be balanced by a free_irq() someday. 
-	for (last_irq_index = IRQ_LOOP_START;
+	// must be balanced by a free_irq() someday.  No, the return value
+	// is not stored anywhere.
+	for (last_irq_index = 0;
 	     last_irq_index < nvectors;
 	     last_irq_index++) {
 		if ((ret = request_irq(
@@ -139,7 +140,7 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 	return 0;
 
 err_free_irqs:
-	for (i = IRQ_LOOP_START; i < last_irq_index; i++)
+	for (i = 0; i < last_irq_index; i++)
 		free_irq(config->msix_entries[i].vector, config);
 
 err_pci_free_irq_vectors:
@@ -161,7 +162,7 @@ void famez_MSIX_teardown(struct famez_configuration *config)
 
 	if (!config->msix_entries)	// Been there, done that
 		return;
-	
+
 	for (i = 0; i < config->globals->nSlots; i++)
 		free_irq(config->msix_entries[i].vector, config);
 	pci_free_irq_vectors(config->pci_dev);

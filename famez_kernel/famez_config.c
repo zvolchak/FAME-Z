@@ -11,9 +11,16 @@
 #define pci_resource_name(dev, bar) (char *)((dev)->resource[(bar)].name)
 #endif
 
-// PCI_VENDOR_ID_REDHAT_QUMRANET PCI_SUBDEVICE_ID_QEMU PCI_ANY_ID
+// Find the one macro that does the right thing.  Notice there is no "device"
+// for QEMU in the PCI ID database, just the sub* things.
+
 STATIC struct pci_device_id famez_PCI_ID_table[] = {
-    { PCI_DEVICE(PCI_VENDOR_ID_REDHAT_QUMRANET, PCI_SUBDEVICE_ID_QEMU) },
+    { PCI_DEVICE_SUB(	// vend, dev, subvend, subdev
+    	PCI_VENDOR_ID_REDHAT_QUMRANET,
+    	PCI_ANY_ID,
+    	PCI_SUBVENDOR_ID_REDHAT_QUMRANET,
+	PCI_SUBDEVICE_ID_QEMU)
+    },
     { 0 },
 };
 
@@ -91,7 +98,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	config = (void *)pdev_id->driver_data;
 	config->pci_dev = pdev;		
 
-	ret = -EINVAL;
+	ret = -ENODEV;
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
