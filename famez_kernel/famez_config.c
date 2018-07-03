@@ -81,6 +81,7 @@ STATIC int mapBARs(struct pci_dev *pdev)
 }
 
 //-------------------------------------------------------------------------
+// Called at insmod time and also at hotplug events (shouldn't be any).
 
 int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
@@ -90,13 +91,21 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 
 	mygeo = pci_resource_name(pdev, 1);
 	pr_info(FZ "probe %s\n", mygeo);
+
+	if ((config = pci_get_drvdata(pdev))) {
+		pr_err(FZSP "This device is already configured\n");
+		return -EALREADY;
+	}
+
+	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
+		pr_err(FZSP "Cannot kzalloc(config)\n");
+		return -ENOMEM;
+	}
+
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZSP "pci_enable_device failed: %d\n", ret);
 		goto err_out;
 	}
-
-	config = (void *)pdev_id->driver_data;
-	config->pci_dev = pdev;		
 
 	ret = -ENODEV;
 	if (pdev->revision != 1 ||
@@ -115,7 +124,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	pci_set_drvdata(pdev, config);	// Now everyone has it
 	mapBARs(pdev);
 	
-	if ((ret = famez_MSIX_setup(config, pdev)))
+	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_pci_release_regions;
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
@@ -134,7 +143,11 @@ err_pci_disable_device:
 	pci_disable_device(pdev);
 
 err_out:
-	if (config) config->pci_dev = NULL;
+	if (config) {
+		config->pci_dev = NULL;
+		kfree(config);
+	}
+	pci_set_drvdata(pdev, NULL);
 	return ret;
 }
 
@@ -148,6 +161,7 @@ void famez_remove(struct pci_dev *pdev)
 	if (config->regs) pci_iounmap(pdev, config->regs);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
+	pci_set_drvdata(pdev, NULL);
 }
 
 static struct pci_driver famez_pci_driver = {
@@ -160,15 +174,9 @@ static struct pci_driver famez_pci_driver = {
 //-------------------------------------------------------------------------
 // Find the first one with two BARs and MSI-X (slightly redundant).
 
-int famez_config(struct famez_configuration *config)
+int famez_config(void)
 {
-
 	int ret;
-
-	memset(config, 0, sizeof(*config));
-
-	// Get config into probe().  FIXME how does this work for hotplug>
-	famez_PCI_ID_table[0].driver_data = (kernel_ulong_t)config;
 
 	pr_info("-----------------------------------------------------------");
 	pr_info(FZ FAMEZ_VERSION "; parms:\n");
@@ -186,21 +194,13 @@ int famez_config(struct famez_configuration *config)
         pr_warn(FZ "pci_register_driver() okay, waiting for probe()\n");
 
 	return 0;
-
-// undo:
-	famez_unconfig(config);
-	return ret;
 }
 
 //-------------------------------------------------------------------------
 // Can be called from config early errors, check fields first.  PCI subsystem
 // routines already do this.
 
-void famez_unconfig(struct famez_configuration *config)
-{
-	pci_unregister_driver(&famez_pci_driver);
-	memset(config, 0, sizeof(*config));
-}
+void famez_unconfig(void) { }
 
 //-------------------------------------------------------------------------
 // Return positive on success, negative on error, never 0.

@@ -75,14 +75,14 @@ extern int famez_verbose;
 //-------------------------------------------------------------------------
 // famez_config.c - early setup and late teardown of things
 
-int famez_config(struct famez_configuration *config);
-void famez_unconfig(struct famez_configuration *config);
+int famez_config(void);
+void famez_unconfig(void);
 int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
 // famez_MSI-X.c
 
-int famez_MSIX_setup(struct famez_configuration *, struct pci_dev *);
+int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct famez_configuration *);
 
 //-------------------------------------------------------------------------

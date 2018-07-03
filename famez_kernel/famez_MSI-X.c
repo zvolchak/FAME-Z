@@ -67,16 +67,17 @@ static irqreturn_t all_msix(int vector, void *data) {
 // Since there are only nSlots-1 actual clients (as to make mailslot 0 the 
 // globals area) don't actually activate an IRQ for it.
 
-int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
+int famez_MSIX_setup(struct pci_dev *pdev)
 {
 	int ret, i, nvectors = 0, last_irq_index;
+	struct famez_configuration *config = pci_get_drvdata(pdev);
 
-	if ((nvectors = pci_msix_vec_count(dev)) < 0) {
+	if ((nvectors = pci_msix_vec_count(pdev)) < 0) {
 		pr_err(FZ "Error retrieving MSI-X vector count\n");
 		return nvectors;
 	}
 	pr_info(FZSP "%2d MSI-X vectors available (%sabled)\n",
-		nvectors, dev->msix_enabled ? "en" : "dis");
+		nvectors, pdev->msix_enabled ? "en" : "dis");
 
 	// Remember, don't need a vector for slot 0
 	if (config->globals->nSlots > nvectors) {
@@ -97,12 +98,12 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 
 	// There used to be a direct call for "exact match".  Emulate it.
 	if ((ret = pci_alloc_irq_vectors(
-		dev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
+		pdev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
 			pr_err(FZ "Can't allocate MSI-X vectors\n");
 			goto err_kfree_msix_entries;
 		}
 	pr_info(FZSP "%2d MSI-X vectors used      (%sabled)\n",
-		ret, dev->msix_enabled ? "en" : "dis");
+		ret, pdev->msix_enabled ? "en" : "dis");
 	if (ret < nvectors) {
 		pr_err(FZ "%d vectors are not enough\n", ret);
 		ret = -ENOSPC;		// Akin to pci_alloc_irq_vectors
@@ -115,7 +116,7 @@ int famez_MSIX_setup(struct famez_configuration *config, struct pci_dev *dev)
 	// Reuse the table from the old pci_msix_xxx calls.  Note that
 	// requested vectors are still option base 0.
 	for (i = 0; i < nvectors; i++) {
-		if ((ret = pci_irq_vector(dev, i)) < 0) {
+		if ((ret = pci_irq_vector(pdev, i)) < 0) {
 			pr_err("pci_irq_vector(%d) failed: %d\n", i, ret);
 			goto err_pci_free_irq_vectors;
 		}

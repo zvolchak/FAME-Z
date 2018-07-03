@@ -17,15 +17,13 @@ int famez_verbose = 0;
 module_param(famez_verbose, int, S_IRUGO);
 MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 
-static struct famez_configuration famez_single;	// as opposed to list_head
-
 //-------------------------------------------------------------------------
 
 static int __init famez_init(void)
 {
 	int ret;
 
-	if ((ret = famez_config(&famez_single)))
+	if ((ret = famez_config()))
 		pr_err(FZ "initialization failed\n");
 	else
 		pr_info(FZ "initialization complete\n");
@@ -34,7 +32,7 @@ static int __init famez_init(void)
 
 static void famez_exit(void)
 {
-	famez_unconfig(&famez_single);
+	famez_unconfig();
 	pr_info(FZ "unload complete\n");
 }
 
