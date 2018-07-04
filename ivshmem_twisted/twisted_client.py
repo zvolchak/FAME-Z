@@ -253,10 +253,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     def connectionLost(self, reason):
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
-            txt = 'Dirty'
-        else:
-            txt = 'Clean'
-        print('%s disconnect' % (txt, ))
+            print('Dirty disconnect')
+        elif self.args.verbose:
+            print('Clean disconnect')
+        # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
     @staticmethod
@@ -301,7 +301,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 return True
 
             if cmd in ('d', 'dump'):
-                print('Actor event fds:')
+                print('Peer list keys (%d max):' % (self.nSlots - 1))
+                print('\t%s' % sorted(self.peer_list.keys()))
+
+                print('\nActor event fds:')
                 for key in sorted(self.fd_list.keys()):
                     print('\t%2d %s' % (key, self.fd_list[key]))
 
@@ -309,8 +312,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 for key in sorted(self.id2nodename.keys()):
                     print('\t%2d %s' % (key, self.id2nodename[key]))
 
-                print('\nPeer list keys:')
-                print('\t%s' % sorted(self.peer_list.keys()))
                 return True
 
             if cmd in ('h', 'help', 'l', 'list') or '?' in cmd:
