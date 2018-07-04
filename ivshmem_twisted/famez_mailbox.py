@@ -80,7 +80,8 @@ class FAMEZ_MailBox(object):
         # One for global, one for server, 4 slots is max two clients
         assert 4 <= nSlots <= self.MAILBOX_MAX_SLOTS, 'Bad nSlots'
 
-        size = nSlots * self.MAILBOX_SLOT_SIZE
+        # Go for the max to simple libvirt domain XML
+        size = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOT_SIZE
         gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
         for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
             try:
