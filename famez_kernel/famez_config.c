@@ -223,10 +223,20 @@ int famez_config(void)
 }
 
 //-------------------------------------------------------------------------
-// Can be called from config early errors, check fields first.  PCI subsystem
-// routines already do this.
+// About to finish an rmmod.
 
-void famez_unconfig(void) { }
+void famez_unconfig(void)
+{
+	struct famez_configuration *config, *next;
+
+	spin_lock(&active_lock);
+	list_for_each_entry_safe(config, next, &active_list, lister) {
+		famez_remove(config->pdev);
+		kfree(config);
+	}
+	spin_unlock(&active_lock);
+	pci_unregister_driver(&famez_pci_driver);
+}
 
 //-------------------------------------------------------------------------
 // Return positive on success, negative on error, never 0.
