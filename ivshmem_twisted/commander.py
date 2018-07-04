@@ -9,7 +9,7 @@
 #       :
 #       def buildProtocol(self, addr):
 #           protobj = MyProtocol(....)
-#           stdio.StandardIO(Commander(protobj))
+#           Commander(protobj)
 #           return protobj
 #
 # Yeah, a mixin or implementer is probably the right way.  Manana.
@@ -18,9 +18,10 @@
 # severs the network connection established by the protocol object.
 
 import os
-import time
 
-from twisted.internet.stdio import StandardIO
+from twisted.internet import reactor as TIreactor
+
+from twisted.internet.stdio import StandardIO   # internally hooks into "reactor"
 
 from twisted.protocols.basic import LineReceiver
 
@@ -28,23 +29,47 @@ class _proxyCommander(LineReceiver):
 
     delimiter = os.linesep.encode('ascii')      # Override for LineReceiver
 
-    _prompt = b'cmd> '                          # Local use
-    _commProto = None                           # Not an instance var
+    _once = None
 
     def __init__(self, commProto):
-        if self._commProto is not None:
-            return
-        self.__class__._commProto = commProto
+        if self._once is not None:
+            return _once
+        self._once = self
+        self.commProto = commProto
+        self.jfdi = getattr(commProto, 'doCommand', self.doCommand)
+        print('Ready')
 
     def connectionMade(self):   # First contact
         pass    # Could write first prompt now
 
+    def connectionLost(self, reason):
+        TIreactor.stop()
+
+    def doCommand(self, cmdline):
+        '''The default command line processor:  help and quit.'''
+        if not cmdline.strip():
+            return True     # "Keep going"
+        elems = cmdline.split()
+        cmd = elems.pop(0)
+        if cmd in ('h', 'help', 'l', 'list') or '?' in cmd:
+            print('h[elp]\n\tThis message')
+            print('q[uit]\n\tJust do it')
+        elif cmd.startswith('q'):
+            self.transport.loseConnection()
+            return False
+        return True
+
     def lineReceived(self, line):
-        if self._commProto.doCommand(line.decode()):
-            # Else the reactor should be shutting down
-            tmp = '%s> ' %self._commProto.nodename
-            self.__class__._prompt = tmp.encode()
-            self.transport.write(self._prompt)
+        if self.jfdi(line.decode()):
+            # Else the reactor should be shutting down.  If not, get the
+            # nodename each time cuz client's is not known at __init__ time.
+            try:
+                nodename = self.commProto.nodename
+            except AttributeError as e:
+                nodename = 'cmd'
+            tmp = '%s> ' % nodename
+            self.prompt = tmp.encode()
+            self.transport.write(self.prompt)
 
 ###########################################################################
 

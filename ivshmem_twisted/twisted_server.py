@@ -30,10 +30,12 @@ try:
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from famez_mailbox import FAMEZ_MailBox
+    from commander import Commander
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .famez_mailbox import FAMEZ_MailBox
+    from .commander import Commander
 
 # Don't use peer ID 0, certain documentation implies it's reserved.  Put the
 # server ID at the end of the list (nSlots-1) and use the middle for clients.
@@ -288,8 +290,11 @@ class FactoryIVSHMSGServer(TIPServerFactory):
 
     def buildProtocol(self, useless_addr):
         # Docs mislead, have to explicitly pass something to get persistent
-        # state across protocol/transport invocations.  Send this factory.
-        return ProtocolIVSHMSGServer(self)
+        # state across protocol/transport invocations.  As there is only
+        # one server object per process instantion, that's not necessary.
+        protobj = ProtocolIVSHMSGServer(self)
+        Commander(protobj)
+        return protobj
 
     def run(self):
         TIreactor.run()
