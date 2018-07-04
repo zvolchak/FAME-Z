@@ -150,7 +150,7 @@ err_free_irqs:
 		free_irq(config->msix_entries[i].vector, config);
 
 err_pci_free_irq_vectors:
-	pci_free_irq_vectors(config->pci_dev);
+	pci_free_irq_vectors(pdev);
 
 err_kfree_msix_entries:
 	kfree(config->msix_entries);
@@ -171,7 +171,7 @@ void famez_MSIX_teardown(struct famez_configuration *config)
 
 	for (i = 0; i < config->globals->nSlots; i++)
 		free_irq(config->msix_entries[i].vector, config);
-	pci_free_irq_vectors(config->pci_dev);
+	pci_free_irq_vectors(config->pdev);
 	kfree(config->msix_entries);
 	config->msix_entries = NULL;
 }

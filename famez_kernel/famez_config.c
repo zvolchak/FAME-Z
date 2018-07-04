@@ -1,8 +1,9 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG device
 
 #include <linux/module.h>
-#include <linux/utsname.h>
 #include <linux/pci.h>
+#include <linux/spinlock.h>
+#include <linux/utsname.h>
 
 #include "famez.h"
 
@@ -25,6 +26,10 @@ STATIC struct pci_device_id famez_PCI_ID_table[] = {
 };
 
 MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
+
+// Multiple bridge "devices" accepted by famez_probe()
+static LIST_HEAD(active_list);
+static DEFINE_SPINLOCK(active_lock);
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -85,29 +90,44 @@ STATIC int mapBARs(struct pci_dev *pdev)
 
 int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
-	struct famez_configuration *config = NULL;
+	struct famez_configuration *config = NULL, *cur = NULL;
 	int ret;
 	char *mygeo, buf80[80];
 
 	mygeo = pci_resource_name(pdev, 1);
 	pr_info(FZ "probe %s\n", mygeo);
 
-	if ((config = pci_get_drvdata(pdev))) {
-		pr_err(FZSP "This device is already configured\n");
-		return -EALREADY;
+	// Has this device been configured already?
+
+	spin_lock(&active_lock);
+
+	ret = -EALREADY;
+	if ((config = pci_get_drvdata(pdev))) {	// Is this possible?
+		pr_err(FZSP "This device is already configured (1)\n");
+		goto err_out;
 	}
+	list_for_each_entry(cur, &active_list, lister) {
+		// FIXME: implement "if (pdev == cur->pdev) goto err_out;
+		if (STREQ(mygeo, pci_resource_name(cur->pdev, 1))) {
+			pr_err(FZSP "This device is already configured (2)\n");
+			goto err_out;
+		}
+	}
+
+	// Make space, enable it and discriminate
 
 	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
 		pr_err(FZSP "Cannot kzalloc(config)\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_out;
 	}
 
+	ret = -ENODEV;
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZSP "pci_enable_device failed: %d\n", ret);
 		goto err_out;
 	}
 
-	ret = -ENODEV;
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
@@ -122,10 +142,15 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 
 	pci_set_drvdata(pdev, config);	// Now everyone has it
+	config->pdev = pdev;		// and so do I.  Needed for...
+
 	mapBARs(pdev);
 	
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_pci_release_regions;
+
+	list_add_tail(&config->lister, &active_list);
+	spin_unlock(&active_lock);
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
@@ -143,8 +168,9 @@ err_pci_disable_device:
 	pci_disable_device(pdev);
 
 err_out:
+	spin_unlock(&active_lock);
 	if (config) {
-		config->pci_dev = NULL;
+		config->pdev = NULL;
 		kfree(config);
 	}
 	pci_set_drvdata(pdev, NULL);

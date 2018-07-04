@@ -3,6 +3,8 @@
 #ifndef FAMEZ_DOT_H
 #define FAMEZ_DOT_H
 
+#include <linux/list.h>
+
 #define FAMEZ_NAME	"famez"
 #define FZ		"famez: "	// pr_info header
 #define FZSP		"       "	// pr_info header same length
@@ -57,7 +59,8 @@ union __attribute__ ((packed)) ringer {
 };
 
 struct famez_configuration {
-	struct pci_dev *pci_dev;
+	struct list_head lister;
+	struct pci_dev *pdev;
 	uint64_t max_msglen;				// Currently 384
 	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_registers __iomem *regs;		// BAR0
