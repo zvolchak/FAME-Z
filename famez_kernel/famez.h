@@ -23,7 +23,7 @@ struct ivshmem_registers {		// BAR 0
 			Doorbell;	// Upper and lower half
 };
 
-struct ivshmem_msi_x_msi_pba {		// BAR 1: Not sure if this is needed?
+struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
 	uint32_t junk;
 };
 
@@ -52,11 +52,11 @@ union __attribute__ ((packed)) ringer {
 
 struct famez_configuration {
 	struct list_head lister;
-	struct pci_dev *pdev;
+	struct pci_dev *pdev;				// Paranoid reverse ptr
 	uint64_t max_msglen;
 	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_registers __iomem *regs;		// BAR0
-	struct ivshmem_msi_x_msi_pba __iomem *msix;	// BAR1
+	struct ivshmem_msi_x_msi_pba __iomem *UNUSED;	// BAR1
 	struct famez_globals __iomem *globals;		// BAR2
 	struct famez_mailslot *my_slot;			// Last slot of BAR2
 	struct msix_entry *msix_entries;		// kzalloc an array
@@ -70,10 +70,10 @@ extern int famez_verbose;				// insmod parameter
 int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
-// famez_MSI-X.c
+// famez_MSI-X.c - handle interrupts from other FAME-Z peers
 
 int famez_MSIX_setup(struct pci_dev *);
-void famez_MSIX_teardown(struct famez_configuration *);
+void famez_MSIX_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
 // Legibility and debug assistance

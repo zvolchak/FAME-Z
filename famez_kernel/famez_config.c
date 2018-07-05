@@ -35,9 +35,9 @@ module_param(famez_verbose, int, S_IRUGO);
 MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 
 
-// Multiple bridge "devices" accepted by famez_probe().  It might be that
-// PCI core does this right thing, although I might need it later for
-// something else...right now it's just for removal.
+// Multiple bridge "devices" accepted by famez_probe().  It might be that PCI
+// core does everything I need but I can't shake the feeling I want this for
+// something else...right now it just tracks insmod/rmmod.
 
 static LIST_HEAD(active_list);
 static DEFINE_SPINLOCK(active_lock);
@@ -45,31 +45,28 @@ static DEFINE_SPINLOCK(active_lock);
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
-// do it with proscribed calls here to do the start/end/length math.
+// the proscribed calls do the start/end/length math so use them.
 
 STATIC int mapBARs(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
-	int ret;
 
-	ret = -ENOSPC;
 	pr_info(FZSP "Mapping BAR0 regs, size = %llu\n",
 		pci_resource_len(pdev, 0));
-	if (!(config->regs = pci_iomap(pdev, 0, 0))) {
-		pr_err(FZ "can't map memory for registers\n");
-		return ret;
-	}
-	pr_info(FZSP "Mapping BAR1 MSI-X\n");
-	if (!(config->msix = pci_iomap(pdev, 1, 0))) {
-		pr_err(FZ "can't map memory for MSI-X\n");
-		return ret;
-	}
-	pr_info(FZSP "Mapping BAR2 globals/mailbox\n");
-	if (!(config->globals = pci_iomap(pdev, 2, 0))) {
-		pr_err(FZ "can't map memory for mailxbox\n");
-		return ret;
-	}
+	if (!(config->regs = pci_iomap(pdev, 0, 0)))
+		goto err_unmap;
 
+#if 0
+	pr_info(FZSP "Mapping BAR1 MSI-X\n");
+	if (!(config->UNUSED = pci_iomap(pdev, 1, 0)))
+		goto err_unmap;
+#endif
+
+	pr_info(FZSP "Mapping BAR2 globals/mailbox\n");
+	if (!(config->globals = pci_iomap(pdev, 2, 0)))
+		goto err_unmap;
+
+	// Set up more globals and mailbox references to work around padding.
 	// Docs for pci_iomap() say to use io[read|write]32.
 	// Since this is QEMU, direct memory references should work.
 
@@ -94,6 +91,18 @@ STATIC int mapBARs(struct pci_dev *pdev)
 		config->server_id);
 
 	return 0;
+
+err_unmap:
+	pr_err(FZ "map failed\n");
+	if (config->globals) pci_iounmap(pdev, config->globals);
+	config->regs = NULL;
+#if 0
+	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
+	config->UNUSED = NULL;
+#endif
+	if (config->regs) pci_iounmap(pdev, config->regs);
+	config->regs = NULL;
+	return -ENOMEM;
 }
 
 //-------------------------------------------------------------------------
@@ -151,10 +160,11 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		goto err_pci_disable_device;
 	}
 
-	pci_set_drvdata(pdev, config);	// Now everyone has it
-	config->pdev = pdev;		// and so do I.  Needed for...
+	pci_set_drvdata(pdev, config);	// Now everyone has it.
+	config->pdev = pdev;		// Reverse pointers are always in vogue.
 
-	mapBARs(pdev);
+	if ((ret = mapBARs(pdev)))
+		goto err_pci_release_regions;
 	
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_pci_release_regions;
@@ -199,9 +209,11 @@ void famez_remove(struct pci_dev *pdev)
 
 	spin_lock(&active_lock);
 
-	famez_MSIX_teardown(config);
+	famez_MSIX_teardown(pdev);
 	if (config->globals) pci_iounmap(pdev, config->globals);
-	if (config->msix) pci_iounmap(pdev, config->msix);
+#if 0
+	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
+#endif
 	if (config->regs) pci_iounmap(pdev, config->regs);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);

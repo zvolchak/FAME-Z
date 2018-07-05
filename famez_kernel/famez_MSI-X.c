@@ -33,6 +33,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
+	// FIXME: preload a lookup table if I ever care about speed.
 	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
 		if (vector == config->msix_entries[slotnum].vector) {
 			peer_id = config->msix_entries[slotnum].entry;
@@ -52,7 +53,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// Easy way to see if this thing is alive.
 	if STREQ(peer_slot->msg, "ping") {
-		char pong[32];
+		char pong[16];
 
 		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
 		famez_sendmsg(peer_id, pong, strlen(pong) + 1, config);
@@ -69,8 +70,8 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 int famez_MSIX_setup(struct pci_dev *pdev)
 {
-	int ret, i, nvectors = 0, last_irq_index;
 	struct famez_configuration *config = pci_get_drvdata(pdev);
+	int ret, i, nvectors = 0, last_irq_index;
 
 	if ((nvectors = pci_msix_vec_count(pdev)) < 0) {
 		pr_err(FZ "Error retrieving MSI-X vector count\n");
@@ -100,7 +101,7 @@ int famez_MSIX_setup(struct pci_dev *pdev)
 	for (i = 0; i < nvectors; i++)
 		config->msix_entries[i].entry  = i;
 
-	// There used to be a direct call for "exact match".  Emulate it.
+	// There used to be a direct call for "exact match".  Re-create it.
 	if ((ret = pci_alloc_irq_vectors(
 		pdev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
 			pr_err(FZ "Can't allocate MSI-X vectors\n");
@@ -128,7 +129,7 @@ int famez_MSIX_setup(struct pci_dev *pdev)
 	}
 
 	// Now that they're all batched, assign them.  Each successful request
-	// must be balanced by a free_irq() someday.  No, the return value
+	// must be matched by a free_irq() someday.  No, the return value
 	// is not stored anywhere.
 	for (last_irq_index = 0;
 	     last_irq_index < nvectors;
@@ -141,15 +142,15 @@ int famez_MSIX_setup(struct pci_dev *pdev)
 			config))) {
 				pr_err(FZ "request_irq(%d) failed: %d\n",
 					last_irq_index, ret);
-				goto err_free_irqs;
+				goto err_free_completed_irqs;
 		}
-		pr_info(FZSP "%d = %d\n",
-			last_irq_index,
-			config->msix_entries[last_irq_index].vector);
+		PR_V1(FZSP "%d = %d\n",
+		      last_irq_index,
+		      config->msix_entries[last_irq_index].vector);
 	}
 	return 0;
 
-err_free_irqs:
+err_free_completed_irqs:
 	for (i = 0; i < last_irq_index; i++)
 		free_irq(config->msix_entries[i].vector, config);
 
@@ -166,8 +167,9 @@ err_kfree_msix_entries:
 // There is no disable control on this "device", hope one doesn't fire...
 // Can be called from setup() above.
 
-void famez_MSIX_teardown(struct famez_configuration *config)
+void famez_MSIX_teardown(struct pci_dev *pdev)
 {
+	struct famez_configuration *config = pci_get_drvdata(pdev);
 	int i;
 
 	if (!config->msix_entries)	// Been there, done that
@@ -175,7 +177,7 @@ void famez_MSIX_teardown(struct famez_configuration *config)
 
 	for (i = 0; i < config->globals->nSlots; i++)
 		free_irq(config->msix_entries[i].vector, config);
-	pci_free_irq_vectors(config->pdev);
+	pci_free_irq_vectors(pdev);
 	kfree(config->msix_entries);
 	config->msix_entries = NULL;
 }
