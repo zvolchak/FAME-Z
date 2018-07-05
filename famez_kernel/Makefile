@@ -8,7 +8,7 @@ PWD:=$(shell /bin/pwd)
 
 obj-$(CONFIG_FAMEZ) += famez.o
 
-famez-objs := famez_base.o famez_config.o famez_MSI-X.o
+famez-objs := famez_config.o famez_MSI-X.o
 
 RUNNING_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH_CPU 2>/dev/null)
 

@@ -1,4 +1,5 @@
-// Initial discovery and setup of IVSHMEM/IVSHMSG device
+// Initial discovery and setup of IVSHMEM/IVSHMSG devices
+// HP(E) lineage: res2hot from MMS PoC "mimosa" mms_base.c, flavored by zhpe.
 
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -7,17 +8,15 @@
 
 #include "famez.h"
 
-// They missed one...
-#ifndef pci_resource_name
-#define pci_resource_name(dev, bar) (char *)((dev)->resource[(bar)].name)
-#endif
-
-#define CARDLOC(ptr) (pci_resource_name(ptr, 1))
+MODULE_LICENSE("GPL");
+MODULE_VERSION(FAMEZ_VERSION);
+MODULE_AUTHOR("Rocky Craig <rocky.craig@hpe.com>");
+MODULE_DESCRIPTION("Simple driver to wiggle interrupts for FAME-Z project.");
 
 // Find the one macro that does the right thing.  Notice there is no "device"
 // for QEMU in the PCI ID database, just the sub* things.
 
-STATIC struct pci_device_id famez_PCI_ID_table[] = {
+static struct pci_device_id famez_PCI_ID_table[] = {
     { PCI_DEVICE_SUB(	// vend, dev, subvend, subdev
     	PCI_VENDOR_ID_REDHAT_QUMRANET,
     	PCI_ANY_ID,
@@ -28,6 +27,13 @@ STATIC struct pci_device_id famez_PCI_ID_table[] = {
 };
 
 MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
+
+// module parameters are global
+
+int famez_verbose = 0;
+module_param(famez_verbose, int, S_IRUGO);
+MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
+
 
 // Multiple bridge "devices" accepted by famez_probe().  It might be that
 // PCI core does this right thing, although I might need it later for
@@ -92,6 +98,7 @@ STATIC int mapBARs(struct pci_dev *pdev)
 
 //-------------------------------------------------------------------------
 // Called at insmod time and also at hotplug events (shouldn't be any).
+// Only take IVSHMEM (filtered by PCI core) with a BAR 1 and 64 vectors.
 
 int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
@@ -216,9 +223,8 @@ static struct pci_driver famez_pci_driver = {
 };
 
 //-------------------------------------------------------------------------
-// Find the first one with two BARs and MSI-X (slightly redundant).
 
-int famez_config(void)
+int __init famez_init(void)
 {
 	int ret;
 
@@ -240,13 +246,17 @@ int famez_config(void)
 	return 0;
 }
 
+module_init(famez_init);
+
 //-------------------------------------------------------------------------
 // Called from rmmod.
 
-void famez_unconfig(void)
+void famez_exit(void)
 {
 	pci_unregister_driver(&famez_pci_driver);
 }
+
+module_exit(famez_exit);
 
 //-------------------------------------------------------------------------
 // Return positive on success, negative on error, never 0.

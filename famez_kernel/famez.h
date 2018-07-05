@@ -6,21 +6,13 @@
 #include <linux/list.h>
 
 #define FAMEZ_NAME	"famez"
-#define FZ		"famez: "	// pr_info header
-#define FZSP		"       "	// pr_info header same length
-
-// For PCI search
-#define IVSHMEM_VENDOR	0x1af4	// RedHat
-#define IVSHMEM_DEVICE	0x1110
+#define FZ		"famez: "	// pr_xxxx header
+#define FZSP		"       "	// pr_xxxx header same length indent
 
 // When stable, git commit, then git tag, then commit again (for the tag)
-#define FAMEZ_VERSION	"famez v0.7.1: newfangled probe and interrupts"
-
-#define STREQ(s1, s2) (!strcmp(s1, s2))
-#define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
+#define FAMEZ_VERSION	"famez v0.7.2: card list and correct rmmod behavior"
 
 #define FAMEZ_MAX_CLIENTS	63	// + 1 for server == power of 2
-#define FAMEZ_PEER_SERVER	0
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
@@ -38,7 +30,7 @@ struct ivshmem_msi_x_msi_pba {		// BAR 1: Not sure if this is needed?
 // There are a power-of-two number of mailbox slots.  Slot 0 is reserved
 // for global data; it's easy to find :-) and server ID 0 doesn't seem to
 // work in the doorbell.  The last slot (with ID == nSlots - 1) is for the
-// server.  The remaining slots are for client IDs 1 - (nSlots -2).
+// server.  The remaining slots are for client IDs 1 through (nSlots - 2).
 
 struct famez_globals {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
@@ -48,7 +40,7 @@ struct famez_mailslot {
 	char nodename[32];
 	uint64_t msglen;
 	// padding in here, calculate at runtime...
-	char *msg;				// ...via globals->msg_offset
+	char *msg;			// ...via globals->msg_offset
 };
 
 // The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
@@ -61,7 +53,7 @@ union __attribute__ ((packed)) ringer {
 struct famez_configuration {
 	struct list_head lister;
 	struct pci_dev *pdev;
-	uint64_t max_msglen;				// Currently 384
+	uint64_t max_msglen;
 	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_registers __iomem *regs;		// BAR0
 	struct ivshmem_msi_x_msi_pba __iomem *msix;	// BAR1
@@ -71,15 +63,10 @@ struct famez_configuration {
 };
 
 //-------------------------------------------------------------------------
-// famez_base.c - globals from insmod parameters, then routines
+// famez_config.c - insmod and later probe() setup; final teardown of rmmod
 
-extern int famez_verbose;
+extern int famez_verbose;				// insmod parameter
 
-//-------------------------------------------------------------------------
-// famez_config.c - early setup and late teardown of things
-
-int famez_config(void);
-void famez_unconfig(void);
 int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
@@ -89,7 +76,17 @@ int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct famez_configuration *);
 
 //-------------------------------------------------------------------------
-// Debug assistance
+// Legibility and debug assistance
+
+// linux/pci.h missed one
+#ifndef pci_resource_name
+#define pci_resource_name(dev, bar) (char *)((dev)->resource[(bar)].name)
+#endif
+
+#define CARDLOC(ptr) (pci_resource_name(ptr, 1))
+
+#define STREQ(s1, s2) (!strcmp(s1, s2))
+#define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
 #ifdef FAMEZ_DEBUG
 #define PR_V1(a...)	{ if (famez_verbose) pr_info(a); }
