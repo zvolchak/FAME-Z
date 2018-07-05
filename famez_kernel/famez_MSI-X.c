@@ -78,6 +78,10 @@ int famez_MSIX_setup(struct pci_dev *pdev)
 	}
 	pr_info(FZSP "%2d MSI-X vectors available (%sabled)\n",
 		nvectors, pdev->msix_enabled ? "en" : "dis");
+	if (nvectors != 64) {	// Convention in FAME emulation_configure.sh
+		pr_err(FZ "Expected 64 MSI-X vectors, not %d\n", nvectors);
+		return -EINVAL;
+	}
 
 	// Remember, don't need a vector for slot 0
 	if (config->globals->nSlots > nvectors) {

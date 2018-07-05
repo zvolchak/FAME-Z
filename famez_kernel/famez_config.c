@@ -12,6 +12,8 @@
 #define pci_resource_name(dev, bar) (char *)((dev)->resource[(bar)].name)
 #endif
 
+#define CARDLOC(ptr) (pci_resource_name(ptr, 1))
+
 // Find the one macro that does the right thing.  Notice there is no "device"
 // for QEMU in the PCI ID database, just the sub* things.
 
@@ -27,7 +29,10 @@ STATIC struct pci_device_id famez_PCI_ID_table[] = {
 
 MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
 
-// Multiple bridge "devices" accepted by famez_probe()
+// Multiple bridge "devices" accepted by famez_probe().  It might be that
+// PCI core does this right thing, although I might need it later for
+// something else...right now it's just for removal.
+
 static LIST_HEAD(active_list);
 static DEFINE_SPINLOCK(active_lock);
 
@@ -77,7 +82,7 @@ STATIC int mapBARs(struct pci_dev *pdev)
 		 sizeof(config->my_slot->nodename) - 1,
 		 utsname()->nodename);
 
-	pr_info(FZSP "slot size = %llu, message offset = %llu, server = %d\n",
+	pr_info(FZSP "mailslot size=%llu, message offset=%llu, server=%d\n",
 		config->globals->slotsize,
 		config->globals->msg_offset,
 		config->server_id);
@@ -92,10 +97,9 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
 	struct famez_configuration *config = NULL, *cur = NULL;
 	int ret;
-	char *mygeo, buf80[80];
+	char buf80[80];
 
-	mygeo = pci_resource_name(pdev, 1);
-	pr_info(FZ "probe %s\n", mygeo);
+	pr_info(FZ "probe %s\n", CARDLOC(pdev));
 
 	// Has this device been configured already?
 
@@ -107,8 +111,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		goto err_out;
 	}
 	list_for_each_entry(cur, &active_list, lister) {
-		// FIXME: implement "if (pdev == cur->pdev) goto err_out;
-		if (STREQ(mygeo, pci_resource_name(cur->pdev, 1))) {
+		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
 			pr_err(FZSP "This device is already configured (2)\n");
 			goto err_out;
 		}
@@ -131,10 +134,10 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
-		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n", mygeo);
+		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n", CARDLOC(pdev));
 		goto err_pci_disable_device;
 	}
-	pr_info(FZ "IVSHMSG @ %s is my monkey\n", mygeo);
+	pr_info(FZ "IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
 
 	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
 		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
@@ -160,11 +163,11 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	return 0;
 
 err_pci_release_regions:
-	PR_V2(FZSP "releasing regions %s\n", mygeo);
+	PR_V2(FZSP "releasing regions %s\n", CARDLOC(pdev));
 	pci_release_regions(pdev);
 
 err_pci_disable_device:
-	PR_V2(FZSP "disabling device %s\n", mygeo);
+	PR_V2(FZSP "disabling device %s\n", CARDLOC(pdev));
 	pci_disable_device(pdev);
 
 err_out:
@@ -179,7 +182,15 @@ err_out:
 
 void famez_remove(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	struct famez_configuration *cur, *next, *config = pci_get_drvdata(pdev);
+
+	pr_info(FZ "famez_remove(%s)", CARDLOC(pdev));
+	if (!config) {
+		pr_info(FZSP "still not my circus\n");
+		return;
+	}
+
+	spin_lock(&active_lock);
 
 	famez_MSIX_teardown(config);
 	if (config->globals) pci_iounmap(pdev, config->globals);
@@ -188,6 +199,13 @@ void famez_remove(struct pci_dev *pdev)
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	pci_set_drvdata(pdev, NULL);
+	
+	list_for_each_entry_safe(cur, next, &active_list, lister) {
+		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
+			list_del(&(cur->lister));
+	}
+	kfree(config);
+	spin_unlock(&active_lock);
 }
 
 static struct pci_driver famez_pci_driver = {
@@ -223,18 +241,10 @@ int famez_config(void)
 }
 
 //-------------------------------------------------------------------------
-// About to finish an rmmod.
+// Called from rmmod.
 
 void famez_unconfig(void)
 {
-	struct famez_configuration *config, *next;
-
-	spin_lock(&active_lock);
-	list_for_each_entry_safe(config, next, &active_list, lister) {
-		famez_remove(config->pdev);
-		kfree(config);
-	}
-	spin_unlock(&active_lock);
 	pci_unregister_driver(&famez_pci_driver);
 }
 
