@@ -9,10 +9,7 @@
 #define FZ		"famez: "	// pr_xxxx header
 #define FZSP		"       "	// pr_xxxx header same length indent
 
-// When stable, git commit, then git tag, then commit again (for the tag)
-#define FAMEZ_VERSION	"famez v0.7.2: card list and correct rmmod behavior"
-
-#define FAMEZ_MAX_CLIENTS	63	// + 1 for server == power of 2
+#define FAMEZ_VERSION	FAMEZ_NAME " v0.7.3: early chardev work"
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
@@ -27,17 +24,20 @@ struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
 	uint32_t junk;
 };
 
-// There are a power-of-two number of mailbox slots.  Slot 0 is reserved
-// for global data; it's easy to find :-) and server ID 0 doesn't seem to
-// work in the doorbell.  The last slot (with ID == nSlots - 1) is for the
-// server.  The remaining slots are for client IDs 1 through (nSlots - 2).
+// The famez_server.py controls the mailbox slot size and number of slots
+// (and therefore the total file size).  It gives these numbers to this driver.
+// There are always a power-of-two number of mailbox slots, indexed by IVSHMSG
+// client ID.  Slot 0 is reserved for global data; it's easy to find :-); 
+// besides, ID 0 doesn't seem to work in the doorbell.  The last slot (with 
+// ID == nSlots - 1) is for the Python server.  The remaining slots are for
+// client IDs 1 through (nSlots - 2).
 
 struct famez_globals {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
 };
 
 struct famez_mailslot {
-	char nodename[32];
+	char nodename[32];		// of the owning client
 	uint64_t msglen;
 	// padding in here, calculate at runtime...
 	char *msg;			// ...via globals->msg_offset
@@ -74,6 +74,12 @@ int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
+
+//-------------------------------------------------------------------------
+// famez_chardev.c - Creates a device file with simple capabilities
+
+int famez_setup_chardev(void);
+void famez_teardown_chardev(void);
 
 //-------------------------------------------------------------------------
 // Legibility and debug assistance
