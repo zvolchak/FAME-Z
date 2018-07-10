@@ -36,13 +36,12 @@ int famez_verbose = 0;
 module_param(famez_verbose, int, S_IRUGO);
 MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 
-
 // Multiple bridge "devices" accepted by famez_probe().  It might be that PCI
 // core does everything I need but I can't shake the feeling I want this for
 // something else...right now it just tracks insmod/rmmod.
 
-static LIST_HEAD(active_list);
-static DEFINE_SPINLOCK(active_lock);
+LIST_HEAD(famez_active_list);
+DEFINE_SPINLOCK(famez_active_lock);
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -128,14 +127,14 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 
 	// Has this device been configured already?
 
-	spin_lock(&active_lock);
+	spin_lock(&famez_active_lock);
 
 	ret = -EALREADY;
 	if ((config = pci_get_drvdata(pdev))) {	// Is this possible?
 		pr_err(FZSP "This device is already configured (1)\n");
 		goto err_out;
 	}
-	list_for_each_entry(cur, &active_list, lister) {
+	list_for_each_entry(cur, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
 			pr_err(FZSP "This device is already configured (2)\n");
 			goto err_out;
@@ -181,8 +180,8 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if ((ret = famez_setup_chardev()))
 		goto err_MSIX_teardown;
 
-	list_add_tail(&config->lister, &active_list);
-	spin_unlock(&active_lock);
+	list_add_tail(&config->lister, &famez_active_list);
+	spin_unlock(&famez_active_lock);
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
@@ -208,7 +207,7 @@ err_pci_disable_device:
 	pci_disable_device(pdev);
 
 err_out:
-	spin_unlock(&active_lock);
+	spin_unlock(&famez_active_lock);
 	if (config) {
 		config->pdev = NULL;
 		kfree(config);
@@ -228,7 +227,10 @@ void famez_remove(struct pci_dev *pdev)
 	}
 	pr_info(FZSP "disabling/removing/freeing resouces\n");
 
-	spin_lock(&active_lock);
+	spin_lock(&famez_active_lock);
+
+	if (config->nr_users)
+		pr_err(FZSP "# users is non-zero, very uncool\n");
 
 	famez_teardown_chardev();	// after MSIX teardown?
 
@@ -240,12 +242,12 @@ void famez_remove(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 	pci_set_drvdata(pdev, NULL);
 	
-	list_for_each_entry_safe(cur, next, &active_list, lister) {
+	list_for_each_entry_safe(cur, next, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
 			list_del(&(cur->lister));
 	}
 	kfree(config);
-	spin_unlock(&active_lock);
+	spin_unlock(&famez_active_lock);
 }
 
 static struct pci_driver famez_pci_driver = {

@@ -52,6 +52,7 @@ union __attribute__ ((packed)) ringer {
 
 struct famez_configuration {
 	struct list_head lister;
+	int nr_users;					// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	uint64_t max_msglen;
 	uint16_t my_id, server_id;			// match ringer.peer 
@@ -67,16 +68,24 @@ struct famez_configuration {
 
 extern int famez_verbose;				// insmod parameter
 
+extern struct list_head famez_active_list;
+extern spinlock_t famez_active_lock;
+
 int famez_sendmail(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
 // famez_MSI-X.c - handle interrupts from other FAME-Z peers
+
+extern struct famez_mailslot famez_last_slot;
+extern spinlock_t famez_last_slot_lock;
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
 // famez_chardev.c - Creates a device file with simple capabilities
+
+extern wait_queue_head_t famez_reader_wait;
 
 int famez_setup_chardev(void);
 void famez_teardown_chardev(void);
@@ -92,6 +101,7 @@ void famez_teardown_chardev(void);
 #define CARDLOC(ptr) (pci_resource_name(ptr, 1))
 
 #define STREQ(s1, s2) (!strcmp(s1, s2))
+#define STREQ_N(s1, s2, lll) (!strncmp(s1, s2, lll))
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
 #ifdef FAMEZ_DEBUG

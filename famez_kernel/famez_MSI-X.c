@@ -5,6 +5,9 @@
 
 #include "famez.h"
 
+struct famez_mailslot famez_last_slot = { 0 };
+DEFINE_SPINLOCK(famez_last_slot_lock);
+
 //-------------------------------------------------------------------------
 
 struct famez_mailslot __iomem *famez_get_mailslot(
@@ -24,6 +27,8 @@ struct famez_mailslot __iomem *famez_get_mailslot(
 	slot->msg = (void *)((uint64_t)slot + config->globals->msg_offset);
 	return slot;
 }
+
+//-------------------------------------------------------------------------
 
 static irqreturn_t all_msix(int vector, void *data) {
 	struct famez_configuration *config = data;
@@ -55,16 +60,18 @@ static irqreturn_t all_msix(int vector, void *data) {
 		vector, peer_id, peer_slot->msg);
 
 	// Easy way to see if this thing is alive.
-	if STREQ(peer_slot->msg, "ping") {
+	spin_lock(&famez_last_slot_lock);
+	if STREQ_N(peer_slot->msg, "ping", 4) {
 		char pong[16];
 
 		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
 		famez_sendmail(peer_id, pong, strlen(pong) + 1, config);
 	} else {
-
-		// FIXME send this info off to somewhere useful :-)
-
+		// FIXME: stompage occurs, should return NACK if necessary
+		memcpy(&famez_last_slot, peer_slot, config->globals->slotsize);
+		wake_up_all(&famez_reader_wait);
 	}
+	spin_unlock(&famez_last_slot_lock);
 
 	// Clear the message so the sender can go again
 	peer_slot->msglen = 0;

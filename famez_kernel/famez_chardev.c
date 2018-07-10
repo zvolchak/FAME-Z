@@ -39,27 +39,87 @@
 #include <linux/kmod.h>
 #include <linux/list.h>
 #include <linux/miscdevice.h>
-#include <linux/mm.h>
+#include <linux/pci.h>
 #include <linux/poll.h>
-#include <linux/sched.h>
+#include <linux/spinlock.h>
+#include <linux/wait.h>
 
 #include "famez.h"
 
+DECLARE_WAIT_QUEUE_HEAD(famez_reader_wait);
+
 static int famez_open(struct inode *inode, struct file *file)
 {
-	return -ENOSYS;
+	struct famez_configuration *config = NULL, *cur = NULL;
+
+	// Compare the dev_t in the inode to known interfaces
+
+	spin_lock(&famez_active_lock);
+	list_for_each_entry(cur, &famez_active_list, lister) {
+		if (inode->i_rdev == cur->pdev->dev.devt) {
+			config = cur;
+			break;
+		}
+	}
+	if (!config) {
+		spin_unlock(&famez_active_lock);
+		return -ENODEV;
+	}
+
+	config->nr_users++;
+	file->private_data = config;
+	spin_unlock(&famez_active_lock);
+	return 0;
 }
+
+//-------------------------------------------------------------------------
+// Only at the last close
 
 static int famez_release(struct inode *inode, struct file *file)
 {
-	return -ENOSYS;
+	struct famez_configuration *config = file->private_data;
+
+	spin_lock(&famez_active_lock);
+	if (config->nr_users != 1)	// do things in flush()?
+		pr_warn(FZ "release() shows %d users\n", config->nr_users);
+	config->nr_users = 0;
+	spin_unlock(&famez_active_lock);
+	return 0;
 }
+
+//-------------------------------------------------------------------------
 
 static ssize_t famez_read(struct file *file, char __user *buf, size_t len,
                           loff_t *ppos)
 {
-	return -ENOSYS;
+	//struct famez_configuration *config = file->private_data;
+	int ret = -EIO;
+
+	spin_lock(&famez_last_slot_lock);
+	if (!famez_last_slot.msglen) {	// Wait for new data?
+		if (file->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+		wait_event_interruptible(famez_reader_wait, 
+					 famez_last_slot.msglen);
+	}
+
+	spin_lock(&famez_last_slot_lock);
+	if (len < famez_last_slot.msglen) {
+		ret = -EINVAL;
+		goto err_done;
+	}
+
+	if ((ret = copy_to_user(buf, famez_last_slot.msg, famez_last_slot.msglen)) ==
+		famez_last_slot.msglen)
+		famez_last_slot.msglen = 0;
+	// fall through
+
+err_done:
+	spin_unlock(&famez_last_slot_lock);
+	return ret;
 }
+
+//-------------------------------------------------------------------------
 
 static ssize_t famez_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
@@ -67,9 +127,17 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 	return -ENOSYS;
 }
 
+//-------------------------------------------------------------------------
+// Returning 0 will cause the caller (epoll/poll/select) to sleep.
+
 static uint famez_poll(struct file *file, struct poll_table_struct *wait)
 {
-	return 0;
+	// struct famez_configuration *config = file->private_data;
+	uint ret = 0;
+
+	poll_wait(file, &famez_reader_wait, wait);
+		ret |= POLLIN | POLLRDNORM;
+	return ret;
 }
 
 static const struct file_operations famez_fops = {
