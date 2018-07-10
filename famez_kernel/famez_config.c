@@ -1,6 +1,8 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG devices
 // HP(E) lineage: res2hot from MMS PoC "mimosa" mms_base.c, flavored by zhpe.
 
+#include <linux/delay.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
@@ -63,18 +65,20 @@ STATIC int mapBARs(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
 
-	pr_info(FZSP "Mapping BAR0 regs, size = %llu\n",
+	pr_info(FZSP "Mapping BAR0 regs (%llu bytes)\n",
 		pci_resource_len(pdev, 0));
 	if (!(config->regs = pci_iomap(pdev, 0, 0)))
 		goto err_unmap;
 
 #if 0
-	pr_info(FZSP "Mapping BAR1 MSI-X\n");
+	pr_info(FZSP "Mapping BAR1 MSI-X (%llu bytes)\n",
+		pci_resource_len(pdev, 1));
 	if (!(config->UNUSED = pci_iomap(pdev, 1, 0)))
 		goto err_unmap;
 #endif
 
-	pr_info(FZSP "Mapping BAR2 globals/mailbox\n");
+	pr_info(FZSP "Mapping BAR2 globals/mailslots (%llu bytes)\n",
+		pci_resource_len(pdev, 2));
 	if (!(config->globals = pci_iomap(pdev, 2, 0)))
 		goto err_unmap;
 
@@ -182,7 +186,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	sprintf(buf80, "Client %d is ready", config->my_id);
-	famez_sendmsg(config->server_id, buf80, strlen(buf80) + 1, config);
+	famez_sendmail(config->server_id, buf80, strlen(buf80) + 1, config);
 	pr_info(FZSP "%s\n", buf80);
 
 	return 0;
@@ -290,13 +294,21 @@ module_exit(famez_exit);
 //-------------------------------------------------------------------------
 // Return positive on success, negative on error, never 0.
 
-int famez_sendmsg(uint32_t peer_id, char *msg, ssize_t msglen,
-		  struct famez_configuration *config)
+int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
+		   struct famez_configuration *config)
 {
 	union ringer ringer;
+	uint64_t done = get_jiffies_64() + HZ;
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
+
+	// Pseudo-HW ready: wait until previous responder has cleared msglen.
+	while (config->my_slot->msglen && get_jiffies_64() < done)
+		msleep(50);
+	if (config->my_slot->msglen)
+		pr_warn(FZ "sendmail() is stomping on previous message\n");
+
 	// Keep nodename and msg pointer; update msglen and msg contents.
 	memset(config->my_slot->msg, 0, config->max_msglen);
 	config->my_slot->msglen = msglen;

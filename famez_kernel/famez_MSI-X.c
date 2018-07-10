@@ -59,7 +59,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 		char pong[16];
 
 		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
-		famez_sendmsg(peer_id, pong, strlen(pong) + 1, config);
+		famez_sendmail(peer_id, pong, strlen(pong) + 1, config);
 	} else {
 
 		// FIXME send this info off to somewhere useful :-)

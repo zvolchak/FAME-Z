@@ -67,7 +67,7 @@ struct famez_configuration {
 
 extern int famez_verbose;				// insmod parameter
 
-int famez_sendmsg(uint32_t , char *, ssize_t, struct famez_configuration *);
+int famez_sendmail(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
 // famez_MSI-X.c - handle interrupts from other FAME-Z peers
