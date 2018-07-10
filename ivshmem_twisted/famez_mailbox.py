@@ -17,6 +17,8 @@
 import mmap
 import os
 import struct
+from time import sleep as SLEEP
+from time import time as NOW
 
 from os.path import stat as STAT     # for constants
 from pdb import set_trace
@@ -136,7 +138,15 @@ class FAMEZ_MailBox(object):
         index += self.MAILSLOT_MESSAGE_OFFSET
         fmt = '%ds' % msglen
         msg = struct.unpack(fmt, self.mm[index:index + msglen])
-        # Returned a single element tuple that should be NUL-padded to end.
+
+        # The message is copied so mark the mailslot length zero as permission
+        # for the requester to send another message (not necessarily to me).
+
+        index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MSGLEN_OFFSET
+        self.mm[index:index + 8] = struct.pack('Q', 0)
+
+        # Clean up the message copyout, which is a single element tuple
+        # that should be NUL-padded to end.
         msg = msg[0].split(b'\0', 1)[0]
         if not asbytes:
             msg = msg.decode()
@@ -153,7 +163,14 @@ class FAMEZ_MailBox(object):
         msglen = len(msg)   # It's bytes now
         assert msglen < self.MAILSLOT_MESSAGE_SIZE, 'Message too long'
 
+        # The previous responder needs to clear the msglen to indicate it
+        # has pulled the message out of the sender's mailbox.
         index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MSGLEN_OFFSET
+        stop = NOW() + 1.2
+        while NOW() < stop and struct.unpack('Q', self.mm[index:index+8])[0]:
+            print('psuedo-HW not ready to send')
+            SLEEP(0.1)
+
         self.mm[index:index + 8] = struct.pack('Q', msglen)
         index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MESSAGE_OFFSET
         self.mm[index:index + msglen] = msg
