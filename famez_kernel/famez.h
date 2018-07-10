@@ -58,7 +58,7 @@ struct famez_configuration {
 	struct ivshmem_registers __iomem *regs;		// BAR0
 	struct ivshmem_msi_x_msi_pba __iomem *UNUSED;	// BAR1
 	struct famez_globals __iomem *globals;		// BAR2
-	struct famez_mailslot *my_slot;			// Last slot of BAR2
+	struct famez_mailslot *my_slot;			// indexed by my_id
 	struct msix_entry *msix_entries;		// kzalloc an array
 };
 

@@ -44,6 +44,9 @@ static irqreturn_t all_msix(int vector, void *data) {
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
+
+	// All returns from here are IRQ_HANDLED
+
 	if (!(peer_slot = famez_get_mailslot(config, peer_id))) {
 		pr_err(FZ "Could not match peer %u\n", peer_id);
 		return IRQ_HANDLED;
@@ -57,16 +60,20 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
 		famez_sendmsg(peer_id, pong, strlen(pong) + 1, config);
-		return IRQ_HANDLED;
+	} else {
+
+		// FIXME send this info off to somewhere useful :-)
+
 	}
 
-	// FIXME send this info off to somewhere useful :-)
+	// Clear the message so the sender can go again
+	peer_slot->msglen = 0;
 	return IRQ_HANDLED;
 }
 
 //-------------------------------------------------------------------------
-// Since there are only nSlots-1 actual clients (as to make mailslot 0 the 
-// globals area) don't actually activate an IRQ for it.
+// As there are only nSlots-2 actual clients (because mailslot 0 is globals
+// and server @ nslots-1) I SHOULDN'T actually activate those two IRQs.
 
 int famez_MSIX_setup(struct pci_dev *pdev)
 {

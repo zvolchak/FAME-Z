@@ -47,6 +47,18 @@ static DEFINE_SPINLOCK(active_lock);
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
 // the proscribed calls do the start/end/length math so use them.
 
+STATIC void unmapBARs(struct pci_dev *pdev)
+{
+	struct famez_configuration *config = pci_get_drvdata(pdev);
+
+	if (config->globals) pci_iounmap(pdev, config->globals);
+	config->globals = NULL;
+	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
+	config->UNUSED = NULL;
+	if (config->regs) pci_iounmap(pdev, config->regs);
+	config->regs = NULL;
+}
+
 STATIC int mapBARs(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
@@ -93,15 +105,8 @@ STATIC int mapBARs(struct pci_dev *pdev)
 	return 0;
 
 err_unmap:
-	pr_err(FZ "map failed\n");
-	if (config->globals) pci_iounmap(pdev, config->globals);
-	config->regs = NULL;
-#if 0
-	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
-	config->UNUSED = NULL;
-#endif
-	if (config->regs) pci_iounmap(pdev, config->regs);
-	config->regs = NULL;
+	pr_err(FZSP "mapping failed\n");
+	unmapBARs(pdev);
 	return -ENOMEM;
 }
 
@@ -167,7 +172,10 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		goto err_pci_release_regions;
 	
 	if ((ret = famez_MSIX_setup(pdev)))
-		goto err_pci_release_regions;
+		goto err_unmapBARs;
+
+	if ((ret = famez_setup_chardev()))
+		goto err_MSIX_teardown;
 
 	list_add_tail(&config->lister, &active_list);
 	spin_unlock(&active_lock);
@@ -178,6 +186,14 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	pr_info(FZSP "%s\n", buf80);
 
 	return 0;
+
+err_MSIX_teardown:
+	PR_V2(FZSP "tearing down MSI-X %s\n", CARDLOC(pdev));
+	famez_MSIX_teardown(pdev);
+
+err_unmapBARs:
+	PR_V2(FZSP "unmapping BAR(S) %s\n", CARDLOC(pdev));
+	unmapBARs(pdev);
 
 err_pci_release_regions:
 	PR_V2(FZSP "releasing regions %s\n", CARDLOC(pdev));
@@ -206,15 +222,16 @@ void famez_remove(struct pci_dev *pdev)
 		pr_info(FZSP "still not my circus\n");
 		return;
 	}
+	pr_info(FZSP "disabling/removing/freeing resouces\n");
 
 	spin_lock(&active_lock);
 
+	famez_teardown_chardev();	// after MSIX teardown?
+
 	famez_MSIX_teardown(pdev);
-	if (config->globals) pci_iounmap(pdev, config->globals);
-#if 0
-	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
-#endif
-	if (config->regs) pci_iounmap(pdev, config->regs);
+
+	unmapBARs(pdev);
+
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	pci_set_drvdata(pdev, NULL);
@@ -248,12 +265,12 @@ int __init famez_init(void)
 	// while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev)))
 
 	if ((ret = pci_register_driver(&famez_pci_driver)) < 0) {
-            pr_warn(FZ "pci_register_driver() = %d\n", ret);
+            pr_err(FZ "pci_register_driver() = %d\n", ret);
 	    return ret;
 	}
 
 	// Everything else depends on probe finishing.
-        pr_warn(FZ "pci_register_driver() okay, waiting for probe()\n");
+        pr_warn(FZ "pci_register_driver() successful\n");
 
 	return 0;
 }
