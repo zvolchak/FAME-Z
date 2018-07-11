@@ -121,10 +121,9 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
 	struct famez_configuration *config = NULL, *cur = NULL;
 	int ret;
-	char imalive[80], regionname[32];
+	char imalive[80];
 
-	pr_info(FZ "probe %s\n", CARDLOC(pdev));
-
+	pr_info(FZ "probe(%s)\n", CARDLOC(pdev));
 
 	// Has this device been configured already?
 
@@ -149,10 +148,9 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 	pr_info(FZ "IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
 
-	snprintf(regionname, sizeof(regionname) - 1,
-		 "%s.%02x", FAMEZ_NAME, pdev->devfn >> 3);
-	PR_V2(FZSP "Checkpoint 1\n");
-	if ((ret = pci_request_regions(pdev, regionname)) < 0) {
+	// "cat /proc/iomem" seems to be very finicky about spaces and
+	// punctuation even if there are other things in there with it.
+	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
 		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
 		goto err_pci_disable_device;
 	}
@@ -160,13 +158,11 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// Make space and add it.  Either could sleep, as can many things after this
 	// (esp kzalloc)
 	
-	PR_V2(FZSP "Checkpoint 2\n");
 	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
 		pr_err(FZSP "Cannot kzalloc(config)\n");
 		ret = -ENOMEM;
 		goto err_out;
 	}
-	PR_V2(FZSP "Checkpoint 3\n");
 	spin_lock_bh(&famez_active_lock);
 	list_for_each_entry(cur, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
@@ -185,15 +181,12 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	dev_set_drvdata(&pdev->dev, config);	// Never hurts to go deep.
 	config->pdev = pdev;			// Reverse pointers never hurt.
 
-	PR_V2(FZSP "Checkpoint 4\n");
 	if ((ret = mapBARs(pdev)))
 		goto err_pci_release_regions;
 	
-	PR_V2(FZSP "Checkpoint 5\n");
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_unmapBARs;
 
-	PR_V2(FZSP "Checkpoint 6\n");
 	if ((ret = famez_chardev_setup(pdev)))
 		goto err_MSIX_teardown;
 
