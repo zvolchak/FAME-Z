@@ -226,13 +226,13 @@ void famez_remove(struct pci_dev *pdev)
 		pr_info(FZSP "still not my circus\n");
 		return;
 	}
-	pr_info(FZSP "disabling/removing/freeing resouces\n");
-
-	spin_lock_bh(&famez_active_lock);	// some things sleep
+	pr_info(FZSP "disabling/removing/freeing resources\n");
 
 	famez_chardev_teardown(pdev);		// switch with MSIX teardown?
 
-	famez_MSIX_teardown(pdev);
+	spin_lock(&famez_active_lock);		// some things sleep
+
+	famez_MSIX_teardown(pdev);		// stop pong
 
 	unmapBARs(pdev);
 
@@ -248,8 +248,8 @@ void famez_remove(struct pci_dev *pdev)
 	if (atomic_read(&config->nr_users))
 		pr_err(FZSP "# users is non-zero, very interesting\n");
 
+	spin_unlock(&famez_active_lock);
 	kfree(config);
-	spin_unlock_bh(&famez_active_lock);
 }
 
 static struct pci_driver famez_pci_driver = {

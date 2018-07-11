@@ -88,7 +88,8 @@ static int famez_release(struct inode *inode, struct file *file)
 	struct famez_configuration *config = extract_config(file->private_data);
 
 	if (!atomic_dec_and_test(&config->nr_users)) {
-		pr_warn(FZ "final release still has users\n");
+		pr_warn(FZ "final release() still has %d users\n",
+			atomic_read(&config->nr_users));
 		atomic_set(&config->nr_users, 0);
 	}
 	return 0;
@@ -172,7 +173,8 @@ int famez_chardev_setup(struct pci_dev *pdev)
 		kfree(lookup);
 		return -ENOMEM;
 	}
-	sprintf(name, "%s.%0x", FAMEZ_NAME, config->pdev->devfn);
+	// Name should be reminiscent of lspci output
+	sprintf(name, "%s.%02x", FAMEZ_NAME, config->pdev->devfn >> 3);
 	lookup->miscdev.name = name;
 	lookup->miscdev.fops = &famez_fops;
 	lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
