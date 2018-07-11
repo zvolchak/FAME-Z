@@ -87,8 +87,8 @@ void famez_MSIX_teardown(struct pci_dev *);
 
 extern wait_queue_head_t famez_reader_wait;
 
-int famez_setup_chardev(void);
-void famez_teardown_chardev(void);
+int famez_chardev_setup(void);
+void famez_chardev_teardown(void);
 
 //-------------------------------------------------------------------------
 // Legibility and debug assistance

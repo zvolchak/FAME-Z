@@ -48,26 +48,21 @@
 
 DECLARE_WAIT_QUEUE_HEAD(famez_reader_wait);
 
+//-------------------------------------------------------------------------
+// file->private is set to the miscdevice structure used to register.
+
 static int famez_open(struct inode *inode, struct file *file)
 {
-	struct famez_configuration *config = NULL, *cur = NULL;
+	struct famez_configuration *cur = NULL;
+	struct miscdevice *miscdev = file->private_data;
 
 	// Compare the dev_t in the inode to known interfaces
 
 	spin_lock(&famez_active_lock);
 	list_for_each_entry(cur, &famez_active_list, lister) {
-		if (inode->i_rdev == cur->pdev->dev.devt) {
-			config = cur;
-			break;
-		}
+		pr_info(FZ   "cur dev  @ 0x%p\n", &cur->pdev->dev);
+		pr_info(FZSP "misc dev @ 0x%p\n", miscdev->this_device);
 	}
-	if (!config) {
-		spin_unlock(&famez_active_lock);
-		return -ENODEV;
-	}
-
-	config->nr_users++;
-	file->private_data = config;
 	spin_unlock(&famez_active_lock);
 	return 0;
 }
@@ -77,13 +72,6 @@ static int famez_open(struct inode *inode, struct file *file)
 
 static int famez_release(struct inode *inode, struct file *file)
 {
-	struct famez_configuration *config = file->private_data;
-
-	spin_lock(&famez_active_lock);
-	if (config->nr_users != 1)	// do things in flush()?
-		pr_warn(FZ "release() shows %d users\n", config->nr_users);
-	config->nr_users = 0;
-	spin_unlock(&famez_active_lock);
 	return 0;
 }
 
@@ -92,7 +80,6 @@ static int famez_release(struct inode *inode, struct file *file)
 static ssize_t famez_read(struct file *file, char __user *buf, size_t len,
                           loff_t *ppos)
 {
-	//struct famez_configuration *config = file->private_data;
 	int ret = -EIO;
 
 	spin_lock(&famez_last_slot_lock);
@@ -132,7 +119,6 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 
 static uint famez_poll(struct file *file, struct poll_table_struct *wait)
 {
-	// struct famez_configuration *config = file->private_data;
 	uint ret = 0;
 
 	poll_wait(file, &famez_reader_wait, wait);
@@ -149,19 +135,22 @@ static const struct file_operations famez_fops = {
 	.poll	=       famez_poll,
 };
 
-static struct miscdevice famez_chardev = {
+
+// On syscall_open() file->private_data is set to this
+
+static struct miscdevice famez_miscdev = {
 	.name	= FAMEZ_NAME,
 	.fops	= &famez_fops,
 	.minor	= MISC_DYNAMIC_MINOR,
 	.mode	= 0666,
 };
 
-int famez_setup_chardev(void)
+int famez_chardev_setup(void)
 {
-	return famez_chardev.fops->write ? 0 : -EINVAL;
+	return misc_register(&famez_miscdev);
 }
 
-void famez_teardown_chardev(void)
+void famez_chardev_teardown(void)
 {
-	return;
+	misc_deregister(&famez_miscdev);
 }

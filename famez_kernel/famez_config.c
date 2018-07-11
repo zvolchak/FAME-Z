@@ -168,8 +168,9 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		goto err_pci_disable_device;
 	}
 
-	pci_set_drvdata(pdev, config);	// Now everyone has it.
-	config->pdev = pdev;		// Reverse pointers are always in vogue.
+	pci_set_drvdata(pdev, config);		// Now everyone has it.
+	dev_set_drvdata(&pdev->dev, config);	// Through misc registration
+	config->pdev = pdev;			// Reverse pointers never hurt.
 
 	if ((ret = mapBARs(pdev)))
 		goto err_pci_release_regions;
@@ -177,7 +178,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_unmapBARs;
 
-	if ((ret = famez_setup_chardev()))
+	if ((ret = famez_chardev_setup()))
 		goto err_MSIX_teardown;
 
 	list_add_tail(&config->lister, &famez_active_list);
@@ -232,7 +233,7 @@ void famez_remove(struct pci_dev *pdev)
 	if (config->nr_users)
 		pr_err(FZSP "# users is non-zero, very uncool\n");
 
-	famez_teardown_chardev();	// after MSIX teardown?
+	famez_chardev_teardown();	// after MSIX teardown?
 
 	famez_MSIX_teardown(pdev);
 
