@@ -49,21 +49,34 @@
 DECLARE_WAIT_QUEUE_HEAD(famez_reader_wait);
 
 //-------------------------------------------------------------------------
+// https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
+// A lookup table to take advantage of misc_register putting
+// its argument into file->private at open().  Fill in the
+// blanks for each config and go.
+
+typedef struct {
+	// What I'm really looking for must be a pointer AND the first
+	// field, so that "container_of(..., anchor)" as a void pointer is
+	// essentially a union with this field.
+	struct famez_configuration *config;	// what I want to recover
+	struct miscdevice miscdev;		// full structure
+} miscdev2config_t;
+
+static inline struct famez_configuration *extract_config(void *private_data)
+{
+	void *tmp = container_of(private_data, miscdev2config_t, miscdev);
+	return tmp;
+}
+
+//-------------------------------------------------------------------------
 // file->private is set to the miscdevice structure used to register.
 
 static int famez_open(struct inode *inode, struct file *file)
 {
-#if 0
-	struct famez_configuration *cur = NULL;
-	struct miscdevice *miscdev = file->private_data;
+	struct famez_configuration *config = extract_config(file->private_data);
 
-	spin_lock(&famez_active_lock);
-	list_for_each_entry(cur, &famez_active_list, lister) {
-		pr_info(FZ   "cur dev  @ 0x%p\n", &cur->pdev->dev);
-		pr_info(FZSP "misc dev @ 0x%p\n", miscdev->this_device);
-	}
-	spin_unlock(&famez_active_lock);
-#endif
+	atomic_inc(&config->nr_users);
+
 	return 0;
 }
 
@@ -72,6 +85,12 @@ static int famez_open(struct inode *inode, struct file *file)
 
 static int famez_release(struct inode *inode, struct file *file)
 {
+	struct famez_configuration *config = extract_config(file->private_data);
+
+	if (!atomic_dec_and_test(&config->nr_users)) {
+		pr_warn(FZ "final release still has users\n");
+		atomic_set(&config->nr_users, 0);
+	}
 	return 0;
 }
 
@@ -136,22 +155,47 @@ static const struct file_operations famez_fops = {
 	.poll	=       famez_poll,
 };
 
+//-------------------------------------------------------------------------
+// Follow convention of PCI core: all (early) setup takes a pdev.
+// The argument of misc_register ends up in file->private_data.
 
-// On syscall_open() file->private_data is set to this
-
-static struct miscdevice famez_miscdev = {
-	.name	= FAMEZ_NAME,
-	.fops	= &famez_fops,
-	.minor	= MISC_DYNAMIC_MINOR,
-	.mode	= 0666,
-};
-
-int famez_chardev_setup(void)
+int famez_chardev_setup(struct pci_dev *pdev)
 {
-	return misc_register(&famez_miscdev);
+	struct famez_configuration *config = pci_get_drvdata(pdev);
+	miscdev2config_t *lookup = kzalloc(sizeof(*lookup), GFP_KERNEL);
+	char *name;
+
+	if (!lookup)
+		return -ENOMEM;
+
+	if (!(name = kzalloc(32, GFP_KERNEL))) {
+		kfree(lookup);
+		return -ENOMEM;
+	}
+	sprintf(name, "%s.%0x", FAMEZ_NAME, config->pdev->devfn);
+	lookup->miscdev.name = name;
+	lookup->miscdev.fops = &famez_fops;
+	lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
+	lookup->miscdev.mode = 0666;
+
+	lookup->config = config;
+	lookup->config->teardown_miscdev = &lookup->miscdev;
+	return misc_register(&lookup->miscdev);
 }
 
-void famez_chardev_teardown(void)
+//-------------------------------------------------------------------------
+// Follow convention of PCI core: all (early) setup takes a pdev.
+
+void famez_chardev_teardown(struct pci_dev *pdev)
 {
-	misc_deregister(&famez_miscdev);
+	struct famez_configuration *config = pci_get_drvdata(pdev);
+	// Remember, this is essentially a union of two pointers
+	miscdev2config_t *lookup;
+	
+	lookup = (void *)extract_config(config->teardown_miscdev);
+
+	misc_deregister(config->teardown_miscdev);
+	kfree(lookup->miscdev.name);
+	kfree(lookup);
+	config->teardown_miscdev = NULL;
 }

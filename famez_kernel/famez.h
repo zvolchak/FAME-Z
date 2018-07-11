@@ -52,8 +52,9 @@ union __attribute__ ((packed)) ringer {
 
 struct famez_configuration {
 	struct list_head lister;
-	int nr_users;					// User-space actors
+	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
+	void *teardown_miscdev;				// Convenience backpointer
 	uint64_t max_msglen;
 	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_registers __iomem *regs;		// BAR0
@@ -87,8 +88,8 @@ void famez_MSIX_teardown(struct pci_dev *);
 
 extern wait_queue_head_t famez_reader_wait;
 
-int famez_chardev_setup(void);
-void famez_chardev_teardown(void);
+int famez_chardev_setup(struct pci_dev *);
+void famez_chardev_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
 // Legibility and debug assistance

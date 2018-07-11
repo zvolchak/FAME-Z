@@ -169,7 +169,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 
 	pci_set_drvdata(pdev, config);		// Now everyone has it.
-	dev_set_drvdata(&pdev->dev, config);	// Through misc registration
+	dev_set_drvdata(&pdev->dev, config);	// Never hurts to go deep.
 	config->pdev = pdev;			// Reverse pointers never hurt.
 
 	if ((ret = mapBARs(pdev)))
@@ -178,7 +178,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_unmapBARs;
 
-	if ((ret = famez_chardev_setup()))
+	if ((ret = famez_chardev_setup(pdev)))
 		goto err_MSIX_teardown;
 
 	list_add_tail(&config->lister, &famez_active_list);
@@ -228,12 +228,9 @@ void famez_remove(struct pci_dev *pdev)
 	}
 	pr_info(FZSP "disabling/removing/freeing resouces\n");
 
-	spin_lock(&famez_active_lock);
+	spin_lock_bh(&famez_active_lock);	// some things sleep
 
-	if (config->nr_users)
-		pr_err(FZSP "# users is non-zero, very uncool\n");
-
-	famez_chardev_teardown();	// after MSIX teardown?
+	famez_chardev_teardown(pdev);		// switch with MSIX teardown?
 
 	famez_MSIX_teardown(pdev);
 
@@ -247,8 +244,12 @@ void famez_remove(struct pci_dev *pdev)
 		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
 			list_del(&(cur->lister));
 	}
+
+	if (atomic_read(&config->nr_users))
+		pr_err(FZSP "# users is non-zero, very interesting\n");
+
 	kfree(config);
-	spin_unlock(&famez_active_lock);
+	spin_unlock_bh(&famez_active_lock);
 }
 
 static struct pci_driver famez_pci_driver = {
