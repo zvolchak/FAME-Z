@@ -40,8 +40,8 @@ MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 // core does everything I need but I can't shake the feeling I want this for
 // something else...right now it just tracks insmod/rmmod.
 
-LIST_HEAD(famez_active_list);
-DEFINE_SPINLOCK(famez_active_lock);
+static LIST_HEAD(famez_active_list);
+static DEFINE_SPINLOCK(famez_active_lock);
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -98,7 +98,7 @@ STATIC int mapBARs(struct pci_dev *pdev)
 		(uint64_t)config->my_slot + config->globals->msg_offset);
 	snprintf(config->my_slot->nodename,
 		 sizeof(config->my_slot->nodename) - 1,
-		 utsname()->nodename);
+		 "%s.%02x", utsname()->nodename, config->pdev->devfn >> 3);
 
 	pr_info(FZSP "mailslot size=%llu, message offset=%llu, server=%d\n",
 		config->globals->slotsize,
@@ -121,40 +121,26 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
 	struct famez_configuration *config = NULL, *cur = NULL;
 	int ret;
-	char buf80[80];
+	char imalive[80], regionname[32];
 
 	pr_info(FZ "probe %s\n", CARDLOC(pdev));
 
+
 	// Has this device been configured already?
 
-	spin_lock(&famez_active_lock);
-
 	ret = -EALREADY;
-	if ((config = pci_get_drvdata(pdev))) {	// Is this possible?
+	if (pci_get_drvdata(pdev)) {	// Is this possible?
 		pr_err(FZSP "This device is already configured (1)\n");
 		goto err_out;
 	}
-	list_for_each_entry(cur, &famez_active_list, lister) {
-		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
-			pr_err(FZSP "This device is already configured (2)\n");
-			goto err_out;
-		}
-	}
 
-	// Make space, enable it and discriminate
-
-	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
-		pr_err(FZSP "Cannot kzalloc(config)\n");
-		ret = -ENOMEM;
-		goto err_out;
-	}
+	// enable it and discriminate
 
 	ret = -ENODEV;
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZSP "pci_enable_device failed: %d\n", ret);
 		goto err_out;
 	}
-
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
@@ -163,31 +149,58 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 	pr_info(FZ "IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
 
-	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
+	snprintf(regionname, sizeof(regionname) - 1,
+		 "%s.%02x", FAMEZ_NAME, pdev->devfn >> 3);
+	PR_V2(FZSP "Checkpoint 1\n");
+	if ((ret = pci_request_regions(pdev, regionname)) < 0) {
 		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
 		goto err_pci_disable_device;
 	}
+
+	// Make space and add it.  Either could sleep, as can many things after this
+	// (esp kzalloc)
+	
+	PR_V2(FZSP "Checkpoint 2\n");
+	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
+		pr_err(FZSP "Cannot kzalloc(config)\n");
+		ret = -ENOMEM;
+		goto err_out;
+	}
+	PR_V2(FZSP "Checkpoint 3\n");
+	spin_lock_bh(&famez_active_lock);
+	list_for_each_entry(cur, &famez_active_list, lister) {
+		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
+			pr_err(FZSP "This device is already configured (2)\n");
+			spin_unlock_bh(&famez_active_lock);
+			goto err_out;
+		}
+	}
+	list_add_tail(&config->lister, &famez_active_list);
+	spin_unlock_bh(&famez_active_lock);
+	PR_V1(FZSP "config added to active list\n")
+
+	// Remainder of config
 
 	pci_set_drvdata(pdev, config);		// Now everyone has it.
 	dev_set_drvdata(&pdev->dev, config);	// Never hurts to go deep.
 	config->pdev = pdev;			// Reverse pointers never hurt.
 
+	PR_V2(FZSP "Checkpoint 4\n");
 	if ((ret = mapBARs(pdev)))
 		goto err_pci_release_regions;
 	
+	PR_V2(FZSP "Checkpoint 5\n");
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_unmapBARs;
 
+	PR_V2(FZSP "Checkpoint 6\n");
 	if ((ret = famez_chardev_setup(pdev)))
 		goto err_MSIX_teardown;
 
-	list_add_tail(&config->lister, &famez_active_list);
-	spin_unlock(&famez_active_lock);
-
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
-	sprintf(buf80, "Client %d is ready", config->my_id);
-	famez_sendmail(config->server_id, buf80, strlen(buf80) + 1, config);
-	pr_info(FZSP "%s\n", buf80);
+	snprintf(imalive, sizeof(imalive) - 1, "Client %d is ready", config->my_id);
+	famez_sendmail(config->server_id, imalive, strlen(imalive) + 1, config);
+	pr_info(FZSP "%s\n", imalive);
 
 	return 0;
 
@@ -208,12 +221,23 @@ err_pci_disable_device:
 	pci_disable_device(pdev);
 
 err_out:
-	spin_unlock(&famez_active_lock);
-	if (config) {
-		config->pdev = NULL;
+	if (config) {	// It's almost certainly in the list
+		spin_lock_bh(&famez_active_lock);
+#if 0
+		list_for_each_entry(cur, &famez_active_list, lister) {
+			if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
+				pr_err(FZSP "This device is already configured (2)\n");
+				spin_unlock_bh(&famez_active_lock);
+				goto err_out;
+			}
+		}
+		list_add_tail(&config->lister, &famez_active_list);
+#endif
+		spin_unlock_bh(&famez_active_lock);
 		kfree(config);
 	}
 	pci_set_drvdata(pdev, NULL);
+	dev_set_drvdata(&pdev->dev, NULL);
 	return ret;
 }
 
@@ -230,7 +254,7 @@ void famez_remove(struct pci_dev *pdev)
 
 	famez_chardev_teardown(pdev);		// switch with MSIX teardown?
 
-	spin_lock(&famez_active_lock);		// some things sleep
+	spin_lock_bh(&famez_active_lock);		// some things sleep
 
 	famez_MSIX_teardown(pdev);		// stop pong
 
@@ -248,7 +272,7 @@ void famez_remove(struct pci_dev *pdev)
 	if (atomic_read(&config->nr_users))
 		pr_err(FZSP "# users is non-zero, very interesting\n");
 
-	spin_unlock(&famez_active_lock);
+	spin_unlock_bh(&famez_active_lock);
 	kfree(config);
 }
 

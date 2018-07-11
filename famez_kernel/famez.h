@@ -69,9 +69,6 @@ struct famez_configuration {
 
 extern int famez_verbose;				// insmod parameter
 
-extern struct list_head famez_active_list;
-extern spinlock_t famez_active_lock;
-
 int famez_sendmail(uint32_t , char *, ssize_t, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
