@@ -56,7 +56,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 		pr_err(FZ "Could not match peer %u\n", peer_id);
 		return IRQ_HANDLED;
 	}
-	pr_info(FZ "IRQ %d == peer %u -> \"%s\"\n",
+	PR_V1(FZ "IRQ %d == peer %u -> \"%s\"\n",
 		vector, peer_id, peer_slot->msg);
 
 	// Easy way to see if this thing is alive.
@@ -73,7 +73,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 	}
 	spin_unlock(&famez_last_slot_lock);
 
-	// Clear the message so the sender can go again
+	// Clear the send mailslot so it can go: HW holdoff of pseudo-chip
 	peer_slot->msglen = 0;
 	return IRQ_HANDLED;
 }

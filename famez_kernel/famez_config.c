@@ -301,14 +301,14 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 		   struct famez_configuration *config)
 {
 	union ringer ringer;
-	uint64_t done = get_jiffies_64() + HZ;
+	// uint64_t done = get_jiffies_64() + HZ;
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
 
 	// Pseudo-HW ready: wait until previous responder has cleared msglen.
-	while (config->my_slot->msglen && get_jiffies_64() < done)
-		msleep(50);
+	// while (config->my_slot->msglen && get_jiffies_64() < done)
+		// msleep(50);
 	if (config->my_slot->msglen)
 		pr_warn(FZ "sendmail() is stomping on previous message\n");
 
@@ -321,4 +321,3 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 	config->regs->Doorbell = ringer.push;
 	return 0;
 }
-

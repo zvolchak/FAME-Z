@@ -136,4 +136,7 @@ void famez_chardev_teardown(void);
 #define NOINLINE
 #endif
 
+#define spin_lock(XXX)
+#define spin_unlock(XXX)
+
 #endif
