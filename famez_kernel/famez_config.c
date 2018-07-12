@@ -249,9 +249,10 @@ void famez_remove(struct pci_dev *pdev)
 
 	famez_chardev_teardown(pdev);		// switch with MSIX teardown?
 
-	spin_lock_bh(&famez_active_lock);		// some things sleep
+	// Stop activations.  Can't do this in an "IRQ context" (ie, spinlocks)
+	famez_MSIX_teardown(pdev);
 
-	famez_MSIX_teardown(pdev);		// stop pong
+	spin_lock_bh(&famez_active_lock);	// some things sleep
 
 	unmapBARs(pdev);
 

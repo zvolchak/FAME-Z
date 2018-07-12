@@ -62,9 +62,13 @@ typedef struct {
 	struct miscdevice miscdev;		// full structure
 } miscdev2config_t;
 
-static inline struct famez_configuration *extract_config(void *private_data)
+static inline struct famez_configuration *extract_config(
+	void *encapsulated_miscdev)
 {
-	void *tmp = container_of(private_data, miscdev2config_t, miscdev);
+	void *tmp = container_of(
+		encapsulated_miscdev,	// the pointer to the member
+		miscdev2config_t,	// the type of the container struct
+		miscdev);		// the name of the member in the struct
 	return tmp;
 }
 
@@ -74,6 +78,13 @@ static inline struct famez_configuration *extract_config(void *private_data)
 static int famez_open(struct inode *inode, struct file *file)
 {
 	struct famez_configuration *config = extract_config(file->private_data);
+
+	if ((uint64_t)atomic_read(&config->nr_users) > 5) {
+		pr_err(FZ "you still haven't got container_of working right\n");
+		return -ENOTTY;
+	}
+
+	PR_ENTER("config->max_msglen = %llu\n", config->max_msglen);
 
 	atomic_inc(&config->nr_users);
 
@@ -133,26 +144,31 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
 	struct famez_configuration *config = extract_config(file->private_data);
-	char *msgbody, *localbuf;
+	char *localbuf, *msgbody;
 	int ret;
 	uint16_t peer_id;
 
+	PR_ENTER();
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
 		return -E2BIG;
+	PR_V2("check 1: kzalloc(%llu)\n", config->max_msglen);
 	if (!(localbuf = kzalloc(config->max_msglen, GFP_KERNEL)))
 		return -ENOMEM;			// Bad coding here
+	PR_V2("check 2\n");
 	if (copy_from_user(localbuf, buf, len)) {
 		ret = -EIO;
 		goto alldone;
 	}
 
 	// Split localbuf into two strings around the first colon
+	PR_V2("check 3\n");
 	if (!(msgbody = strchr(localbuf, ':'))) {
 		ret = -EBADMSG;
 		goto alldone;
 	}
 	*msgbody = '\0';	// two complete strings
 	msgbody++;
+	PR_V2("check 4\n");
 	if ((ret = kstrtou16(localbuf, 10, &peer_id)))
 		goto alldone;	// -ERANGE, usually
 
@@ -195,6 +211,8 @@ int famez_chardev_setup(struct pci_dev *pdev)
 	miscdev2config_t *lookup = kzalloc(sizeof(*lookup), GFP_KERNEL);
 	char *name;
 
+	PR_ENTER("config->nr_users = %d\n", atomic_read(&config->nr_users));
+
 	if (!lookup)
 		return -ENOMEM;
 
@@ -203,7 +221,7 @@ int famez_chardev_setup(struct pci_dev *pdev)
 		return -ENOMEM;
 	}
 	// Name should be reminiscent of lspci output
-	sprintf(name, "%s.%02x", FAMEZ_NAME, config->pdev->devfn >> 3);
+	sprintf(name, "%s%02x_bridge", FAMEZ_NAME, config->pdev->devfn >> 3);
 	lookup->miscdev.name = name;
 	lookup->miscdev.fops = &famez_fops;
 	lookup->miscdev.minor = MISC_DYNAMIC_MINOR;

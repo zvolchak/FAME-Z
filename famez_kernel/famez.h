@@ -114,11 +114,11 @@ void famez_chardev_teardown(struct pci_dev *);
 
 #define _F_		__FUNCTION__
 #define PR_ENTER(a...)	{ if (famez_verbose) { \
-				pr_info("r2h: enter %s: ", _F_); pr_cont(a); }}
+				pr_info(FZ "enter %s: ", _F_); pr_cont(a); }}
 #define PR_EXIT(a...)	{ if (famez_verbose) { \
-				pr_info("r2h: exit %s: ", _F_); pr_cont(a); }}
+				pr_info(FZ "exit %s: ", _F_); pr_cont(a); }}
 
-#define PR_SLEEPMS(_txt, _ms) { pr_info("r2h: " _txt); msleep(_ms); }
+#define PR_SLEEPMS(_txt, _ms) { pr_info(FZ " " _txt); msleep(_ms); }
 
 //-------------------------------------------------------------------------
 // During callgraph generation, "flipping" these values will create a
