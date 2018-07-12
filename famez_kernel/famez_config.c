@@ -195,14 +195,15 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_unmapBARs;
 
-	if ((ret = famez_chardev_setup(pdev)))
+	// FIXME: rewrite this as a separate module that registers itself.
+	if ((ret = famez_bridge_setup(pdev)))
 		goto err_MSIX_teardown;
 
-	// Tell the server I'm here.  Cover the NUL terminator in the length.
-	snprintf(imalive, sizeof(imalive) - 1, "Client %d is ready", config->my_id);
-	ret = famez_sendmail(config->server_id,
-			     imalive, strlen(imalive) + 1, config);
-	pr_info(FZSP "sendmail(\"%s\") to server %s\n", imalive,
+	// Tell the server I'm here.
+	snprintf(imalive, sizeof(imalive) - 1,
+		"Client %d is ready", config->my_id);
+	ret = famez_sendstring(config->server_id, imalive, config);
+	pr_info(FZSP "sendstring(\"%s\") to server %s\n", imalive,
 		ret > 0 ? "succeeded" : "FAILED");
 
 	return 0;
@@ -255,7 +256,7 @@ void famez_remove(struct pci_dev *pdev)
 	}
 	pr_info(FZSP "disabling/removing/freeing resources\n");
 
-	famez_chardev_teardown(pdev);		// switch with MSIX teardown?
+	famez_bridge_teardown(pdev);
 
 	// Stop activations.  Can't do this in an "IRQ context" (ie, spinlocks)
 	famez_MSIX_teardown(pdev);
@@ -324,26 +325,32 @@ void famez_exit(void)
 module_exit(famez_exit);
 
 //-------------------------------------------------------------------------
+// Assume a legal C string is passed in message.
 // Return positive (bytecount) on success, negative on error, never 0.
+// Has a sleep so don't call under interrupt context (spinlocks).
 
-int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
-		   struct famez_configuration *config)
+int famez_sendstring(uint32_t peer_id, char *msg,
+		     struct famez_configuration *config)
 {
+	size_t msglen = strlen(msg);
+	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
 	union ringer ringer;
-	// uint64_t done = get_jiffies_64() + HZ;
 
 	PR_ENTER("sending \"%s\" to %d\n", msg, peer_id);
 
-	if (msglen >= config->max_msglen)
-		return -E2BIG;
 	if (peer_id < 1 || peer_id > config->server_id)
 		return -EBADSLT;
+	if (msglen >= config->max_msglen)
+		return -E2BIG;
+	if (!msglen)
+		return -ENODATA; // FIXME: is there value to a "silent kick"?
 
-	// Pseudo-HW ready: wait until previous responder has cleared msglen.
-	// while (config->my_slot->msglen && get_jiffies_64() < done)
-		// msleep(50);
+	// Pseudo-HW ready: wait until my_slot has pushed a previous write
+	// through, ie, the most recent responder clears my msglen.
+	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
+		msleep(50);
 	if (config->my_slot->msglen)
-		pr_warn(FZ "sendmail() is stomping on previous message\n");
+		pr_warn(FZ "sendstring() is stomping on previous message\n");
 
 	// Keep nodename and msg pointer; update msglen and msg contents.
 	memset(config->my_slot->msg, 0, config->max_msglen);

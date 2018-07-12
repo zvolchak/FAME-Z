@@ -48,7 +48,7 @@
 
 #include "famez.h"
 
-DECLARE_WAIT_QUEUE_HEAD(famez_reader_wait);
+DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
 //-------------------------------------------------------------------------
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
@@ -79,16 +79,19 @@ static inline struct famez_configuration *extract_config(struct file *file)
 //-------------------------------------------------------------------------
 // file->private is set to the miscdevice structure used to register.
 
-static int famez_open(struct inode *inode, struct file *file)
+static int bridge_open(struct inode *inode, struct file *file)
 {
 	struct famez_configuration *config = extract_config(file);
 
-	if ((uint64_t)atomic_read(&config->nr_users) > 5) {
-		pr_err(FZ "you still haven't got container_of working right\n");
-		return -ENOTTY;
+	// When this is broken, the values tend to look like pointers.
+	// Do a poor man's abs().
+	if ((uint64_t)atomic_read(&config->nr_users) > 64) {
+		pr_err(FZ "Looks like extract_config() is borked\n");
+		return -ECANCELED;
 	}
 
-	PR_ENTER("config->max_msglen = %llu\n", config->max_msglen);
+	PR_ENTER("config->max_msglen = %llu, current users = %d\n",
+		config->max_msglen, atomic_read(&config->nr_users));
 
 	atomic_inc(&config->nr_users);
 
@@ -98,7 +101,7 @@ static int famez_open(struct inode *inode, struct file *file)
 //-------------------------------------------------------------------------
 // Only at the last close
 
-static int famez_release(struct inode *inode, struct file *file)
+static int bridge_release(struct inode *inode, struct file *file)
 {
 	struct famez_configuration *config = extract_config(file);
 
@@ -112,16 +115,16 @@ static int famez_release(struct inode *inode, struct file *file)
 
 //-------------------------------------------------------------------------
 
-static ssize_t famez_read(struct file *file, char __user *buf, size_t len,
+static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
                           loff_t *ppos)
 {
 	int ret = -EIO;
 
-	if (!famez_last_slot.msglen) {	// Wait for new data?
+	if (!famez_last_slot.msglen) {	// Wait for new data? FIXME: encapsulate
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		PR_V2(FZ "read() waiting...\n");
-		wait_event_interruptible(famez_reader_wait, 
+		wait_event_interruptible(bridge_reader_wait, 
 					 famez_last_slot.msglen);
 		PR_V2(FZSP "wait finished, %llu bytes to read\n",
 					 famez_last_slot.msglen);
@@ -144,7 +147,7 @@ static ssize_t famez_read(struct file *file, char __user *buf, size_t len,
 
 //-------------------------------------------------------------------------
 
-static ssize_t famez_write(struct file *file, const char __user *buf,
+static ssize_t bridge_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
 	struct famez_configuration *config = extract_config(file);
@@ -170,24 +173,27 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 	firstchar = config->scratch_msg;
 	ret = strspn(firstchar, " \r\n\t"); // count chars only in this set
 	BUG_ON(ret > len);
-	firstchar += ret;
 	len -= ret;
+	if (!len) {
+		pr_warn(FZ "original message was only whitespace\n");
+		return spooflen;	// make the caller happy
+	}
+	firstchar += ret;
 	lastchar = firstchar + (len - 1);
 	BUG_ON(*(lastchar + 1) != '\0');
 	BUG_ON(len != strlen(firstchar));
 
-	// rstrip
-	while (lastchar != firstchar && len-- && isspace(*lastchar));
-	PR_V2(FZSP "\"%s\" has length %lu =? %lu\n",
-		firstchar, len, strlen(firstchar));
-	if (!len) {
-		pr_warn(FZ "Original message was only whitespace\n");
-		return spooflen;	// spoof success to caller
-	}
-	if (len < 0 || (firstchar + (len - 1) != lastchar)) {
+	// rstrip.
+	while (len && isspace(*lastchar)) { len--; lastchar--; }
+	// len == 0 should have occurred up in lstrip.  Since it's unsigned,
+	// a "negative length" is a LARGE number.
+	if (len > config->max_msglen || (firstchar + (len - 1) != lastchar)) {
 		PR_V2(FZ "send someone back to math: %lu\n", len);
 		return -EIO;
 	}
+	*(firstchar + len) = '\0';
+	PR_V2(FZSP "\"%s\" has length %lu =? %lu\n",
+		firstchar, len, strlen(firstchar));
 
 	// Split body into two strings around the first colon.
 	if (!(msgbody = strchr(firstchar, ':'))) {
@@ -196,15 +202,22 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 	}
 	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
-	len = strlen(msgbody);
-	if ((ret = kstrtou16(firstchar, 10, &peer_id)))
-		return ret;	// -ERANGE, usually
+	if (!(len = strlen(msgbody))) {		// an empty body
+		pr_warn(FZ "message body is empty\n");
+		return spooflen;	// spoof success to caller
+	}
+	if (STREQ(firstchar, "server"))
+		peer_id = config->server_id;
+	else {
+		if ((ret = kstrtou16(firstchar, 10, &peer_id)))
+			return ret;	// -ERANGE, usually
+	}
 
 	// Length or -ERRNO.  If length matched, then all is well, but
-	// that len is always shorter than the original length.  Some
+	// this final len is always shorter than the original length.  Some
 	// code (ie, "echo") will resubmit the partial if the count is
 	// short.  So lie about it to the caller.
-	ret = famez_sendmail(peer_id, msgbody, len, config);
+	ret = famez_sendstring(peer_id, msgbody, config);
 	if (ret == len)
 		ret = spooflen;
 
@@ -214,29 +227,29 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 //-------------------------------------------------------------------------
 // Returning 0 will cause the caller (epoll/poll/select) to sleep.
 
-static uint famez_poll(struct file *file, struct poll_table_struct *wait)
+static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 {
 	uint ret = 0;
 
-	poll_wait(file, &famez_reader_wait, wait);
+	poll_wait(file, &bridge_reader_wait, wait);
 		ret |= POLLIN | POLLRDNORM;
 	return ret;
 }
 
-static const struct file_operations famez_fops = {
+static const struct file_operations bridge_fops = {
 	.owner	=	THIS_MODULE,
-	.open	=	famez_open,
-	.release =      famez_release,
-	.read	=       famez_read,
-	.write	=       famez_write,
-	.poll	=       famez_poll,
+	.open	=	bridge_open,
+	.release =      bridge_release,
+	.read	=       bridge_read,
+	.write	=       bridge_write,
+	.poll	=       bridge_poll,
 };
 
 //-------------------------------------------------------------------------
 // Follow convention of PCI core: all (early) setup takes a pdev.
 // The argument of misc_register ends up in file->private_data.
 
-int famez_chardev_setup(struct pci_dev *pdev)
+int famez_bridge_setup(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
 	struct miscdev2config *lookup = kzalloc(
@@ -255,7 +268,7 @@ int famez_chardev_setup(struct pci_dev *pdev)
 	// Name should be reminiscent of lspci output
 	sprintf(name, "%s%02x_bridge", FAMEZ_NAME, config->pdev->devfn >> 3);
 	lookup->miscdev.name = name;
-	lookup->miscdev.fops = &famez_fops;
+	lookup->miscdev.fops = &bridge_fops;
 	lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
 	lookup->miscdev.mode = 0666;
 
@@ -267,7 +280,7 @@ int famez_chardev_setup(struct pci_dev *pdev)
 //-------------------------------------------------------------------------
 // Follow convention of PCI core: all (early) setup takes a pdev.
 
-void famez_chardev_teardown(struct pci_dev *pdev)
+void famez_bridge_teardown(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
 	struct miscdev2config *lookup = config->teardown_lookup;

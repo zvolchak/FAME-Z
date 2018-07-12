@@ -65,11 +65,12 @@ static irqreturn_t all_msix(int vector, void *data) {
 		char pong[16];
 
 		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
-		famez_sendmail(peer_id, pong, strlen(pong) + 1, config);
+		famez_sendstring(peer_id, pong, config);
 	} else {
 		// FIXME: stompage occurs, should return NACK if necessary
 		memcpy(&famez_last_slot, peer_slot, config->globals->slotsize);
-		wake_up_all(&famez_reader_wait);
+		// FIXME: better abstraction and encapsulation
+		wake_up_all(&bridge_reader_wait);
 	}
 	spin_unlock(&famez_last_slot_lock);
 

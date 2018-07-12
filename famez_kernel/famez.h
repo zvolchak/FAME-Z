@@ -70,7 +70,7 @@ struct famez_configuration {
 
 extern int famez_verbose;				// insmod parameter
 
-int famez_sendmail(uint32_t , char *, ssize_t, struct famez_configuration *);
+int famez_sendstring(uint32_t , char *, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
 // famez_MSI-X.c - handle interrupts from other FAME-Z peers
@@ -82,12 +82,12 @@ int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
-// famez_chardev.c - Creates a device file with simple capabilities
+// famez_bridge.c - a device file with simple Gen-Z bridge capabilities.
 
-extern wait_queue_head_t famez_reader_wait;
+extern wait_queue_head_t bridge_reader_wait;
 
-int famez_chardev_setup(struct pci_dev *);
-void famez_chardev_teardown(struct pci_dev *);
+int famez_bridge_setup(struct pci_dev *);
+void famez_bridge_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
 // Legibility and debug assistance
