@@ -118,27 +118,29 @@ static int bridge_release(struct inode *inode, struct file *file)
 static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
                           loff_t *ppos)
 {
+	struct famez_configuration *config = extract_config(file);
 	int ret = -EIO;
 
-	if (!famez_last_slot.msglen) {	// Wait for new data? FIXME: encapsulate
+	// FIXME: encapsulate this better?
+	if (!config->buffer_slot.msglen) {	// Wait for new data?
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		PR_V2(FZ "read() waiting...\n");
 		wait_event_interruptible(bridge_reader_wait, 
-					 famez_last_slot.msglen);
+					 config->buffer_slot.msglen);
 		PR_V2(FZSP "wait finished, %llu bytes to read\n",
-					 famez_last_slot.msglen);
+					 config->buffer_slot.msglen);
 	}
-	if (len < famez_last_slot.msglen)
+	if (len < config->buffer_slot.msglen)
 		return -E2BIG;
-	len = famez_last_slot.msglen;
+	len = config->buffer_slot.msglen;
 
 	// copy_to_user can sleep.  Returns the number of bytes that could NOT
 	// be copied or -ERRNO.
-	if (!(ret = copy_to_user(buf, famez_last_slot.msg, len))) {
-		spin_lock(&famez_last_slot_lock);
-		famez_last_slot.msglen = 0;
-		spin_unlock(&famez_last_slot_lock);
+	if (!(ret = copy_to_user(buf, config->buffer_slot.msg, len))) {
+		spin_lock(&config->buffer_slot_lock);
+		config->buffer_slot.msglen = 0;
+		spin_unlock(&config->buffer_slot_lock);
 	}
 	PR_V2(FZSP "copy_to_user returns %d\n", ret);
 	ret = ret ? -EIO : len;

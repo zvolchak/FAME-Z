@@ -164,13 +164,15 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 
 	// Make space and add it.  Either could sleep, as can many things after this
-	// (esp kzalloc)
+	// (esp kzalloc).  Initialize some standalone fields now.
 	
 	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
 		pr_err(FZSP "Cannot kzalloc(config)\n");
 		ret = -ENOMEM;
 		goto err_out;
 	}
+	spin_lock_init(&config->buffer_slot_lock);
+
 	spin_lock_bh(&famez_active_lock);
 	list_for_each_entry(cur, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {

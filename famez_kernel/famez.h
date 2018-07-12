@@ -63,6 +63,8 @@ struct famez_configuration {
 	struct famez_globals __iomem *globals;		// BAR2
 	struct famez_mailslot *my_slot;			// indexed by my_id
 	struct msix_entry *msix_entries;		// kzalloc an array
+	struct famez_mailslot buffer_slot;		// temp copy for read()
+	spinlock_t buffer_slot_lock;
 };
 
 //-------------------------------------------------------------------------
@@ -74,9 +76,6 @@ int famez_sendstring(uint32_t , char *, struct famez_configuration *);
 
 //-------------------------------------------------------------------------
 // famez_MSI-X.c - handle interrupts from other FAME-Z peers
-
-extern struct famez_mailslot famez_last_slot;
-extern spinlock_t famez_last_slot_lock;
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
