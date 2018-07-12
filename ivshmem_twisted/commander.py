@@ -43,7 +43,8 @@ class _proxyCommander(LineReceiver):
         pass    # Could write first prompt now
 
     def connectionLost(self, reason):
-        TIreactor.stop()
+        if self.jfdi == self.doCommand:     # doing it to myself
+            TIreactor.stop()
 
     def doCommand(self, cmdline):
         '''The default command line processor:  help and quit.'''
