@@ -52,6 +52,8 @@ STATIC void unmapBARs(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
 
+	if (config->scratch_msg) kfree(config->scratch_msg);
+	config->scratch_msg = NULL;
 	if (config->globals) pci_iounmap(pdev, config->globals);
 	config->globals = NULL;
 	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
@@ -59,6 +61,9 @@ STATIC void unmapBARs(struct pci_dev *pdev)
 	if (config->regs) pci_iounmap(pdev, config->regs);
 	config->regs = NULL;
 }
+
+//-------------------------------------------------------------------------
+// This has a kmalloc so can't be done in IRQ context (ie, no spinlocks)
 
 STATIC int mapBARs(struct pci_dev *pdev)
 {
@@ -100,7 +105,10 @@ STATIC int mapBARs(struct pci_dev *pdev)
 		 sizeof(config->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, config->pdev->devfn >> 3);
 
-	pr_info(FZSP "mailslot size=%llu, message offset=%llu, server=%d\n",
+	if (!(config->scratch_msg = kmalloc(config->max_msglen, GFP_KERNEL)))
+		return -ENOMEM;
+
+	PR_V1(FZSP "mailslot size=%llu, message offset=%llu, server=%d\n",
 		config->globals->slotsize,
 		config->globals->msg_offset,
 		config->server_id);

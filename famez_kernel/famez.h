@@ -56,6 +56,7 @@ struct famez_configuration {
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_msglen;
+	char *scratch_msg;				// kmalloc(max_msglen)
 	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_registers __iomem *regs;		// BAR0
 	struct ivshmem_msi_x_msi_pba __iomem *UNUSED;	// BAR1

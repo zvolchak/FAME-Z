@@ -34,15 +34,17 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <linux/ctype.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
-#include <linux/kmod.h>
 #include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/pci.h>
 #include <linux/poll.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
+
+#include <asm-generic/bug.h>	// yes after the others
 
 #include "famez.h"
 
@@ -146,76 +148,57 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
 	struct famez_configuration *config = extract_config(file);
-	ssize_t returnlen = len;
-	char *localbuf, *firstchar, *lastchar, *msgbody;
+	ssize_t spooflen = len;
+	char *firstchar, *lastchar, *msgbody;
 	int ret;
 	uint16_t peer_id;
 
 	PR_ENTER();
+
+	// Use many idiot checks.  Performance is not the issue here.
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
 		return -E2BIG;
-	if (!(localbuf = kzalloc(config->max_msglen, GFP_KERNEL)))
-		return -ENOMEM;			// Bad coding here
-	if (copy_from_user(localbuf, buf, len)) {
-		ret = -EIO;
-		goto alldone;
-	}
-	firstchar = localbuf;
-	lastchar = firstchar + (len - 1);
-	if (*(lastchar + 1) != '\0') {
-		pr_err(FZ "Bad EOM conditions\n");
-		ret = -EBADMSG;
-		goto alldone;
-	}
+	memset(config->scratch_msg, 0, config->max_msglen);
+	if (copy_from_user(config->scratch_msg, buf, len))
+		return -EIO;
 
-	// Strip leading and trailing whitespace and newlines.
-	// firstchar + (len - 1) should equal lastchar when done.
-	// Use many idiot checks.
+	// Strip leading and trailing whitespace and newlines.  Use many
+	// idiot checks.  There are some cool lstrip hacks out there but
+	// they memmove a substring; besides, this reads fairly well.
 
-	ret = strspn(firstchar, " \r\n\t");
-	PR_V2(FZSP "stripping %d characters from front of \"%s\"\n",
-		ret, firstchar);
-	if (ret > len) {
-		pr_err(FZ "strspn is weird\n");
-		ret = -EDOM;
-	}
+	// lstrip
+	firstchar = config->scratch_msg;
+	ret = strspn(firstchar, " \r\n\t"); // count chars only in this set
+	BUG_ON(ret > len);
 	firstchar += ret;
 	len -= ret;
+	lastchar = firstchar + (len - 1);
+	BUG_ON(*(lastchar + 1) != '\0');
+	BUG_ON(len != strlen(firstchar));
 
-	// Now the end.
-	while (lastchar != firstchar && len && (
-		*lastchar == ' ' ||
-		*lastchar == '\n' ||
-		*lastchar == '\r' ||
-		*lastchar == '\t'
-	)) {
-		*lastchar-- = '\0';
-		len--;
-	}
+	// rstrip
+	while (lastchar != firstchar && len-- && isspace(*lastchar));
 	PR_V2(FZSP "\"%s\" has length %lu =? %lu\n",
 		firstchar, len, strlen(firstchar));
 	if (!len) {
 		pr_warn(FZ "Original message was only whitespace\n");
-		ret = returnlen;	// spoof success to caller
-		goto alldone;
+		return spooflen;	// spoof success to caller
 	}
 	if (len < 0 || (firstchar + (len - 1) != lastchar)) {
-		pr_err(FZ "send someone back to math: %lu\n", len);
-		ret = -EIO;
-		goto alldone;
+		PR_V2(FZ "send someone back to math: %lu\n", len);
+		return -EIO;
 	}
 
-	// Split localbuf into two strings around the first colon
+	// Split body into two strings around the first colon.
 	if (!(msgbody = strchr(firstchar, ':'))) {
 		pr_err(FZ "I see no colon in \"%s\"\n", firstchar);
-		ret = -EBADMSG;
-		goto alldone;
+		return -EBADMSG;
 	}
 	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
 	len = strlen(msgbody);
 	if ((ret = kstrtou16(firstchar, 10, &peer_id)))
-		goto alldone;	// -ERANGE, usually
+		return ret;	// -ERANGE, usually
 
 	// Length or -ERRNO.  If length matched, then all is well, but
 	// that len is always shorter than the original length.  Some
@@ -223,10 +206,8 @@ static ssize_t famez_write(struct file *file, const char __user *buf,
 	// short.  So lie about it to the caller.
 	ret = famez_sendmail(peer_id, msgbody, len, config);
 	if (ret == len)
-		ret = returnlen;
+		ret = spooflen;
 
-alldone:
-	kfree(localbuf);	// FIXME: attach to config for life of file?
 	return ret;
 }
 
