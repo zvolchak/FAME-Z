@@ -194,7 +194,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	snprintf(imalive, sizeof(imalive) - 1, "Client %d is ready", config->my_id);
 	ret = famez_sendmail(config->server_id,
 			     imalive, strlen(imalive) + 1, config);
-	pr_info(FZSP "send(%s) to server %s\n", imalive,
+	pr_info(FZSP "sendmail(\"%s\") to server %s\n", imalive,
 		ret > 0 ? "succeeded" : "FAILED");
 
 	return 0;
@@ -323,6 +323,8 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 {
 	union ringer ringer;
 	// uint64_t done = get_jiffies_64() + HZ;
+
+	PR_ENTER("sending \"%s\" to %d\n", msg, peer_id);
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;

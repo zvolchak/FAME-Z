@@ -54,7 +54,7 @@ struct famez_configuration {
 	struct list_head lister;
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
-	void *teardown_miscdev;				// Convenience backpointer
+	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_msglen;
 	uint16_t my_id, server_id;			// match ringer.peer 
 	struct ivshmem_registers __iomem *regs;		// BAR0

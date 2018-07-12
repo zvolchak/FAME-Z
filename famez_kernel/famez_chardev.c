@@ -50,26 +50,28 @@ DECLARE_WAIT_QUEUE_HEAD(famez_reader_wait);
 
 //-------------------------------------------------------------------------
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
-// A lookup table to take advantage of misc_register putting
-// its argument into file->private at open().  Fill in the
-// blanks for each config and go.
+// A lookup table to take advantage of misc_register putting its argument
+// into file->private at open().  Fill in the blanks for each config and go.
+// This technique relies on the desired field being a pointer AND the first
+// field, so that "container_of(..., anchor)" is a pointer to a pointer.
+// I modified the article's solution to treat it as a container pointer and
+// just grab whatever field I want, it doesn't even have to be the first one.
+// If I put the "primary key" structure as the first field, then I wouldn't
+// even need container_of as the address is synonymous with both.
 
-typedef struct {
-	// What I'm really looking for must be a pointer AND the first
-	// field, so that "container_of(..., anchor)" as a void pointer is
-	// essentially a union with this field.
+struct miscdev2config {
+	struct miscdevice miscdev;		// full structure, not a ptr
 	struct famez_configuration *config;	// what I want to recover
-	struct miscdevice miscdev;		// full structure
-} miscdev2config_t;
+};
 
-static inline struct famez_configuration *extract_config(
-	void *encapsulated_miscdev)
+static inline struct famez_configuration *extract_config(struct file *file)
 {
-	void *tmp = container_of(
+	struct miscdevice *encapsulated_miscdev = file->private_data;
+	struct miscdev2config *lookup = container_of(
 		encapsulated_miscdev,	// the pointer to the member
-		miscdev2config_t,	// the type of the container struct
+		struct miscdev2config,	// the type of the container struct
 		miscdev);		// the name of the member in the struct
-	return tmp;
+	return lookup->config;
 }
 
 //-------------------------------------------------------------------------
@@ -77,7 +79,7 @@ static inline struct famez_configuration *extract_config(
 
 static int famez_open(struct inode *inode, struct file *file)
 {
-	struct famez_configuration *config = extract_config(file->private_data);
+	struct famez_configuration *config = extract_config(file);
 
 	if ((uint64_t)atomic_read(&config->nr_users) > 5) {
 		pr_err(FZ "you still haven't got container_of working right\n");
@@ -96,7 +98,7 @@ static int famez_open(struct inode *inode, struct file *file)
 
 static int famez_release(struct inode *inode, struct file *file)
 {
-	struct famez_configuration *config = extract_config(file->private_data);
+	struct famez_configuration *config = extract_config(file);
 
 	if (!atomic_dec_and_test(&config->nr_users)) {
 		pr_warn(FZ "final release() still has %d users\n",
@@ -143,37 +145,85 @@ static ssize_t famez_read(struct file *file, char __user *buf, size_t len,
 static ssize_t famez_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
-	struct famez_configuration *config = extract_config(file->private_data);
-	char *localbuf, *msgbody;
+	struct famez_configuration *config = extract_config(file);
+	ssize_t returnlen = len;
+	char *localbuf, *firstchar, *lastchar, *msgbody;
 	int ret;
 	uint16_t peer_id;
 
 	PR_ENTER();
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
 		return -E2BIG;
-	PR_V2("check 1: kzalloc(%llu)\n", config->max_msglen);
 	if (!(localbuf = kzalloc(config->max_msglen, GFP_KERNEL)))
 		return -ENOMEM;			// Bad coding here
-	PR_V2("check 2\n");
 	if (copy_from_user(localbuf, buf, len)) {
+		ret = -EIO;
+		goto alldone;
+	}
+	firstchar = localbuf;
+	lastchar = firstchar + (len - 1);
+	if (*(lastchar + 1) != '\0') {
+		pr_err(FZ "Bad EOM conditions\n");
+		ret = -EBADMSG;
+		goto alldone;
+	}
+
+	// Strip leading and trailing whitespace and newlines.
+	// firstchar + (len - 1) should equal lastchar when done.
+	// Use many idiot checks.
+
+	ret = strspn(firstchar, " \r\n\t");
+	PR_V2(FZSP "stripping %d characters from front of \"%s\"\n",
+		ret, firstchar);
+	if (ret > len) {
+		pr_err(FZ "strspn is weird\n");
+		ret = -EDOM;
+	}
+	firstchar += ret;
+	len -= ret;
+
+	// Now the end.
+	while (lastchar != firstchar && len && (
+		*lastchar == ' ' ||
+		*lastchar == '\n' ||
+		*lastchar == '\r' ||
+		*lastchar == '\t'
+	)) {
+		*lastchar-- = '\0';
+		len--;
+	}
+	PR_V2(FZSP "\"%s\" has length %lu =? %lu\n",
+		firstchar, len, strlen(firstchar));
+	if (!len) {
+		pr_warn(FZ "Original message was only whitespace\n");
+		ret = returnlen;	// spoof success to caller
+		goto alldone;
+	}
+	if (len < 0 || (firstchar + (len - 1) != lastchar)) {
+		pr_err(FZ "send someone back to math: %lu\n", len);
 		ret = -EIO;
 		goto alldone;
 	}
 
 	// Split localbuf into two strings around the first colon
-	PR_V2("check 3\n");
-	if (!(msgbody = strchr(localbuf, ':'))) {
+	if (!(msgbody = strchr(firstchar, ':'))) {
+		pr_err(FZ "I see no colon in \"%s\"\n", firstchar);
 		ret = -EBADMSG;
 		goto alldone;
 	}
-	*msgbody = '\0';	// two complete strings
+	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
-	PR_V2("check 4\n");
-	if ((ret = kstrtou16(localbuf, 10, &peer_id)))
+	len = strlen(msgbody);
+	if ((ret = kstrtou16(firstchar, 10, &peer_id)))
 		goto alldone;	// -ERANGE, usually
 
-	// Length or -ERRNO
-	ret = famez_sendmail(peer_id, msgbody, strlen(msgbody), config);
+	// Length or -ERRNO.  If length matched, then all is well, but
+	// that len is always shorter than the original length.  Some
+	// code (ie, "echo") will resubmit the partial if the count is
+	// short.  So lie about it to the caller.
+	ret = famez_sendmail(peer_id, msgbody, len, config);
+	if (ret == len)
+		ret = returnlen;
 
 alldone:
 	kfree(localbuf);	// FIXME: attach to config for life of file?
@@ -208,7 +258,8 @@ static const struct file_operations famez_fops = {
 int famez_chardev_setup(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
-	miscdev2config_t *lookup = kzalloc(sizeof(*lookup), GFP_KERNEL);
+	struct miscdev2config *lookup = kzalloc(
+		sizeof(struct miscdev2config), GFP_KERNEL);
 	char *name;
 
 	PR_ENTER("config->nr_users = %d\n", atomic_read(&config->nr_users));
@@ -227,8 +278,8 @@ int famez_chardev_setup(struct pci_dev *pdev)
 	lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
 	lookup->miscdev.mode = 0666;
 
-	lookup->config = config;
-	lookup->config->teardown_miscdev = &lookup->miscdev;
+	lookup->config = config;	// Don't point that thing at me
+	config->teardown_lookup = lookup;
 	return misc_register(&lookup->miscdev);
 }
 
@@ -238,13 +289,10 @@ int famez_chardev_setup(struct pci_dev *pdev)
 void famez_chardev_teardown(struct pci_dev *pdev)
 {
 	struct famez_configuration *config = pci_get_drvdata(pdev);
-	// Remember, this is essentially a union of two pointers
-	miscdev2config_t *lookup;
+	struct miscdev2config *lookup = config->teardown_lookup;
 	
-	lookup = (void *)extract_config(config->teardown_miscdev);
-
-	misc_deregister(config->teardown_miscdev);
+	misc_deregister(&lookup->miscdev);
 	kfree(lookup->miscdev.name);
 	kfree(lookup);
-	config->teardown_miscdev = NULL;
+	config->teardown_lookup = NULL;
 }
