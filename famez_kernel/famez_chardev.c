@@ -132,7 +132,36 @@ static ssize_t famez_read(struct file *file, char __user *buf, size_t len,
 static ssize_t famez_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
-	return -ENOSYS;
+	struct famez_configuration *config = extract_config(file->private_data);
+	char *msgbody, *localbuf;
+	int ret;
+	uint16_t peer_id;
+
+	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
+		return -E2BIG;
+	if (!(localbuf = kzalloc(config->max_msglen, GFP_KERNEL)))
+		return -ENOMEM;			// Bad coding here
+	if (copy_from_user(localbuf, buf, len)) {
+		ret = -EIO;
+		goto alldone;
+	}
+
+	// Split localbuf into two strings around the first colon
+	if (!(msgbody = strchr(localbuf, ':'))) {
+		ret = -EBADMSG;
+		goto alldone;
+	}
+	*msgbody = '\0';	// two complete strings
+	msgbody++;
+	if ((ret = kstrtou16(localbuf, 10, &peer_id)))
+		goto alldone;	// -ERANGE, usually
+
+	// Length or -ERRNO
+	ret = famez_sendmail(peer_id, msgbody, strlen(msgbody), config);
+
+alldone:
+	kfree(localbuf);	// FIXME: attach to config for life of file?
+	return ret;
 }
 
 //-------------------------------------------------------------------------

@@ -192,8 +192,10 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 
 	// Tell the server I'm here.  Cover the NUL terminator in the length.
 	snprintf(imalive, sizeof(imalive) - 1, "Client %d is ready", config->my_id);
-	famez_sendmail(config->server_id, imalive, strlen(imalive) + 1, config);
-	pr_info(FZSP "%s\n", imalive);
+	ret = famez_sendmail(config->server_id,
+			     imalive, strlen(imalive) + 1, config);
+	pr_info(FZSP "send(%s) to server %s\n", imalive,
+		ret > 0 ? "succeeded" : "FAILED");
 
 	return 0;
 
@@ -313,7 +315,7 @@ void famez_exit(void)
 module_exit(famez_exit);
 
 //-------------------------------------------------------------------------
-// Return positive on success, negative on error, never 0.
+// Return positive (bytecount) on success, negative on error, never 0.
 
 int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 		   struct famez_configuration *config)
@@ -323,6 +325,8 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 
 	if (msglen >= config->max_msglen)
 		return -E2BIG;
+	if (peer_id < 1 || peer_id > config->server_id)
+		return -EBADSLT;
 
 	// Pseudo-HW ready: wait until previous responder has cleared msglen.
 	// while (config->my_slot->msglen && get_jiffies_64() < done)
@@ -337,5 +341,5 @@ int famez_sendmail(uint32_t peer_id, char *msg, ssize_t msglen,
 	ringer.vector = config->my_id;		// from this
 	ringer.peer = peer_id;			// to this
 	config->regs->Doorbell = ringer.push;
-	return 0;
+	return msglen;
 }
