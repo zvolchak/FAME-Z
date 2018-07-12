@@ -62,7 +62,7 @@ class FAMEZ_MailBox(object):
     #----------------------------------------------------------------------
     # Polymorphic.  Someday I'll learn about metaclasses.
 
-    def __init__(self, pathORfd, nSlots=None, peer_id=-1, nodename=None):
+    def __init__(self, pathORfd, nSlots=None, client_id=-1, nodename=None):
         '''Server: Starts with string and slot count from command line.
            Client: starts with an fd and id.'''
 
@@ -70,13 +70,14 @@ class FAMEZ_MailBox(object):
             == self.MAILBOX_SLOT_SIZE), 'Fix this NOW'
 
         if isinstance(pathORfd, int):
-            assert peer_id > 0 and nodename is not None, 'Bad call, ump!'
+            assert client_id > 0 and nodename is not None, 'Bad call, ump!'
             self.fd = pathORfd
-            self.peer_id = peer_id
+            self.my_id = client_id
             self.nodename = nodename
             self._init_client_mailslot()
             return
         assert isinstance(pathORfd, str), 'Need a path OR open fd'
+        assert client_id == -1, 'Cannot assign client id to server'
         path = pathORfd     # Match previously written code
 
         # One for global, one for server, 4 slots is max two clients
@@ -177,27 +178,37 @@ class FAMEZ_MailBox(object):
         self.mm[index + msglen] = 0	# The kernel will appreciate this :-)
 
     #----------------------------------------------------------------------
-    # Called only by client.  mmap() the file, set hostname.
+    # Called by Python client on graceful shutdowns, and always by server
+    # when a peer dies.  This is mostly for QEMU crashes so the nodename
+    # is not accidentally when a QEMU restarts, before loading famez.ko.
+
+    def clear_my_mailslot(self, nodenamebytes=None, override_id=None):
+        id = override_id if override_id else self.my_id
+        assert 1 <= id <= self.server_id, 'slot is bad: %d' % id
+        index = id * self.MAILBOX_SLOT_SIZE
+        zeros = b'\0' * self.MAILSLOT_NODENAME_SIZE
+        self.mm[index:index + len(zeros)] = zeros
+        if nodenamebytes:
+            assert len(nodenamebytes) < self.MAILSLOT_NODENAME_SIZE
+            self.mm[index:index + len(nodenamebytes)] = nodenamebytes
+
+    #----------------------------------------------------------------------
+    # Called only by client.  mmap() the file, set hostname.  Many of the
+    # parameters must be retrieved from the globals area of the mailbox.
 
     def _init_client_mailslot(self):
-
         buf = os.fstat(self.fd)
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
-        assert 1 <= self.peer_id <= buf.st_size // self.MAILBOX_SLOT_SIZE, \
-            'Slotnum %d is out of range' % peer_id
         self.mm = mmap.mmap(self.fd, 0)
         self.nSlots = struct.unpack(
             'Q',
             self.mm[self.GLOBALS_NSLOTS_OFFSET:self.GLOBALS_NSLOTS_OFFSET + 8]
         )[0]
+        assert 4 <= self.nSlots <= 64, 'nSlots is bad: %d' % self.nSlots
         self.server_id = self.nSlots - 1
 
         # mailbox slot starts with nodename
-        index = self.peer_id * self.MAILBOX_SLOT_SIZE
-        zeros = b'\0' * self.MAILSLOT_NODENAME_SIZE
-        self.mm[index:index + len(zeros)] = zeros
-        tmp = self.nodename.encode()
-        self.mm[index:index + len(tmp)] = tmp
+        self.clear_my_mailslot(nodenamebytes=self.nodename.encode())
 
 ###########################################################################
 

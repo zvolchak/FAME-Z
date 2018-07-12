@@ -183,6 +183,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             for vector in self.vectors:
                 vector.cleanup()
 
+            # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
+            self.mailbox.clear_my_mailslot(override_id=self.id)
+
         except Exception as e:
             self.logerr('Closing peer transports failed: %s' % str(e))
 

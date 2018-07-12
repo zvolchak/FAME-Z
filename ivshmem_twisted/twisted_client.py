@@ -158,12 +158,15 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 'Unxpected protocol version %d' % version
             assert minusone == -1, \
                 'Expected -1 with mailbox fd, got %d' % minuseone
+            assert 1 <= self.my_id, 'My ID is bad: %d' % self.my_id
             self._nodename = 'z%02d' % self.my_id
             print('This ID = %2d (%s)' % (self.my_id, self.nodename))
 
-            # Initialize my mailbox slot
+            # Initialize my mailbox slot.  Get other parameters from the
+            # globals because the IVSHMSG protocol doesn't allow values
+            # beyond the intial three.
             self.mailbox = FAMEZ_MailBox(
-                mailbox_fd, peer_id=self.my_id, nodename=self.nodename)
+                mailbox_fd, client_id=self.my_id, nodename=self.nodename)
             self.nSlots = self.mailbox.nSlots
             return
 
@@ -256,6 +259,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Dirty disconnect')
         elif self.args.verbose:
             print('Clean disconnect')
+        self.mailbox.clear_my_mailslot()     # In particular, nodename
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
