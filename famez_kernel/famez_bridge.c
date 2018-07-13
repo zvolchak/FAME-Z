@@ -47,7 +47,6 @@
 #include <asm-generic/bug.h>	// yes after the others
 
 #include "famez.h"
-
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
 //-------------------------------------------------------------------------
@@ -121,29 +120,34 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 	struct famez_configuration *config = extract_config(file);
 	int ret = -EIO;
 
-	// FIXME: encapsulate this better?
-	if (!config->buffer_slot.msglen) {	// Wait for new data?
+	if (!config->legible_slot) {		// Wait for new data?
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		PR_V2(FZ "read() waiting...\n");
-		wait_event_interruptible(bridge_reader_wait, 
-					 config->buffer_slot.msglen);
+		// FIXME: encapsulate this better?  Hide the wqh and
+		// wait_event call behind a funcptr config->reader_wait()
+		wait_event_interruptible(config->legible_slot_wqh, 
+					 config->legible_slot);
 		PR_V2(FZSP "wait finished, %llu bytes to read\n",
-					 config->buffer_slot.msglen);
+					 config->legible_slot->msglen);
 	}
-	if (len < config->buffer_slot.msglen)
-		return -E2BIG;
-	len = config->buffer_slot.msglen;
+	if (len < config->legible_slot->msglen) {
+		ret = -E2BIG;
+		goto release;
+	}
+	len = config->legible_slot->msglen;
 
 	// copy_to_user can sleep.  Returns the number of bytes that could NOT
 	// be copied or -ERRNO.
-	if (!(ret = copy_to_user(buf, config->buffer_slot.msg, len))) {
-		spin_lock(&config->buffer_slot_lock);
-		config->buffer_slot.msglen = 0;
-		spin_unlock(&config->buffer_slot_lock);
-	}
-	PR_V2(FZSP "copy_to_user returns %d\n", ret);
+	ret = copy_to_user(buf, config->legible_slot->msg, len);
+	PR_V2(FZSP "copy_to_user returns %d\n", ret);  // untransferred bytes
 	ret = ret ? -EIO : len;
+
+release:	// Whether I used it or not, let everything go
+	spin_lock(&config->legible_slot_lock);
+	config->legible_slot->msglen = 0;	// Seen by remote sender
+	config->legible_slot = NULL;		// Seen by local MSIX handler
+	spin_unlock(&config->legible_slot_lock);
 	return ret;
 }
 

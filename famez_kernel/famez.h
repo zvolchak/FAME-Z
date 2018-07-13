@@ -63,8 +63,15 @@ struct famez_configuration {
 	struct famez_globals __iomem *globals;		// BAR2
 	struct famez_mailslot *my_slot;			// indexed by my_id
 	struct msix_entry *msix_entries;		// kzalloc an array
-	struct famez_mailslot buffer_slot;		// temp copy for read()
-	spinlock_t buffer_slot_lock;
+
+	// Per-config handshaking between doorbell/mail delivery and a
+	// driver read().  Doorbell comes in and sets the pointer then
+	// issues a wakeup.  read() follows the pointer then sets it
+	// to NULL for next one.
+
+	struct famez_mailslot *legible_slot;
+	spinlock_t legible_slot_lock;
+	struct wait_queue_head legible_slot_wqh;
 };
 
 //-------------------------------------------------------------------------
@@ -82,8 +89,6 @@ void famez_MSIX_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
 // famez_bridge.c - a device file with simple Gen-Z bridge capabilities.
-
-extern wait_queue_head_t bridge_reader_wait;
 
 int famez_bridge_setup(struct pci_dev *);
 void famez_bridge_teardown(struct pci_dev *);
@@ -133,5 +138,8 @@ void famez_bridge_teardown(struct pci_dev *);
 #define STATIC		static
 #define NOINLINE
 #endif
+
+// #define spin_lock(AAA)
+// #define spin_unlock(AAA)
 
 #endif

@@ -171,7 +171,8 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		ret = -ENOMEM;
 		goto err_out;
 	}
-	spin_lock_init(&config->buffer_slot_lock);
+	spin_lock_init(&(config->legible_slot_lock));
+	init_waitqueue_head(&(config->legible_slot_wqh));
 
 	spin_lock_bh(&famez_active_lock);
 	list_for_each_entry(cur, &famez_active_list, lister) {
@@ -329,7 +330,7 @@ module_exit(famez_exit);
 //-------------------------------------------------------------------------
 // Assume a legal C string is passed in message.
 // Return positive (bytecount) on success, negative on error, never 0.
-// Has a sleep so don't call under interrupt context (spinlocks).
+// Has a spinlock-safe sleep.
 
 int famez_sendstring(uint32_t peer_id, char *msg,
 		     struct famez_configuration *config)
@@ -350,7 +351,7 @@ int famez_sendstring(uint32_t peer_id, char *msg,
 	// Pseudo-HW ready: wait until my_slot has pushed a previous write
 	// through, ie, the most recent responder clears my msglen.
 	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
-		msleep(50);
+		usleep_range(50000, 80000);
 	if (config->my_slot->msglen)
 		pr_warn(FZ "sendstring() is stomping on previous message\n");
 

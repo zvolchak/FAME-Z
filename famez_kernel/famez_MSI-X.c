@@ -30,15 +30,15 @@ struct famez_mailslot __iomem *famez_get_mailslot(
 static irqreturn_t all_msix(int vector, void *data) {
 	struct famez_configuration *config = data;
 	int slotnum;
-	uint16_t peer_id = 0;	// see pci.h for msix_entry
-	struct famez_mailslot __iomem *peer_slot;
+	uint16_t sender_id = 0;	// see pci.h for msix_entry
+	struct famez_mailslot __iomem *sender_slot;
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
 	// FIXME: preload a lookup table if I ever care about speed.
 	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
 		if (vector == config->msix_entries[slotnum].vector) {
-			peer_id = config->msix_entries[slotnum].entry;
+			sender_id = config->msix_entries[slotnum].entry;
 			break;
 		}
 	}
@@ -49,30 +49,30 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// All returns from here are IRQ_HANDLED
 
-	if (!(peer_slot = famez_get_mailslot(config, peer_id))) {
-		pr_err(FZ "Could not match peer %u\n", peer_id);
+	if (!(sender_slot = famez_get_mailslot(config, sender_id))) {
+		pr_err(FZ "Could not match peer %u\n", sender_id);
 		return IRQ_HANDLED;
 	}
-	PR_V1(FZ "IRQ %d == peer %u -> \"%s\"\n",
-		vector, peer_id, peer_slot->msg);
+	PR_V1(FZ "IRQ %d == sender %u -> \"%s\"\n",
+		vector, sender_id, sender_slot->msg);
 
-	// Easy way to see if this thing is alive.
-	spin_lock(&config->buffer_slot_lock);
-	if STREQ_N(peer_slot->msg, "ping", 4) {
+	// Easy loopback test as proof of life.  Handle it all right here
+	// right now, don't let normal kernel code or user ever see it.
+	if STREQ_N(sender_slot->msg, "ping", 4) {
 		char pong[16];
 
 		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
-		famez_sendstring(peer_id, pong, config);
+		famez_sendstring(sender_id, pong, config);
 	} else {
-		// FIXME: stompage occurs, should return NACK if necessary
-		memcpy(&config->buffer_slot, peer_slot, config->globals->slotsize);
-		// FIXME: better abstraction and encapsulation
-		wake_up_all(&bridge_reader_wait);
-	}
-	spin_unlock(&config->buffer_slot_lock);
+		if (config->legible_slot)
+			pr_warn(FZ "stomping on legible slot\n");
+		spin_lock(&(config->legible_slot_lock));
+		config->legible_slot = sender_slot;
+		spin_unlock(&(config->legible_slot_lock));
 
-	// Clear the send mailslot so it can go: HW holdoff of pseudo-chip
-	peer_slot->msglen = 0;
+		// FIXME: better abstraction and encapsulation
+		wake_up_all(&(config->legible_slot_wqh));
+	}
 	return IRQ_HANDLED;
 }
 
