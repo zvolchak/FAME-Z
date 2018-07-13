@@ -9,7 +9,7 @@
 #define FZ		"famez: "	// pr_xxxx header
 #define FZSP		"       "	// pr_xxxx header same length indent
 
-#define FAMEZ_VERSION	FAMEZ_NAME " v0.7.3: early chardev work"
+#define FAMEZ_VERSION	FAMEZ_NAME " v0.7.5: endgame chardev"
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
@@ -39,6 +39,7 @@ struct famez_globals {			// BAR 2: Start of IVSHMEM
 struct famez_mailslot {
 	char nodename[32];		// of the owning client
 	uint64_t msglen;
+	uint32_t peer_id;		// Convenience; set by server
 	// padding in here, calculate at runtime...
 	char *msg;			// ...via globals->msg_offset
 };

@@ -118,7 +118,9 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
                           loff_t *ppos)
 {
 	struct famez_configuration *config = extract_config(file);
-	int ret = -EIO;
+	int ret;
+	char sender_id[8];	// sprintf(sender_id, "%03:", ....
+	size_t sender_id_len;
 
 	if (!config->legible_slot) {		// Wait for new data?
 		if (file->f_flags & O_NONBLOCK)
@@ -128,20 +130,30 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 		// wait_event call behind a funcptr config->reader_wait()
 		wait_event_interruptible(config->legible_slot_wqh, 
 					 config->legible_slot);
-		PR_V2(FZSP "wait finished, %llu bytes to read\n",
-					 config->legible_slot->msglen);
 	}
-	if (len < config->legible_slot->msglen) {
+	if (!config->legible_slot) {
+		pr_err(FZ "legible slot is not ready\n");
+		return -EBADE;
+	}
+	PR_V2(FZSP "wait finished, %llu bytes to read\n",
+		 config->legible_slot->msglen);
+	sprintf(sender_id, "%03d:", config->legible_slot->peer_id);
+	sender_id_len = strlen(sender_id);
+	if (len < config->legible_slot->msglen + sender_id_len) {
 		ret = -E2BIG;
 		goto release;
 	}
-	len = config->legible_slot->msglen;
+	len = config->legible_slot->msglen;	// msg body
 
 	// copy_to_user can sleep.  Returns the number of bytes that could NOT
 	// be copied or -ERRNO.
-	ret = copy_to_user(buf, config->legible_slot->msg, len);
-	PR_V2(FZSP "copy_to_user returns %d\n", ret);  // untransferred bytes
-	ret = ret ? -EIO : len;
+	ret = copy_to_user(buf, sender_id, sender_id_len);
+	if (ret) {
+		ret = -EIO;
+		goto release;
+	}
+	ret = copy_to_user(buf + sender_id_len, config->legible_slot->msg, len);
+	ret = ret ? -EIO : len + sender_id_len;
 
 release:	// Whether I used it or not, let everything go
 	spin_lock(&config->legible_slot_lock);
@@ -161,8 +173,6 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	char *firstchar, *lastchar, *msgbody;
 	int ret;
 	uint16_t peer_id;
-
-	PR_ENTER();
 
 	// Use many idiot checks.  Performance is not the issue here.
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
