@@ -26,21 +26,25 @@ from pdb import set_trace
 class FAMEZ_MailBox(object):
 
     MAILBOX_MAX_SLOTS = 64
-    MAILBOX_SLOT_SIZE = 512
+    MAILBOX_SLOT_SIZE = 256         # 128 of metadata, 128 of message
 
     GLOBALS_SLOT_SIZE_OFFSET = 0    # in the space of mailslot 0
     GLOBALS_MESSAGE_OFFSET_OFFSET = 8
     GLOBALS_NSLOTS_OFFSET = 16
 
+    # Metadata currently takes up 32 + 8 + 4 = 44 bytes
     MAILSLOT_NODENAME_OFFSET = 0
     MAILSLOT_NODENAME_SIZE = 32     # NULL padded
-    MAILSLOT_MSGLEN_OFFSET = MAILSLOT_NODENAME_SIZE
-    MAILSLOT_MESSAGE_OFFSET = 128   # To end of slot, currently 384 bytes
-    MAILSLOT_MESSAGE_SIZE = 384
+    MAILSLOT_MSGLEN_OFFSET = MAILSLOT_NODENAME_SIZE         # uint64_t, so...
+    MAILSLOT_PEER_ID_OFFSET = MAILSLOT_MSGLEN_OFFSET + 8    # uint32_t, so...
+    MAILSLOT_NEXT_BLAHBLAH = MAILSLOT_PEER_ID_OFFSET + 4
+    MAILSLOT_MESSAGE_OFFSET = 128
+    MAILSLOT_MESSAGE_SIZE = 128
 
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
-    # Server mailbox at slot (nSlots - 1), first 32 bytes are host name.
+    # Each slot (1 through nSlots-1) has a peer_id
+    # Server mailbox at slot (nSlots - 1): first 32 bytes are host name.
 
     def _populate(self):
         self.mm = mmap.mmap(self.fd, 0)
@@ -53,6 +57,14 @@ class FAMEZ_MailBox(object):
         data = struct.pack('QQQ',
             self.MAILBOX_SLOT_SIZE,self. MAILSLOT_MESSAGE_OFFSET, self.nSlots)
         self.mm[0:len(data)] = data
+
+        # Set the peer_id for each slot as a C integer.  While python client
+        # can discern a sender, the famez.ko driver needs it "inband".
+
+        for slot in range(1, 8):
+            index = slot * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_PEER_ID_OFFSET
+            packed_peer = struct.pack('i', slot)   # uint32_t
+            self.mm[index:index + 4] = packed_peer
 
         # My "hostname", zero-padded
         data = self.nodename.encode()

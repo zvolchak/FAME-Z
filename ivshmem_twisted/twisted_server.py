@@ -104,8 +104,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # If errors occur early enough, send a bad revision to the client so it
     # terminates the connection.
     def connectionMade(peer):
-        peer.logmsg('new socket %d == peer id %d' %
-            (peer.transport.fileno(), peer.id))
+        if peer.args.verbose:
+            peer.logmsg('new socket %d == peer id %d' %
+                (peer.transport.fileno(), peer.id))
         if peer.id == -1:
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
@@ -142,10 +143,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     other_peer.id,
                     other_peer_vector.wfd)
 
-        # Non-standard voodoo: advertise me (this server) to the new one.
-        # It's just one more grouping in the previous batch.
+        # Non-standard voodoo extension to previous advertisment: advertise
+        # me (this server) to the new peer.  Consider it one more grouping
+        # in the previous batch.
         if peer.famez_notifiers:
-            peer.logmsg('sending my notifiers')
             for server_vector in peer.famez_notifiers:
                 ivshmem_send_one_msg(
                     peer.transport.socket,

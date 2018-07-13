@@ -119,7 +119,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if self.args.verbose > 1:
             print('P&G dest %s=%s src %s=%s' %
                       (dest, dest_indices, src, src_indices))
-        assert src_indices and dest_indices, 'P&G: bad indices'
+        assert src_indices and dest_indices, 'Missing dest and/or src'
         for S in src_indices:
             self.mailbox.place_in_slot(S, msg)
             for D in dest_indices:
@@ -127,6 +127,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
                     self.peer_list[D][S].incr()
+                except KeyError as e:
+                    print('No such peer id', str(e))
                 except Exception as e:
                     print('place_and_go(%s, "%s", %s) failed: %s' %
                         (D, msg, S, str(e)))
