@@ -119,7 +119,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if self.args.verbose > 1:
             print('P&G dest %s=%s src %s=%s' %
                       (dest, dest_indices, src, src_indices))
-        assert src_indices and dest_indices, 'Missing dest and/or src'
+        assert src_indices, 'missing or unknown source(s)'
+        assert dest_indices, 'missing or unknown destination(s)'
         for S in src_indices:
             self.mailbox.place_in_slot(S, msg)
             for D in dest_indices:
