@@ -143,21 +143,24 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 		ret = -E2BIG;
 		goto release;
 	}
-	len = config->legible_slot->msglen;	// msg body
 
-	// copy_to_user can sleep.  Returns the number of bytes that could NOT
-	// be copied or -ERRNO.
+	// copy_to_user can sleep and returns the number of bytes that could NOT
+	// be copied or -ERRNO.  Require all copies to work all the way.  First
+	// emit the sender ID so the user knows from whence the message came.
 	ret = copy_to_user(buf, sender_id, sender_id_len);
 	if (ret) {
-		ret = -EIO;
+		if (ret > 0) ret= -EIO;		// partial transfer
 		goto release;
 	}
+
+	// Now the message body proper, after the colon of the previous message.
+	len = config->legible_slot->msglen;
 	ret = copy_to_user(buf + sender_id_len, config->legible_slot->msg, len);
 	ret = ret ? -EIO : len + sender_id_len;
 
 release:	// Whether I used it or not, let everything go
 	spin_lock(&config->legible_slot_lock);
-	config->legible_slot->msglen = 0;	// Seen by remote sender
+	config->legible_slot->msglen = 0;	// In the slot of the remote sender
 	config->legible_slot = NULL;		// Seen by local MSIX handler
 	spin_unlock(&config->legible_slot_lock);
 	return ret;
@@ -170,62 +173,36 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 {
 	famez_configuration_t *config = extract_config(file);
 	ssize_t spooflen = len;
-	char *firstchar, *lastchar, *msgbody;
+	char *msgbody;
 	int ret;
 	uint16_t peer_id;
 
 	// Use many idiot checks.  Performance is not the issue here.
+	// It could be raw data with nulls at some point...
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
 		return -E2BIG;
 	memset(config->scratch_msg, 0, config->max_msglen);
 	if (copy_from_user(config->scratch_msg, buf, len))
 		return -EIO;
 
-	// Strip leading and trailing whitespace and newlines.  Use many
-	// idiot checks.  There are some cool lstrip hacks out there but
-	// they memmove a substring; besides, this reads fairly well.
-
-	// lstrip
-	firstchar = config->scratch_msg;
-	ret = strspn(firstchar, " \r\n\t"); // count chars only in this set
-	BUG_ON(ret > len);
-	len -= ret;
-	if (!len) {
-		pr_warn(FZ "original message was only whitespace\n");
-		return spooflen;	// make the caller happy
-	}
-	firstchar += ret;
-	lastchar = firstchar + (len - 1);
-	BUG_ON(*(lastchar + 1) != '\0');
-	BUG_ON(len != strlen(firstchar));
-
-	// rstrip.
-	while (len && isspace(*lastchar)) { len--; lastchar--; }
-	// len == 0 should have occurred up in lstrip.  Since it's unsigned,
-	// a "negative length" is a LARGE number.
-	if (len > config->max_msglen || (firstchar + (len - 1) != lastchar)) {
-		PR_V2(FZ "send someone back to math: %lu\n", len);
-		return -EIO;
-	}
-	*(firstchar + len) = '\0';
-	PR_V2(FZSP "\"%s\" has length %lu =? %lu\n",
-		firstchar, len, strlen(firstchar));
-
 	// Split body into two strings around the first colon.
-	if (!(msgbody = strchr(firstchar, ':'))) {
-		pr_err(FZ "I see no colon in \"%s\"\n", firstchar);
+	if (!(msgbody = strchr(config->scratch_msg, ':'))) {
+		pr_err(FZ "I see no colon in \"%s\"\n", config->scratch_msg);
 		return -EBADMSG;
 	}
 	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
-	if (!(len = strlen(msgbody))) {		// an empty body
-		pr_warn(FZ "message body is empty\n");
+	len -= (uint64_t)msgbody - (uint64_t)config->scratch_msg;
+
+	// This does not account for binary data which may have NULs
+	if (!(len = strlen(msgbody))) {
+		pr_warn(FZ "msgbody length mismatch\n");
 		return spooflen;	// spoof success to caller
 	}
-	if (STREQ(firstchar, "server"))
+	if (STREQ(config->scratch_msg, "server"))
 		peer_id = config->server_id;
 	else {
-		if ((ret = kstrtou16(firstchar, 10, &peer_id)))
+		if ((ret = kstrtou16(config->scratch_msg, 10, &peer_id)))
 			return ret;	// -ERANGE, usually
 	}
 
