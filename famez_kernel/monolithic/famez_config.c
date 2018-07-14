@@ -195,7 +195,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// Has this device been configured already?
 
 	if (pci_get_drvdata(pdev)) {	// Is this possible?
-		pr_err(FZSP "This device is already configured (1)\n");
+		pr_err(FZSP "This device is already configured\n");
 		return -EALREADY;
 	}
 
@@ -231,17 +231,20 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// It's a keeper...unless it's already there.  Unlikely, but it's
 	// not paranoia when in the kernel.
 	spin_lock_bh(&famez_active_lock);
+	ret = 0;
 	list_for_each_entry(cur, &famez_active_list, lister) {
-		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1)))
+		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
+			ret = -EALREADY;
 			break;
+		}
 	}
-	if (!cur) {
+	if (!ret) {
 		list_add_tail(&config->lister, &famez_active_list);
 		PR_V1(FZSP "config added to active list\n")
 	}
 	spin_unlock_bh(&famez_active_lock);
-	if (cur) {
-		pr_err(FZSP "This device is already configured (2)\n");
+	if (ret) {
+		pr_err(FZSP "This device is already in active list\n");
 		goto err_bridge_teardown;
 	}
 
