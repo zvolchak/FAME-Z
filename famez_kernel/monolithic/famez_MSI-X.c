@@ -7,11 +7,11 @@
 
 //-------------------------------------------------------------------------
 
-struct famez_mailslot __iomem *famez_get_mailslot(
-	struct famez_configuration *config,
+famez_mailslot_t __iomem *famez_get_mailslot(
+	famez_configuration_t *config,
 	unsigned slotnum)
 {
-	struct famez_mailslot __iomem *slot;
+	famez_mailslot_t __iomem *slot;
 
 	// Slot 0 is the globals data, don't play in there.  The last slot
 	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2]
@@ -28,10 +28,10 @@ struct famez_mailslot __iomem *famez_get_mailslot(
 //-------------------------------------------------------------------------
 
 static irqreturn_t all_msix(int vector, void *data) {
-	struct famez_configuration *config = data;
+	famez_configuration_t *config = data;
 	int slotnum;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
-	struct famez_mailslot __iomem *sender_slot;
+	famez_mailslot_t __iomem *sender_slot;
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
@@ -82,7 +82,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 int famez_MSIX_setup(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int ret, i, nvectors = 0, last_irq_index;
 
 	if ((nvectors = pci_msix_vec_count(pdev)) < 0) {
@@ -104,11 +104,6 @@ int famez_MSIX_setup(struct pci_dev *pdev)
 	}
 
 	nvectors = config->globals->nSlots;		// legibility
-	if (!(config->msix_entries = kzalloc(
-		nvectors * sizeof(struct msix_entry), GFP_KERNEL))) {
-		pr_err(FZ "Can't create MSI-X entries table\n");
-		return -ENOMEM;
-	}
 	// .vector was zeroed by kzalloc
 	for (i = 0; i < nvectors; i++)
 		config->msix_entries[i].entry  = i;
@@ -181,7 +176,7 @@ err_kfree_msix_entries:
 
 void famez_MSIX_teardown(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int i;
 
 	if (!config->msix_entries)	// Been there, done that

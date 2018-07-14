@@ -13,16 +13,16 @@
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
-struct ivshmem_registers {		// BAR 0
+typedef struct {			// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
 			Rev1Reserved2,	// Rev 0: Interrupt status
 			IVPosition,	// My peer id
 			Doorbell;	// Upper and lower half
-};
+} ivshmem_registers_t;
 
-struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
+typedef struct {			// BAR 1: Not mapped, not used.  YET.
 	uint32_t junk;
-};
+} ivshmem_msi_x_table_pba_t;
 
 // The famez_server.py controls the mailbox slot size and number of slots
 // (and therefore the total file size).  It gives these numbers to this driver.
@@ -32,17 +32,23 @@ struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
 // ID == nSlots - 1) is for the Python server.  The remaining slots are for
 // client IDs 1 through (nSlots - 2).
 
-struct famez_globals {			// BAR 2: Start of IVSHMEM
+typedef struct {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
-};
+} famez_globals_t;
 
-struct famez_mailslot {
+typedef struct {
+	int num;
+	void *target;
+	char *info;
+} famez_BARtab_t;
+
+typedef struct {
 	char nodename[32];		// of the owning client
 	uint64_t msglen;
 	uint32_t peer_id;		// Convenience; set by server
 	// padding in here, calculate at runtime...
 	char *msg;			// ...via globals->msg_offset
-};
+} famez_mailslot_t;
 
 // The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
 // the lower 16 bits.  The combo must be assigned atomically.
@@ -51,7 +57,7 @@ union __attribute__ ((packed)) ringer {
 	uint32_t push;
 };
 
-struct famez_configuration {
+typedef struct {
 	struct list_head lister;
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
@@ -59,28 +65,27 @@ struct famez_configuration {
 	uint64_t max_msglen;
 	char *scratch_msg;				// kmalloc(max_msglen)
 	uint16_t my_id, server_id;			// match ringer.peer 
-	struct ivshmem_registers __iomem *regs;		// BAR0
-	struct ivshmem_msi_x_msi_pba __iomem *UNUSED;	// BAR1
-	struct famez_globals __iomem *globals;		// BAR2
-	struct famez_mailslot *my_slot;			// indexed by my_id
-	struct msix_entry *msix_entries;		// kzalloc an array
+	ivshmem_registers_t __iomem *regs;		// BAR0
+	famez_globals_t __iomem *globals;		// BAR2
+	famez_mailslot_t *my_slot;			// indexed by my_id
+	struct msix_entry *msix_entries;		// pci.h: kzalloc array
 
 	// Per-config handshaking between doorbell/mail delivery and a
 	// driver read().  Doorbell comes in and sets the pointer then
 	// issues a wakeup.  read() follows the pointer then sets it
 	// to NULL for next one.
 
-	struct famez_mailslot *legible_slot;
+	famez_mailslot_t *legible_slot;
 	spinlock_t legible_slot_lock;
 	struct wait_queue_head legible_slot_wqh;
-};
+} famez_configuration_t;
 
 //-------------------------------------------------------------------------
 // famez_config.c - insmod and later probe() setup; final teardown of rmmod
 
 extern int famez_verbose;				// insmod parameter
 
-int famez_sendstring(uint32_t , char *, struct famez_configuration *);
+int famez_sendstring(uint32_t , char *, famez_configuration_t *);
 
 //-------------------------------------------------------------------------
 // famez_MSI-X.c - handle interrupts from other FAME-Z peers

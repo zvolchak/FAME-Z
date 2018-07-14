@@ -61,11 +61,11 @@ DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 // even need container_of as the address is synonymous with both.
 
 struct miscdev2config {
-	struct miscdevice miscdev;		// full structure, not a ptr
-	struct famez_configuration *config;	// what I want to recover
+	struct miscdevice miscdev;	// full structure, not a ptr
+	famez_configuration_t *config;	// what I want to recover
 };
 
-static inline struct famez_configuration *extract_config(struct file *file)
+static inline famez_configuration_t *extract_config(struct file *file)
 {
 	struct miscdevice *encapsulated_miscdev = file->private_data;
 	struct miscdev2config *lookup = container_of(
@@ -80,7 +80,7 @@ static inline struct famez_configuration *extract_config(struct file *file)
 
 static int bridge_open(struct inode *inode, struct file *file)
 {
-	struct famez_configuration *config = extract_config(file);
+	famez_configuration_t *config = extract_config(file);
 
 	// When this is broken, the values tend to look like pointers.
 	// Do a poor man's abs().
@@ -102,7 +102,7 @@ static int bridge_open(struct inode *inode, struct file *file)
 
 static int bridge_release(struct inode *inode, struct file *file)
 {
-	struct famez_configuration *config = extract_config(file);
+	famez_configuration_t *config = extract_config(file);
 
 	if (!atomic_dec_and_test(&config->nr_users)) {
 		pr_warn(FZ "final release() still has %d users\n",
@@ -117,7 +117,7 @@ static int bridge_release(struct inode *inode, struct file *file)
 static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
                           loff_t *ppos)
 {
-	struct famez_configuration *config = extract_config(file);
+	famez_configuration_t *config = extract_config(file);
 	int ret;
 	char sender_id[8];	// sprintf(sender_id, "%03:", ....
 	size_t sender_id_len;
@@ -168,7 +168,7 @@ release:	// Whether I used it or not, let everything go
 static ssize_t bridge_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
-	struct famez_configuration *config = extract_config(file);
+	famez_configuration_t *config = extract_config(file);
 	ssize_t spooflen = len;
 	char *firstchar, *lastchar, *msgbody;
 	int ret;
@@ -267,7 +267,7 @@ static const struct file_operations bridge_fops = {
 
 int famez_bridge_setup(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 	struct miscdev2config *lookup = kzalloc(
 		sizeof(struct miscdev2config), GFP_KERNEL);
 	char *name;
@@ -298,7 +298,7 @@ int famez_bridge_setup(struct pci_dev *pdev)
 
 void famez_bridge_teardown(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 	struct miscdev2config *lookup = config->teardown_lookup;
 	
 	misc_deregister(&lookup->miscdev);
