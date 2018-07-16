@@ -359,7 +359,7 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
 	union ringer ringer;
 
-	PR_ENTER("sending \"%s\" to %d\n", msg, peer_id);
+	PR_V1("sendstring(\"%s\") (len %lu) to %d\n", msg, strlen(msg), peer_id);
 
 	if (peer_id < 1 || peer_id > config->server_id)
 		return -EBADSLT;
@@ -369,15 +369,16 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 		return -ENODATA; // FIXME: is there value to a "silent kick"?
 
 	// Pseudo-HW ready: wait until my_slot has pushed a previous write
-	// through, ie, the most recent responder clears my msglen.
+	// through. In truth it's the previous responder clearing my msglen.
 	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
 		usleep_range(50000, 80000);
 	if (config->my_slot->msglen)
-		pr_warn(FZ "sendstring() is stomping on previous message\n");
+		pr_warn(FZ "%s() stomps previous message\n", __FUNCTION__);
 
 	// Keep nodename and msg pointer; update msglen and msg contents.
-	memset(config->my_slot->msg, 0, config->max_msglen);
+	// memset(config->my_slot->msg, 0, config->max_msglen);	# overkill
 	config->my_slot->msglen = msglen;
+	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
 	memcpy(config->my_slot->msg, msg, msglen);
 	ringer.vector = config->my_id;		// from this
 	ringer.peer = peer_id;			// to this

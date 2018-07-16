@@ -60,23 +60,23 @@ DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 // If I put the "primary key" structure as the first field, then I wouldn't
 // even need container_of as the address is synonymous with both.
 
-struct miscdev2config {
+typedef struct {
 	struct miscdevice miscdev;	// full structure, not a ptr
 	famez_configuration_t *config;	// what I want to recover
-};
+} miscdev2config_t;
 
 static inline famez_configuration_t *extract_config(struct file *file)
 {
 	struct miscdevice *encapsulated_miscdev = file->private_data;
-	struct miscdev2config *lookup = container_of(
+	miscdev2config_t *lookup = container_of(
 		encapsulated_miscdev,	// the pointer to the member
-		struct miscdev2config,	// the type of the container struct
+		miscdev2config_t,	// the type of the container struct
 		miscdev);		// the name of the member in the struct
 	return lookup->config;
 }
 
 //-------------------------------------------------------------------------
-// file->private is set to the miscdevice structure used to register.
+// file->private is set to the miscdevice structure used in misc_register.
 
 static int bridge_open(struct inode *inode, struct file *file)
 {
@@ -89,8 +89,7 @@ static int bridge_open(struct inode *inode, struct file *file)
 		return -ECANCELED;
 	}
 
-	PR_ENTER("config->max_msglen = %llu, current users = %d\n",
-		config->max_msglen, atomic_read(&config->nr_users));
+	PR_ENTER("current users = %d\n", atomic_read(&config->nr_users));
 
 	atomic_inc(&config->nr_users);
 
@@ -230,10 +229,14 @@ unlock_return:
 
 static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 {
+	famez_configuration_t *config = extract_config(file);
 	uint ret = 0;
 
 	poll_wait(file, &bridge_reader_wait, wait);
 		ret |= POLLIN | POLLRDNORM;
+	// FIXME encapsulate this better, it's really the purview of sendstring
+	if (!config->my_slot->msglen)
+		ret |= POLLOUT | POLLWRNORM;
 	return ret;
 }
 
@@ -253,19 +256,16 @@ static const struct file_operations bridge_fops = {
 int famez_bridge_setup(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
-	struct miscdev2config *lookup = kzalloc(
-		sizeof(struct miscdev2config), GFP_KERNEL);
+	miscdev2config_t *lookup;
 	char *name;
 
-	PR_ENTER("config->nr_users = %d\n", atomic_read(&config->nr_users));
-
-	if (!lookup)
+	if (!(lookup = kzalloc(sizeof(miscdev2config_t), GFP_KERNEL)))
 		return -ENOMEM;
-
 	if (!(name = kzalloc(32, GFP_KERNEL))) {
 		kfree(lookup);
 		return -ENOMEM;
 	}
+
 	// Name should be reminiscent of lspci output
 	sprintf(name, "%s%02x_bridge", FAMEZ_NAME, config->pdev->devfn >> 3);
 	lookup->miscdev.name = name;
@@ -284,7 +284,7 @@ int famez_bridge_setup(struct pci_dev *pdev)
 void famez_bridge_teardown(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
-	struct miscdev2config *lookup = config->teardown_lookup;
+	miscdev2config_t *lookup = config->teardown_lookup;
 	
 	misc_deregister(&lookup->miscdev);
 	kfree(lookup->miscdev.name);
