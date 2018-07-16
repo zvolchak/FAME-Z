@@ -227,15 +227,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         selph = vectorobj.cbdata
         nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
         selph.logmsg('"%s" (%d) -> "%s"' % (nodename, vectorobj.num, msg))
-        if msg == 'ping':
-            selph.mailbox.place_in_slot(
-                selph.my_id, 'ping(%2d)' % selph.my_id)
-            for peer in selph.peer_list:
+        if msg == 'ping':                       # shortcut handling
+            for peer in selph.peer_list:        # paranoia
                 if peer.id == vectorobj.num:
                     break
-            else:   # The peer disappeared?
-                selph.logmsg('Disappeering act')
+            else:                               # The peer disappeared?
+                selph.logmsg('Disappeering act %d' % vectorobj.num)
                 return
+            selph.mailbox.place_in_slot(selph.my_id, 'PONG')
             peer.vectors[selph.my_id].incr()
 
 ###########################################################################
