@@ -110,8 +110,8 @@ STATIC void destroy_config(famez_configuration_t *config)
 
 	if (config->msix_entries) kfree(config->msix_entries);
 	config->msix_entries = NULL;
-	if (config->scratch_msg) kfree(config->scratch_msg);
-	config->scratch_msg = NULL;
+	if (config->scratch) kfree(config->scratch);
+	config->scratch = NULL;
 
 	kfree(config);
 }
@@ -132,6 +132,7 @@ STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
 
 	// Simple fields.
 	spin_lock_init(&(config->legible_slot_lock));
+	spin_lock_init(&(config->scratch_lock));
 	init_waitqueue_head(&(config->legible_slot_wqh));
 
 	// Real work.
@@ -148,7 +149,7 @@ STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
 
 	// All the needed parameters are set to finish this off.
 	ret = -ENOMEM;
-	if (!(config->scratch_msg = kmalloc(config->max_msglen, GFP_KERNEL))) {
+	if (!(config->scratch = kmalloc(config->max_msglen, GFP_KERNEL))) {
 		pr_err(FZ "Can't create scratch buffer\n");
 		goto err_kfree;
 	}

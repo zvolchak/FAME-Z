@@ -181,29 +181,35 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	// It could be raw data with nulls at some point...
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
 		return -E2BIG;
-	memset(config->scratch_msg, 0, config->max_msglen);
-	if (copy_from_user(config->scratch_msg, buf, len))
-		return -EIO;
+
+	spin_lock_bh(&config->scratch_lock);	// Multiuse of *file
+	memset(config->scratch, 0, config->max_msglen);
+	if (copy_from_user(config->scratch, buf, len)) {
+		ret = -EIO;
+		goto unlock_return;
+	}
 
 	// Split body into two strings around the first colon.
-	if (!(msgbody = strchr(config->scratch_msg, ':'))) {
-		pr_err(FZ "I see no colon in \"%s\"\n", config->scratch_msg);
-		return -EBADMSG;
+	if (!(msgbody = strchr(config->scratch, ':'))) {
+		pr_err(FZ "I see no colon in \"%s\"\n", config->scratch);
+		ret = -EBADMSG;
+		goto unlock_return;
 	}
 	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
-	len -= (uint64_t)msgbody - (uint64_t)config->scratch_msg;
+	len -= (uint64_t)msgbody - (uint64_t)config->scratch;
 
-	// This does not account for binary data which may have NULs
+	// FIXME: assumes ASCII data, not binary which may have embedded NULs
 	if (!(len = strlen(msgbody))) {
 		pr_warn(FZ "msgbody length mismatch\n");
-		return spooflen;	// spoof success to caller
+		ret = spooflen;	// spoof success to caller
+		goto unlock_return;
 	}
-	if (STREQ(config->scratch_msg, "server"))
+	if (STREQ(config->scratch, "server"))
 		peer_id = config->server_id;
 	else {
-		if ((ret = kstrtou16(config->scratch_msg, 10, &peer_id)))
-			return ret;	// -ERANGE, usually
+		if ((ret = kstrtou16(config->scratch, 10, &peer_id)))
+			goto unlock_return;	// -ERANGE, usually
 	}
 
 	// Length or -ERRNO.  If length matched, then all is well, but
@@ -214,6 +220,8 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	if (ret == len)
 		ret = spooflen;
 
+unlock_return:
+	spin_unlock_bh(&config->scratch_lock);
 	return ret;
 }
 

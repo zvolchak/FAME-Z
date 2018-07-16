@@ -63,12 +63,16 @@ typedef struct {
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_msglen;
-	char *scratch_msg;				// kmalloc(max_msglen)
 	uint16_t my_id, server_id;			// match ringer.peer 
 	ivshmem_registers_t __iomem *regs;		// BAR0
 	famez_globals_t __iomem *globals;		// BAR2
 	famez_mailslot_t *my_slot;			// indexed by my_id
 	struct msix_entry *msix_entries;		// pci.h: kzalloc array
+
+	// Per-config handshaking between doorbell/mail delivery and a
+	// driver write.  The target address is parsed out first.
+	char *scratch;					// kmalloc(max_msglen)
+	spinlock_t scratch_lock;
 
 	// Per-config handshaking between doorbell/mail delivery and a
 	// driver read().  Doorbell comes in and sets the pointer then
@@ -78,6 +82,7 @@ typedef struct {
 	famez_mailslot_t *legible_slot;
 	spinlock_t legible_slot_lock;
 	struct wait_queue_head legible_slot_wqh;
+
 } famez_configuration_t;
 
 //-------------------------------------------------------------------------
