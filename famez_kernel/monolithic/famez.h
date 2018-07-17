@@ -119,9 +119,9 @@ void famez_bridge_teardown(struct pci_dev *);
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
 #ifdef FAMEZ_DEBUG
-#define PR_V1(a...)	{ if (famez_verbose) pr_info(a); }
-#define PR_V2(a...)	{ if (famez_verbose > 1) pr_info(a); }
-#define PR_V3(a...)	{ if (famez_verbose > 2) pr_info(a); }
+#define PR_V1(a...)	{ if (famez_verbose) pr_info(FZ a); }
+#define PR_V2(a...)	{ if (famez_verbose > 1) pr_info(FZ a); }
+#define PR_V3(a...)	{ if (famez_verbose > 2) pr_info(FZ a); }
 #else
 #define PR_V1(a...)
 #define PR_V2(a...)

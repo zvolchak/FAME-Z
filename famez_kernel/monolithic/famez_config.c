@@ -253,10 +253,10 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	snprintf(imalive, sizeof(imalive) - 1,
 		"Client %d is ready", config->my_id);
 	ret = famez_sendstring(config->server_id, imalive, config);
-	pr_info(FZSP "sendstring(\"%s\") to server %s\n", imalive,
-		ret > 0 ? "succeeded" : "FAILED");
+	if (ret > 0)
+		ret = ret == strlen(imalive) ? 0 : -EIO;
 
-	return 0;
+	return ret;
 
 err_bridge_teardown:
 	pr_warn(FZSP "tearing down bridge %s\n", CARDLOC(pdev));

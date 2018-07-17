@@ -47,7 +47,11 @@
 #include <asm-generic/bug.h>	// yes after the others
 
 #include "famez.h"
+
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
+
+typedef struct {
+} bridge_data_t;
 
 //-------------------------------------------------------------------------
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
@@ -88,26 +92,34 @@ static int bridge_open(struct inode *inode, struct file *file)
 		pr_err(FZ "Looks like extract_config() is borked\n");
 		return -ECANCELED;
 	}
-
-	PR_ENTER("current users = %d\n", atomic_read(&config->nr_users));
-
 	atomic_inc(&config->nr_users);
+	PR_V1("open: after inc, %d users\n", atomic_read(&config->nr_users));
 
 	return 0;
 }
 
 //-------------------------------------------------------------------------
-// Only at the last close
+// At any close of a process fd
+
+static int bridge_flush(struct file *file, fl_owner_t id)
+{
+	famez_configuration_t *config = extract_config(file);
+
+	atomic_dec_and_test(&config->nr_users);
+	PR_V1("flush: after dec, %d users\n", atomic_read(&config->nr_users));
+	return 0;
+}
+
+
+//-------------------------------------------------------------------------
+// Only at the final close of the last process fd
 
 static int bridge_release(struct inode *inode, struct file *file)
 {
 	famez_configuration_t *config = extract_config(file);
 
-	if (!atomic_dec_and_test(&config->nr_users)) {
-		pr_warn(FZ "final release() still has %d users\n",
-			atomic_read(&config->nr_users));
-		atomic_set(&config->nr_users, 0);
-	}
+	PR_V1("release: %d users\n", atomic_read(&config->nr_users));
+	atomic_set(&config->nr_users, 0);
 	return 0;
 }
 
@@ -121,12 +133,12 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 	char sender_id[8];	// sprintf(sender_id, "%03:", ....
 	size_t sender_id_len;
 
+	// FIXME: encapsulate this in famez_MSI-X, down to EOENCAPSULATION.
+	// Do the same for the resource release at label "release:"
 	if (!config->legible_slot) {		// Wait for new data?
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		PR_V2(FZ "read() waiting...\n");
-		// FIXME: encapsulate this better?  Hide the wqh and
-		// wait_event call behind a funcptr config->reader_wait()
 		wait_event_interruptible(config->legible_slot_wqh, 
 					 config->legible_slot);
 	}
@@ -136,6 +148,8 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 	}
 	PR_V2(FZSP "wait finished, %llu bytes to read\n",
 		 config->legible_slot->msglen);
+	// EOENCAPSULATION
+
 	sprintf(sender_id, "%03d:", config->legible_slot->peer_id);
 	sender_id_len = strlen(sender_id);
 	if (len < config->legible_slot->msglen + sender_id_len) {
@@ -182,11 +196,11 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		return -E2BIG;
 
 	spin_lock_bh(&config->scratch_lock);	// Multiuse of *file
-	memset(config->scratch, 0, config->max_msglen);
 	if (copy_from_user(config->scratch, buf, len)) {
 		ret = -EIO;
 		goto unlock_return;
 	}
+	config->scratch[len] = '\0';
 
 	// Split body into two strings around the first colon.
 	if (!(msgbody = strchr(config->scratch, ':'))) {
@@ -243,6 +257,7 @@ static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 static const struct file_operations bridge_fops = {
 	.owner	=	THIS_MODULE,
 	.open	=	bridge_open,
+	.flush  =	bridge_flush,
 	.release =      bridge_release,
 	.read	=       bridge_read,
 	.write	=       bridge_write,
@@ -266,7 +281,7 @@ int famez_bridge_setup(struct pci_dev *pdev)
 		return -ENOMEM;
 	}
 
-	// Name should be reminiscent of lspci output
+	// Name is meant to be reminiscent of lspci output
 	sprintf(name, "%s%02x_bridge", FAMEZ_NAME, config->pdev->devfn >> 3);
 	lookup->miscdev.name = name;
 	lookup->miscdev.fops = &bridge_fops;

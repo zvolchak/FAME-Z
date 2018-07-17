@@ -7,16 +7,17 @@
 
 //-------------------------------------------------------------------------
 
-famez_mailslot_t __iomem *famez_get_mailslot(
+STATIC famez_mailslot_t __iomem *calculate_mailslot(
 	famez_configuration_t *config,
 	unsigned slotnum)
 {
 	famez_mailslot_t __iomem *slot;
 
 	// Slot 0 is the globals data, don't play in there.  The last slot
-	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2]
+	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2].
+	// This check should never occur :-)
 	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
-		pr_err(FZ ": %u is out of range\n", slotnum);
+		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
 		return NULL;
 	}
 	slot = (void *)(
@@ -27,7 +28,7 @@ famez_mailslot_t __iomem *famez_get_mailslot(
 
 //-------------------------------------------------------------------------
 
-static irqreturn_t all_msix(int vector, void *data) {
+STATIC irqreturn_t all_msix(int vector, void *data) {
 	famez_configuration_t *config = data;
 	int slotnum;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
@@ -49,11 +50,11 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// All returns from here are IRQ_HANDLED
 
-	if (!(sender_slot = famez_get_mailslot(config, sender_id))) {
+	if (!(sender_slot = calculate_mailslot(config, sender_id))) {
 		pr_err(FZ "Could not match peer %u\n", sender_id);
 		return IRQ_HANDLED;
 	}
-	PR_V1(FZ "IRQ %d == sender %u -> \"%s\"\n",
+	PR_V2(FZ "IRQ %d == sender %u -> \"%s\"\n",
 		vector, sender_id, sender_slot->msg);
 
 	// Easy loopback test as proof of life.  Handle it all right here
