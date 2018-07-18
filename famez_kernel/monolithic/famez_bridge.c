@@ -201,17 +201,15 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 	// copy_to_user can sleep and returns the number of bytes that could NOT
 	// be copied or -ERRNO.  Require all copies to work all the way.  First
 	// emit the sender ID so the user knows from whence the message came.
-	ret = copy_to_user(buf, sender_id, sender_id_len);
-	pr_info(FZSP "CTU %lu bytes returns %d\n", sender_id_len, ret);
-	if (ret) {
-		if (ret > 0) ret= -EILSEQ;	// partial transfer
+	if ((ret = copy_to_user(buf, sender_id, sender_id_len))) {
+		if (ret > 0) ret= -EFAULT;	// partial transfer
 		goto release;
 	}
 
 	// Now the message body proper, after the colon of the previous message.
 	len = config->legible_slot->msglen;
 	ret = copy_to_user(buf + sender_id_len, config->legible_slot->msg, len);
-	ret = ret ? -EXDEV : len + sender_id_len;
+	ret = ret ? -EFAULT : len + sender_id_len;
 
 release:	// Whether I used it or not, let everything go
 	config->legible_slot->msglen = 0;	// In the slot of the remote sender

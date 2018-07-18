@@ -59,11 +59,13 @@ typedef struct {
 
 // The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
 // the lower 16 bits.  The combo must be assigned atomically.
-union __attribute__ ((packed)) ringer {
-	struct { uint16_t vector, peer; };
-	uint32_t push;
-};
 
+typedef union __attribute__ ((packed)) {
+	struct { uint16_t vector, peer; };
+	uint32_t doorbell;
+} ivshmsg_ringer_t;
+
+// The primary configuration/context data.
 typedef struct {
 	struct list_head lister;
 	atomic_t nr_users;				// User-space actors

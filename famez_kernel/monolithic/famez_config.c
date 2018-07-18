@@ -353,7 +353,7 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 {
 	size_t msglen = strlen(msg);
 	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
-	union ringer ringer;
+	ivshmsg_ringer_t ringer;
 
 	PR_V1("sendstring(\"%s\") (len %lu) to %d\n", msg, strlen(msg), peer_id);
 
@@ -378,6 +378,6 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 	memcpy(config->my_slot->msg, msg, msglen);
 	ringer.vector = config->my_id;		// from this
 	ringer.peer = peer_id;			// to this
-	config->regs->Doorbell = ringer.push;
+	config->regs->Doorbell = ringer.doorbell;
 	return msglen;
 }
