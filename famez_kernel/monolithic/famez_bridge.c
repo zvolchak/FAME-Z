@@ -90,13 +90,6 @@ static int bridge_open(struct inode *inode, struct file *file)
 	famez_configuration_t *config = extract_config(file);
 	int n, ret;
 
-	// When this is broken, the values tend to look like pointers.
-	// Do a poor man's abs().
-	if ((uint64_t)atomic_read(&config->nr_users) > 64) {
-		pr_err(FZ "Looks like extract_config() is borked\n");
-		return -ECANCELED;
-	}
-
 	// FIXME: got to come up with more 'local module' support for this.
 	// Just keep it single user for now.
 	ret = 0;
@@ -152,6 +145,7 @@ static int bridge_release(struct inode *inode, struct file *file)
 	PR_V1("release: %d users\n", n);
 	if (!n) {
 		bridge_buffers_t *buffers = config->writer_support;
+		PR_V1("releasing per-open write buffer\n");
 		kfree(buffers->wbuf);
 		kfree(buffers);
 		config->writer_support = NULL;

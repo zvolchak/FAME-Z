@@ -355,7 +355,8 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
 	ivshmsg_ringer_t ringer;
 
-	PR_V1("sendstring(\"%s\") (len %lu) to %d\n", msg, strlen(msg), peer_id);
+	PR_V1("sendstring(\"%s\") (len %lu) to %d\n", msg, msglen, peer_id);
+	pr_info(FZSP "----------> msg @ 0x%p\n", config->my_slot->msg);
 
 	if (peer_id < 1 || peer_id > config->server_id)
 		return -EBADSLT;
@@ -374,10 +375,14 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 	// Keep nodename and msg pointer; update msglen and msg contents.
 	// memset(config->my_slot->msg, 0, config->max_msglen);	# overkill
 	config->my_slot->msglen = msglen;
+
+	pr_info(FZSP "checkpoint OKAY\n");
 	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
+	pr_info(FZSP "checkpoint not reached\n");
+
 	memcpy(config->my_slot->msg, msg, msglen);
 	ringer.vector = config->my_id;		// from this
 	ringer.peer = peer_id;			// to this
-	config->regs->Doorbell = ringer.doorbell;
+	config->regs->Doorbell = ringer.Doorbell;
 	return msglen;
 }

@@ -62,7 +62,7 @@ typedef struct {
 
 typedef union __attribute__ ((packed)) {
 	struct { uint16_t vector, peer; };
-	uint32_t doorbell;
+	uint32_t Doorbell;
 } ivshmsg_ringer_t;
 
 // The primary configuration/context data.
