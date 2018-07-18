@@ -26,20 +26,20 @@ from pdb import set_trace
 class FAMEZ_MailBox(object):
 
     MAILBOX_MAX_SLOTS = 64
-    MAILBOX_SLOT_SIZE = 256         # 128 of metadata, 128 of message
+    MAILBOX_SLOTSIZE = 256          # 128 of metadata, 128 of message
 
-    GLOBALS_SLOT_SIZE_OFFSET = 0    # in the space of mailslot 0
-    GLOBALS_MESSAGE_OFFSET_OFFSET = 8
-    GLOBALS_NSLOTS_OFFSET = 16
+    GLOBALS_SLOTSIZE_off = 0     # in the space of mailslot 0
+    GLOBALS_MSG_OFFSET_off = 8
+    GLOBALS_NSLOTS_off = 16
 
-    # Metadata currently takes up 32 + 8 + 4 = 44 bytes
-    MAILSLOT_NODENAME_OFFSET = 0
-    MAILSLOT_NODENAME_SIZE = 32     # NULL padded
-    MAILSLOT_MSGLEN_OFFSET = MAILSLOT_NODENAME_SIZE         # uint64_t, so...
-    MAILSLOT_PEER_ID_OFFSET = MAILSLOT_MSGLEN_OFFSET + 8    # uint32_t, so...
-    MAILSLOT_NEXT_BLAHBLAH = MAILSLOT_PEER_ID_OFFSET + 4
-    MAILSLOT_MESSAGE_OFFSET = 128
-    MAILSLOT_MESSAGE_SIZE = 128
+    # Metadata (front of famez_mailslot_t) takes up 32 + 8 + 4 = 44 bytes
+    MAILSLOT_NODENAME_off = 0
+    MAILSLOT_NODENAME_SIZE = 32                       # NULL terminated
+    MAILSLOT_MSGLEN_off = MAILSLOT_NODENAME_SIZE      # uint64_t, so...
+    MAILSLOT_PEER_ID_off = MAILSLOT_MSGLEN_off + 8    # uint32_t, so...
+    MAILSLOT_NEXT_off = MAILSLOT_PEER_ID_off + 4
+    MAILSLOT_MSG_off = 128
+    MAILSLOT_MAX_MSGLEN = 128
 
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
@@ -50,25 +50,25 @@ class FAMEZ_MailBox(object):
         self.mm = mmap.mmap(self.fd, 0)
 
         # Empty it.  Simple code that's never too demanding on size
-        data = b'\0' * (self.nSlots * self.MAILBOX_SLOT_SIZE)
+        data = b'\0' * (self.nSlots * self.MAILBOX_SLOTSIZE)
         self.mm[0:len(data)] = data
 
         # Fill in the globals.  Must match the C struct in famez.ko.
         data = struct.pack('QQQ',
-            self.MAILBOX_SLOT_SIZE,self. MAILSLOT_MESSAGE_OFFSET, self.nSlots)
+            self.MAILBOX_SLOTSIZE, self.MAILSLOT_MSG_off, self.nSlots)
         self.mm[0:len(data)] = data
 
         # Set the peer_id for each slot as a C integer.  While python client
         # can discern a sender, the famez.ko driver needs it "inband".
 
         for slot in range(1, 8):
-            index = slot * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_PEER_ID_OFFSET
+            index = slot * self.MAILBOX_SLOTSIZE + self.MAILSLOT_PEER_ID_off
             packed_peer = struct.pack('i', slot)   # uint32_t
             self.mm[index:index + 4] = packed_peer
 
         # My "hostname", zero-padded
         data = self.nodename.encode()
-        index = (self.nSlots - 1) * self.MAILBOX_SLOT_SIZE
+        index = (self.nSlots - 1) * self.MAILBOX_SLOTSIZE
         self.mm[index:index + len(data)] = data
 
     #----------------------------------------------------------------------
@@ -78,8 +78,8 @@ class FAMEZ_MailBox(object):
         '''Server: Starts with string and slot count from command line.
            Client: starts with an fd and id.'''
 
-        assert (self.MAILSLOT_MESSAGE_OFFSET + self.MAILSLOT_MESSAGE_SIZE
-            == self.MAILBOX_SLOT_SIZE), 'Fix this NOW'
+        assert (self.MAILSLOT_MSG_off + self.MAILSLOT_MAX_MSGLEN
+            == self.MAILBOX_SLOTSIZE), 'Fix this NOW'
 
         if isinstance(pathORfd, int):
             assert client_id > 0 and nodename is not None, 'Bad call, ump!'
@@ -96,7 +96,7 @@ class FAMEZ_MailBox(object):
         assert 4 <= nSlots <= self.MAILBOX_MAX_SLOTS, 'Bad nSlots'
 
         # Go for the max to simple libvirt domain XML
-        size = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOT_SIZE
+        size = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
         gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
         for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
             try:
@@ -145,17 +145,17 @@ class FAMEZ_MailBox(object):
         '''Return the nodename and message.'''
         assert 1 <= slotnum <= self.server_id, \
             'Slotnum is out of domain 1 - %d' % (self.server_id)
-        index = slotnum * self.MAILBOX_SLOT_SIZE     # start of nodename
+        index = slotnum * self.MAILBOX_SLOTSIZE     # start of nodename
         nodename, msglen = struct.unpack('32sQ', self.mm[index:index + 40])
         nodename = nodename.split(b'\0', 1)[0].decode()
-        index += self.MAILSLOT_MESSAGE_OFFSET
+        index += self.MAILSLOT_MSG_off
         fmt = '%ds' % msglen
         msg = struct.unpack(fmt, self.mm[index:index + msglen])
 
         # The message is copied so mark the mailslot length zero as permission
         # for the requester to send another message (not necessarily to me).
 
-        index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MSGLEN_OFFSET
+        index = slotnum * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
         self.mm[index:index + 8] = struct.pack('Q', 0)
 
         # Clean up the message copyout, which is a single element tuple
@@ -174,18 +174,18 @@ class FAMEZ_MailBox(object):
             msg = msg.encode()
         assert isinstance(msg, bytes), 'msg must be string or bytes'
         msglen = len(msg)   # It's bytes now
-        assert msglen < self.MAILSLOT_MESSAGE_SIZE, 'Message too long'
+        assert msglen < self.MAILSLOT_MAX_MSGLEN, 'Message too long'
 
         # The previous responder needs to clear the msglen to indicate it
         # has pulled the message out of the sender's mailbox.
-        index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MSGLEN_OFFSET
+        index = slotnum * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
         stop = NOW() + 1.2
         while NOW() < stop and struct.unpack('Q', self.mm[index:index+8])[0]:
             print('psuedo-HW not ready to send')
             SLEEP(0.1)
 
         self.mm[index:index + 8] = struct.pack('Q', msglen)
-        index = slotnum * self.MAILBOX_SLOT_SIZE + self.MAILSLOT_MESSAGE_OFFSET
+        index = slotnum * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSG_off
         self.mm[index:index + msglen] = msg
         self.mm[index + msglen] = 0	# The kernel will appreciate this :-)
 
@@ -197,7 +197,7 @@ class FAMEZ_MailBox(object):
     def clear_my_mailslot(self, nodenamebytes=None, override_id=None):
         id = override_id if override_id else self.my_id
         assert 1 <= id <= self.server_id, 'slot is bad: %d' % id
-        index = id * self.MAILBOX_SLOT_SIZE
+        index = id * self.MAILBOX_SLOTSIZE
         zeros = b'\0' * self.MAILSLOT_NODENAME_SIZE
         self.mm[index:index + len(zeros)] = zeros
         if nodenamebytes:
@@ -214,7 +214,7 @@ class FAMEZ_MailBox(object):
         self.mm = mmap.mmap(self.fd, 0)
         self.nSlots = struct.unpack(
             'Q',
-            self.mm[self.GLOBALS_NSLOTS_OFFSET:self.GLOBALS_NSLOTS_OFFSET + 8]
+            self.mm[self.GLOBALS_NSLOTS_OFFSET:self.GLOBALS_NSLOTS_off + 8]
         )[0]
         assert 4 <= self.nSlots <= 64, 'nSlots is bad: %d' % self.nSlots
         self.server_id = self.nSlots - 1

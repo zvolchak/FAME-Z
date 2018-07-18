@@ -57,6 +57,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     logmsg = None
     logerr = None
     peer_list = []     # Map peer IDs to list of eventfds
+    recycled = {}
     my_id = None
 
     # Non-standard addition to IVSHMEM server role: this server can be
@@ -93,7 +94,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         return self.mailbox.nodename
 
     def logPrefix(self):    # This override works after instantiation
-        return 'ProtocolIVSHMSG'
+        return 'ProtoIVSHMSG'
 
     def dataReceived(self, data):
         ''' TNSH :-) '''
@@ -104,9 +105,15 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # If errors occur early enough, send a bad revision to the client so it
     # terminates the connection.
     def connectionMade(peer):
+        recycled = peer.recycled.get(peer.id, None)
+        if recycled:
+            del peer.recycled[recycled.id]
         if peer.args.verbose:
-            peer.logmsg('new socket %d == peer id %d' %
-                (peer.transport.fileno(), peer.id))
+            peer.logmsg('new socket %d == peer id %d %s' %
+                (peer.transport.fileno(), peer.id,
+                 'recycled' if recycled else ''
+                )
+             )
         if peer.id == -1:
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
@@ -115,12 +122,15 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         # Server line 175: create specified number of eventfds.  These are
         # shared with all other clients who use them to signal each other.
-        try:
-            peer.vectors = ivshmem_event_notifier_list(peer.args.nSlots)
-        except Exception as e:
-            peer.logerr('Event notifiers failed: %s' % str(e))
-            peer.send_initial_info(False)
-            return
+        if recycled:
+            peer.vectors = recycled.vectors
+        else:
+            try:
+                peer.vectors = ivshmem_event_notifier_list(peer.args.nSlots)
+            except Exception as e:
+                peer.logerr('Event notifiers failed: %s' % str(e))
+                peer.send_initial_info(False)
+                return
 
         # Server line 183: send version, peer id, shm fd
         peer.send_initial_info()
@@ -128,12 +138,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Server line 189: advertise the new peer to others.  Note that
         # this new peer has not yet been added to the list; this loop is
         # NOT traversed for the first peer to connect.
-        for other_peer in server_peer_list:
-            for peer_vector in peer.vectors:
-                ivshmem_send_one_msg(
-                    other_peer.transport.socket,
-                    peer.id,
-                    peer_vector.wfd)
+        if not recycled:
+            for other_peer in server_peer_list:
+                for peer_vector in peer.vectors:
+                    ivshmem_send_one_msg(
+                        other_peer.transport.socket,
+                        peer.id,
+                        peer_vector.wfd)
 
         # Server line 197: advertise the other peers to the new one.
         for other_peer in server_peer_list:
@@ -175,9 +186,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             txt = 'Clean'
             logit = self.logmsg
         logit('%s disconnect from peer id %d' % (txt, self.id))
+        if self in self.peer_list:     # Only if everything was completed
+            self.peer_list.remove(self)
+        if self.args.recycle:
+            self.recycled[self.id] = self
+            return
+
         try:
-            if self in self.peer_list:     # Only if everything was done
-                self.peer_list.remove(self)
             for other_peer in self.peer_list:
                 ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
@@ -250,6 +265,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         'logfile':      '/tmp/ivshmem_log',
         'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
         'nSlots':       4,
+        'recycle':      False,      # Try to preserve other QEMUs
         'silent':       False,      # Does participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
         'verbose':      0,

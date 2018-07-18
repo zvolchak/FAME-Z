@@ -270,8 +270,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
-        print('%10s (%2d) -> "%s" (len %d)' % (
-            nodename, vectorobj.num, msg, len(msg)))
+        try:
+            print('%10s (%2d) -> "%s" (len %d)' % (
+                nodename, vectorobj.num, msg, len(msg)))
+        except Exception as e:      # VM can overrun this
+            pass
         if msg == 'ping':
             try:
                 selph.place_and_go(vectorobj.num, 'pong(%2d)' % selph.my_id)

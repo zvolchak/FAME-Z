@@ -49,7 +49,7 @@ typedef struct {
 	char *info;
 } famez_BARtab_t;
 
-typedef struct {
+typedef struct __attribute__ ((packed)) {
 	char nodename[32];		// of the owning client
 	uint64_t msglen;
 	uint32_t peer_id;		// Convenience; set by server

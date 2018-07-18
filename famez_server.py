@@ -45,6 +45,11 @@ def parse_cmdline(cmdline_args):
         help='Number of actor slots; max peer count is two fewer',
         default=4
     )
+    parser.add_argument('--recycle', '-r',
+        help='On client death do not advise peers; reuse eventfds on respawn',
+        action='store_true',
+        default=False
+    )
     parser.add_argument('--silent', '-s',
         help='Do NOT participate in EventFDs/mailbox as another peer',
         action='store_true',
