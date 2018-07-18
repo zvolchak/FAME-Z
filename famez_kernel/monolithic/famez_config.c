@@ -110,8 +110,9 @@ STATIC void destroy_config(famez_configuration_t *config)
 
 	if (config->msix_entries) kfree(config->msix_entries);
 	config->msix_entries = NULL;
-	if (config->scratch) kfree(config->scratch);
-	config->scratch = NULL;
+	// Probably memory leakage if this ever executes.
+	if (config->writer_support) kfree(config->writer_support);
+	config->writer_support = NULL;
 
 	kfree(config);
 }
@@ -131,9 +132,8 @@ STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
 	config->pdev = pdev;			// Reverse pointers never hurt.
 
 	// Simple fields.
-	spin_lock_init(&(config->legible_slot_lock));
-	spin_lock_init(&(config->scratch_lock));
 	init_waitqueue_head(&(config->legible_slot_wqh));
+	FAMEZ_LOCK_INIT(&(config->legible_slot_lock));
 
 	// Real work.
 	if ((ret = mapBARs(pdev)))
@@ -149,10 +149,6 @@ STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
 
 	// All the needed parameters are set to finish this off.
 	ret = -ENOMEM;
-	if (!(config->scratch = kmalloc(config->max_msglen, GFP_KERNEL))) {
-		pr_err(FZ "Can't create scratch buffer\n");
-		goto err_kfree;
-	}
 	if (!(config->msix_entries = kzalloc(
 		config->globals->nSlots * sizeof(struct msix_entry), GFP_KERNEL))) {
 		pr_err(FZ "Can't create MSI-X entries table\n");
@@ -351,7 +347,7 @@ module_exit(famez_exit);
 //-------------------------------------------------------------------------
 // Assume a legal C string is passed in message.
 // Return positive (bytecount) on success, negative on error, never 0.
-// Has a spinlock-safe sleep.
+// I don't really believe usleep_range is atomic-safe but I'm on mutices now.
 
 int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 {
@@ -371,7 +367,7 @@ int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
 	// Pseudo-HW ready: wait until my_slot has pushed a previous write
 	// through. In truth it's the previous responder clearing my msglen.
 	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
-		usleep_range(50000, 80000);
+		 usleep_range(50000, 80000);
 	if (config->my_slot->msglen)
 		pr_warn(FZ "%s() stomps previous message\n", __FUNCTION__);
 

@@ -4,6 +4,9 @@
 #define FAMEZ_DOT_H
 
 #include <linux/list.h>
+#include <linux/mutex.h>
+
+#define FAMEZ_DEBUG			// See "Debug assistance" below
 
 #define FAMEZ_NAME	"famez"
 #define FZ		"famez: "	// pr_xxxx header
@@ -11,7 +14,11 @@
 
 #define FAMEZ_VERSION	FAMEZ_NAME " v0.7.5: endgame chardev"
 
-#define FAMEZ_DEBUG			// See "Debug assistance" below
+// Used from user context, sleeping is allowed
+#define FAMEZ_LOCK_STRUCT	struct mutex
+#define FAMEZ_LOCK_INIT(LLL)	mutex_init(LLL)
+#define FAMEZ_LOCK(LLL)		mutex_lock_interruptible(LLL)
+#define FAMEZ_UNLOCK(LLL)	mutex_unlock(LLL)
 
 typedef struct {			// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
@@ -70,18 +77,18 @@ typedef struct {
 	struct msix_entry *msix_entries;		// pci.h: kzalloc array
 
 	// Per-config handshaking between doorbell/mail delivery and a
-	// driver write.  The target address is parsed out first.
-	char *scratch;					// kmalloc(max_msglen)
-	spinlock_t scratch_lock;
-
-	// Per-config handshaking between doorbell/mail delivery and a
 	// driver read().  Doorbell comes in and sets the pointer then
 	// issues a wakeup.  read() follows the pointer then sets it
-	// to NULL for next one.
+	// to NULL for next one.  Since reading is more of a one-to-many
+	// relationship this module can hold the one.
 
 	famez_mailslot_t *legible_slot;
-	spinlock_t legible_slot_lock;
 	struct wait_queue_head legible_slot_wqh;
+	FAMEZ_LOCK_STRUCT legible_slot_lock;
+
+	// Writing is many to one, so support buffers etc are the
+	// responsibility of that module.
+	void *writer_support;
 
 } famez_configuration_t;
 

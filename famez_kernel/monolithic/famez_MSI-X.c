@@ -58,21 +58,18 @@ STATIC irqreturn_t all_msix(int vector, void *data) {
 		vector, sender_id, sender_slot->msg);
 
 	// Easy loopback test as proof of life.  Handle it all right here
-	// right now, don't let normal kernel code or user ever see it.
-	if STREQ_N(sender_slot->msg, "ping", 4) {
-		char pong[16];
-
-		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
-		famez_sendstring(sender_id, pong, config);
-	} else {
+	// right now, don't let driver layers even see it.
+	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4))
+		famez_sendstring(sender_id, "pong", config);
+	else {
+		int bad_lock = FAMEZ_LOCK(&(config->legible_slot_lock));
 		if (config->legible_slot)
-			pr_warn(FZ "stomping on legible slot\n");
-		spin_lock(&(config->legible_slot_lock));
+			pr_warn(FZ "stomping legible slot\n");
 		config->legible_slot = sender_slot;
-		spin_unlock(&(config->legible_slot_lock));
-
-		// FIXME: better abstraction and encapsulation
-		wake_up_all(&(config->legible_slot_wqh));
+		// On wakeup, it's gonna grab the lock first so...
+		if (!bad_lock)
+			FAMEZ_UNLOCK(&(config->legible_slot_lock));
+		wake_up(&(config->legible_slot_wqh));
 	}
 	return IRQ_HANDLED;
 }

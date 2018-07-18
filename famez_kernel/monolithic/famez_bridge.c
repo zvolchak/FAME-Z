@@ -50,8 +50,11 @@
 
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
+// Just write support for now.
 typedef struct {
-} bridge_data_t;
+	char *wbuf;					// kmalloc(max_msglen)
+	FAMEZ_LOCK_STRUCT wbuf_lock;
+} bridge_buffers_t;
 
 //-------------------------------------------------------------------------
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
@@ -85,6 +88,7 @@ static inline famez_configuration_t *extract_config(struct file *file)
 static int bridge_open(struct inode *inode, struct file *file)
 {
 	famez_configuration_t *config = extract_config(file);
+	int n, ret;
 
 	// When this is broken, the values tend to look like pointers.
 	// Do a poor man's abs().
@@ -92,10 +96,36 @@ static int bridge_open(struct inode *inode, struct file *file)
 		pr_err(FZ "Looks like extract_config() is borked\n");
 		return -ECANCELED;
 	}
-	atomic_inc(&config->nr_users);
-	PR_V1("open: after inc, %d users\n", atomic_read(&config->nr_users));
 
-	return 0;
+	// FIXME: got to come up with more 'local module' support for this.
+	// Just keep it single user for now.
+	ret = 0;
+	if ((n = atomic_add_return(1, &config->nr_users) == 1)) {
+		bridge_buffers_t *buffers;
+
+		if (!(buffers = kzalloc(sizeof(bridge_buffers_t), GFP_KERNEL))) {
+			ret = -ENOMEM;
+			goto alldone;
+		}
+		if (!(buffers->wbuf = kzalloc(config->max_msglen, GFP_KERNEL))) {
+			kfree(buffers);
+			ret = -ENOMEM;
+			goto alldone;
+		}
+		FAMEZ_LOCK_INIT(&(buffers->wbuf_lock));
+		config->writer_support = buffers;
+	} else {
+		pr_warn("Sorry, just exclusive open() for now\n");
+		ret = -EBUSY;
+		goto alldone;
+	}
+
+	PR_V1("open: %d users\n", atomic_read(&config->nr_users));
+
+alldone:
+	if (ret) 
+		atomic_dec(&config->nr_users);
+	return ret;
 }
 
 //-------------------------------------------------------------------------
@@ -110,16 +140,23 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 	return 0;
 }
 
-
 //-------------------------------------------------------------------------
 // Only at the final close of the last process fd
 
 static int bridge_release(struct inode *inode, struct file *file)
 {
 	famez_configuration_t *config = extract_config(file);
+	int n;
 
-	PR_V1("release: %d users\n", atomic_read(&config->nr_users));
-	atomic_set(&config->nr_users, 0);
+	n = atomic_read(&config->nr_users);
+	PR_V1("release: %d users\n", n);
+	if (!n) {
+		bridge_buffers_t *buffers = config->writer_support;
+		kfree(buffers->wbuf);
+		kfree(buffers);
+		config->writer_support = NULL;
+	} else if (n < 0)	// dup, fifo, shell redirection etc
+		atomic_set(&config->nr_users, 0);
 	return 0;
 }
 
@@ -135,20 +172,24 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 
 	// FIXME: encapsulate this in famez_MSI-X, down to EOENCAPSULATION.
 	// Do the same for the resource release at label "release:"
-	if (!config->legible_slot) {		// Wait for new data?
+	if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
+		return ret;
+	while (!config->legible_slot) {		// Wait for new data?
+		FAMEZ_UNLOCK(&config->legible_slot_lock);
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		PR_V2(FZ "read() waiting...\n");
-		wait_event_interruptible(config->legible_slot_wqh, 
-					 config->legible_slot);
+		if (wait_event_interruptible(config->legible_slot_wqh, 
+					     config->legible_slot))
+			return -ERESTARTSYS;
+		if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
+			return ret;
 	}
-	if (!config->legible_slot) {
-		pr_err(FZ "legible slot is not ready\n");
-		return -EBADE;
-	}
+	FAMEZ_UNLOCK(&config->legible_slot_lock);
+	// EOENCAPSULATION
+
 	PR_V2(FZSP "wait finished, %llu bytes to read\n",
 		 config->legible_slot->msglen);
-	// EOENCAPSULATION
 
 	sprintf(sender_id, "%03d:", config->legible_slot->peer_id);
 	sender_id_len = strlen(sender_id);
@@ -161,21 +202,20 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 	// be copied or -ERRNO.  Require all copies to work all the way.  First
 	// emit the sender ID so the user knows from whence the message came.
 	ret = copy_to_user(buf, sender_id, sender_id_len);
+	pr_info(FZSP "CTU %lu bytes returns %d\n", sender_id_len, ret);
 	if (ret) {
-		if (ret > 0) ret= -EIO;		// partial transfer
+		if (ret > 0) ret= -EILSEQ;	// partial transfer
 		goto release;
 	}
 
 	// Now the message body proper, after the colon of the previous message.
 	len = config->legible_slot->msglen;
 	ret = copy_to_user(buf + sender_id_len, config->legible_slot->msg, len);
-	ret = ret ? -EIO : len + sender_id_len;
+	ret = ret ? -EXDEV : len + sender_id_len;
 
 release:	// Whether I used it or not, let everything go
-	spin_lock(&config->legible_slot_lock);
 	config->legible_slot->msglen = 0;	// In the slot of the remote sender
 	config->legible_slot = NULL;		// Seen by local MSIX handler
-	spin_unlock(&config->legible_slot_lock);
 	return ret;
 }
 
@@ -185,32 +225,34 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 			   size_t len, loff_t *ppos)
 {
 	famez_configuration_t *config = extract_config(file);
+	bridge_buffers_t *buffers = config->writer_support;
 	ssize_t spooflen = len;
 	char *msgbody;
 	int ret;
 	uint16_t peer_id;
 
 	// Use many idiot checks.  Performance is not the issue here.
-	// It could be raw data with nulls at some point...
+	// FIXME It could be raw data with nulls at some point...
 	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
 		return -E2BIG;
 
-	spin_lock_bh(&config->scratch_lock);	// Multiuse of *file
-	if (copy_from_user(config->scratch, buf, len)) {
+	if ((ret = FAMEZ_LOCK(&buffers->wbuf_lock)))	// Multiuse of *file
+		goto unlock_return;
+	if (copy_from_user(buffers->wbuf, buf, len)) {
 		ret = -EIO;
 		goto unlock_return;
 	}
-	config->scratch[len] = '\0';
+	buffers->wbuf[len] = '\0';
 
 	// Split body into two strings around the first colon.
-	if (!(msgbody = strchr(config->scratch, ':'))) {
-		pr_err(FZ "I see no colon in \"%s\"\n", config->scratch);
+	if (!(msgbody = strchr(buffers->wbuf, ':'))) {
+		pr_err(FZ "I see no colon in \"%s\"\n", buffers->wbuf);
 		ret = -EBADMSG;
 		goto unlock_return;
 	}
 	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
-	len -= (uint64_t)msgbody - (uint64_t)config->scratch;
+	len -= (uint64_t)msgbody - (uint64_t)buffers->wbuf;
 
 	// FIXME: assumes ASCII data, not binary which may have embedded NULs
 	if (!(len = strlen(msgbody))) {
@@ -218,10 +260,10 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		ret = spooflen;	// spoof success to caller
 		goto unlock_return;
 	}
-	if (STREQ(config->scratch, "server"))
+	if (STREQ(buffers->wbuf, "server"))
 		peer_id = config->server_id;
 	else {
-		if ((ret = kstrtou16(config->scratch, 10, &peer_id)))
+		if ((ret = kstrtou16(buffers->wbuf, 10, &peer_id)))
 			goto unlock_return;	// -ERANGE, usually
 	}
 
@@ -234,7 +276,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		ret = spooflen;
 
 unlock_return:
-	spin_unlock_bh(&config->scratch_lock);
+	FAMEZ_UNLOCK(&buffers->wbuf_lock);
 	return ret;
 }
 
