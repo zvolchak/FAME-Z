@@ -101,13 +101,14 @@ typedef struct {
 
 extern int famez_verbose;				// insmod parameter
 
-int famez_sendstring(uint32_t , char *, famez_configuration_t *);
-
 //-------------------------------------------------------------------------
-// famez_MSI-X.c - handle interrupts from other FAME-Z peers
+// famez_MSI-X.c - handle interrupts from other FAME-Z peers (input)
+// and sendstring (output).
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
+
+int famez_sendstring(uint32_t , char *, famez_configuration_t *);
 
 //-------------------------------------------------------------------------
 // famez_bridge.c - a device file with simple Gen-Z bridge capabilities.

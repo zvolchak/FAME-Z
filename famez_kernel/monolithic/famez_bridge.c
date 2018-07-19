@@ -185,7 +185,7 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 	PR_V2(FZSP "wait finished, %llu bytes to read\n",
 		 config->legible_slot->msglen);
 
-	sprintf(sender_id, "%03d:", config->legible_slot->peer_id);
+	sprintf(sender_id, "%03llu:", config->legible_slot->peer_id);
 	sender_id_len = strlen(sender_id);
 	if (len < config->legible_slot->msglen + sender_id_len) {
 		ret = -E2BIG;

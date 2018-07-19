@@ -1,10 +1,57 @@
-// Configure and handle MSI-X interrupts from IVSHMEM device.
+// Configure and handle MSI-X interrupts from IVSHMEM device.  The sendstring
+// method is also here, which keeps all "hardware IO" in one place.
 
-#include <linux/interrupt.h>
-#include <linux/pci.h>
+#include <linux/delay.h>	// usleep_range, wait_event*
+#include <linux/jiffies.h>	// jiffies
+#include <linux/interrupt.h>	// irq_enable, etc
+#include <linux/pci.h>		// all kinds
 
 #include "famez.h"
 
+//-------------------------------------------------------------------------
+// Assume a legal C string is passed in message.  Return positive (bytecount)
+// on success, negative on error, never 0.  I don't really believe 
+// usleep_range is atomic-safe but I'm on mutices now.
+
+int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
+{
+	size_t msglen = strlen(msg);
+	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
+	ivshmsg_ringer_t ringer;
+	char *zap;
+
+	PR_V1("sendstring(\"%s\") (len %lu) to %d\n", msg, msglen, peer_id);
+	pr_info(FZSP "----------> msg @ 0x%p\n", config->my_slot->msg);
+
+	if (peer_id < 1 || peer_id > config->server_id)
+		return -EBADSLT;
+	if (msglen >= config->max_msglen)
+		return -E2BIG;
+	if (!msglen)
+		return -ENODATA; // FIXME: is there value to a "silent kick"?
+
+	// Pseudo-HW ready: wait until my_slot has pushed a previous write
+	// through. In truth it's the previous responder clearing my msglen.
+	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
+		 usleep_range(50000, 80000);
+	if (config->my_slot->msglen)
+		pr_warn(FZ "%s() stomps previous message\n", __FUNCTION__);
+
+	// Keep nodename and msg pointer; update msglen and msg contents.
+	// memset(config->my_slot->msg, 0, config->max_msglen);	# overkill
+	config->my_slot->msglen = msglen;
+
+	zap = &config->my_slot->msg[msglen];
+	pr_info(FZSP "NUL term @ 0x%p\n", zap);
+	*zap = '\0';	// ASCII strings paranoia
+	pr_info(FZSP "checkpoint not reached\n");
+
+	memcpy(config->my_slot->msg, msg, msglen);
+	ringer.vector = config->my_id;		// from this
+	ringer.peer = peer_id;			// to this
+	config->regs->Doorbell = ringer.Doorbell;
+	return msglen;
+}
 //-------------------------------------------------------------------------
 
 STATIC famez_mailslot_t __iomem *calculate_mailslot(
@@ -22,7 +69,6 @@ STATIC famez_mailslot_t __iomem *calculate_mailslot(
 	}
 	slot = (void *)(
 		(uint64_t)config->globals + slotnum * config->globals->slotsize);
-	slot->msg = (void *)((uint64_t)slot + config->globals->msg_offset);
 	return slot;
 }
 
@@ -38,15 +84,14 @@ STATIC irqreturn_t all_msix(int vector, void *data) {
 	// Turns out i and msix_entries[i].entry are identical in famez.
 	// FIXME: preload a lookup table if I ever care about speed.
 	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
-		if (vector == config->msix_entries[slotnum].vector) {
-			sender_id = config->msix_entries[slotnum].entry;
+		if (vector == config->msix_entries[slotnum].vector)
 			break;
-		}
 	}
 	if (slotnum >= config->globals->nSlots) {
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
+	sender_id = config->msix_entries[slotnum].entry;
 
 	// All returns from here are IRQ_HANDLED
 
@@ -54,8 +99,10 @@ STATIC irqreturn_t all_msix(int vector, void *data) {
 		pr_err(FZ "Could not match peer %u\n", sender_id);
 		return IRQ_HANDLED;
 	}
-	PR_V2(FZ "IRQ %d == sender %u -> \"%s\"\n",
+	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
 		vector, sender_id, sender_slot->msg);
+
+	sender_slot->peer_id = sender_id;	// FIXME WHY IS THIS NEEDED?
 
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
