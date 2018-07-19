@@ -46,7 +46,7 @@ static DEFINE_SPINLOCK(famez_active_lock);
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
 // the proscribed calls do the start/end/length math so use them.
 
-STATIC void unmapBARs(struct pci_dev *pdev)
+static void unmapBARs(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
 
@@ -57,7 +57,7 @@ STATIC void unmapBARs(struct pci_dev *pdev)
 	pci_release_regions(pdev);
 }
 
-STATIC int mapBARs(struct pci_dev *pdev)
+static int mapBARs(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int ret;
@@ -90,7 +90,7 @@ err_unmap:
 // Set up more globals and mailbox references to realize dynamic padding.
 
 
-STATIC void destroy_config(famez_configuration_t *config)
+static void destroy_config(famez_configuration_t *config)
 {
 	struct pci_dev *pdev;
 
@@ -115,7 +115,7 @@ STATIC void destroy_config(famez_configuration_t *config)
 	kfree(config);
 }
 
-STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
+static famez_configuration_t *create_config(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = NULL;
 	int ret;
@@ -194,7 +194,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	int ret = -ENOTTY;
 	char imalive[80];
 
-	pr_info(FZ "probe(%s)\n", CARDLOC(pdev));
+	PR_V1("probe(%s)\n", CARDLOC(pdev));
 
 	// Has this device been configured already?
 
@@ -213,11 +213,11 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
-		PR_V1("IVSHMEM @ %s is not my circus\n", CARDLOC(pdev));
+		PR_V1("IVSHMEM @ %s is missing IVSHMSG features\n", CARDLOC(pdev));
 		ret = -ENODEV;
 		goto err_pci_disable_device;
 	}
-	PR_V1("IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
+	pr_info(FZ "IVSHMEM @ %s has IVSHMSG features\n", CARDLOC(pdev));
 
 	if (IS_ERR_VALUE((config = create_config(pdev)))) {
 		ret = PTR_ERR(config);
@@ -322,13 +322,11 @@ int __init famez_init(void)
 {
 	int ret;
 
-	pr_info("-----------------------------------------------------------");
-	pr_info(FZ FAMEZ_VERSION "; parms:\n");
-	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
+	PR_V1("-----------------------------------------------------------");
+	PR_V1(FZ FAMEZ_VERSION "; parms:\n");
+	PR_V1(FZSP "famez_verbose = %d\n", famez_verbose);
 
-	if (!(ret = pci_register_driver(&famez_pci_driver)))
-        	pr_warn(FZ "pci_register_driver() successful\n");
-	else
+	if ((ret = pci_register_driver(&famez_pci_driver)))
 		pr_err(FZ "pci_register_driver() = %d\n", ret);
 
 	return ret;

@@ -145,21 +145,4 @@ void famez_bridge_teardown(struct pci_dev *);
 
 #define PR_SLEEPMS(_txt, _ms) { pr_info(FZ " " _txt); msleep(_ms); }
 
-//-------------------------------------------------------------------------
-// During callgraph generation, "flipping" these values will create a
-// more detailed map.  Otherwise use normal/idiot-proofing/performant values.
-
-#define CALLGRAPH
-
-#ifdef CALLGRAPH
-#define STATIC		
-#define NOINLINE	noinline
-#else
-#define STATIC		static
-#define NOINLINE
-#endif
-
-// #define spin_lock(AAA)
-// #define spin_unlock(AAA)
-
 #endif

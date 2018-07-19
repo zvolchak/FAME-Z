@@ -47,16 +47,12 @@
 #include <asm-generic/bug.h>	// yes after the others
 
 #include "famez.h"
+#include "famez_bridge.h"
+
+static int fzbridge_verbose = 2;
 
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
-// Just write support for now.
-typedef struct {
-	char *wbuf;					// kmalloc(max_msglen)
-	FAMEZ_LOCK_STRUCT wbuf_lock;
-} bridge_buffers_t;
-
-//-------------------------------------------------------------------------
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
 // A lookup table to take advantage of misc_register putting its argument
 // into file->private at open().  Fill in the blanks for each config and go.
@@ -108,7 +104,7 @@ static int bridge_open(struct inode *inode, struct file *file)
 		FAMEZ_LOCK_INIT(&(buffers->wbuf_lock));
 		config->writer_support = buffers;
 	} else {
-		pr_warn("Sorry, just exclusive open() for now\n");
+		pr_warn(FZBRSP "Sorry, just exclusive open() for now\n");
 		ret = -EBUSY;
 		goto alldone;
 	}
@@ -127,9 +123,20 @@ alldone:
 static int bridge_flush(struct file *file, fl_owner_t id)
 {
 	famez_configuration_t *config = extract_config(file);
+	int nr_users, f_count;
 
-	atomic_dec_and_test(&config->nr_users);
-	PR_V1("flush: after dec, %d users\n", atomic_read(&config->nr_users));
+	spin_lock(&file->f_lock);
+	nr_users = atomic_read(&config->nr_users);
+	f_count = atomic_long_read(&file->f_count);
+	spin_unlock(&file->f_lock);
+	if (f_count == 1) {
+		atomic_dec(&config->nr_users);
+		nr_users--;
+	}
+
+	PR_V1("flush: after (optional) dec: %d users, file count = %d\n",
+		nr_users, f_count);
+	
 	return 0;
 }
 
@@ -139,18 +146,18 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 static int bridge_release(struct inode *inode, struct file *file)
 {
 	famez_configuration_t *config = extract_config(file);
-	int n;
+	bridge_buffers_t *buffers = config->writer_support;
+	int nr_users, f_count;
 
-	n = atomic_read(&config->nr_users);
-	PR_V1("release: %d users\n", n);
-	if (!n) {
-		bridge_buffers_t *buffers = config->writer_support;
-		PR_V1("releasing per-open write buffer\n");
-		kfree(buffers->wbuf);
-		kfree(buffers);
-		config->writer_support = NULL;
-	} else if (n < 0)	// dup, fifo, shell redirection etc
-		atomic_set(&config->nr_users, 0);
+	spin_lock(&file->f_lock);
+	nr_users = atomic_read(&config->nr_users);
+	f_count = atomic_long_read(&file->f_count);
+	spin_unlock(&file->f_lock);
+	PR_V1("release: %d users, file count = %d\n", nr_users, f_count);
+	BUG_ON(nr_users);
+	kfree(buffers->wbuf);
+	kfree(buffers);
+	config->writer_support = NULL;
 	return 0;
 }
 
@@ -160,25 +167,25 @@ static int bridge_release(struct inode *inode, struct file *file)
 // success returns >=0 number of bytes ready with lock held.
 // Intermix locking with that in msix_all().
 
-ssize_t famez_await_legible_slot(struct file *file,
-				 famez_configuration_t *config)
+famez_mailslot_t *famez_await_legible_slot(struct file *file,
+					   famez_configuration_t *config)
 {
 	int ret;
 
 	if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
-		return ret;
+		return ERR_PTR(ret);
 	while (!config->legible_slot) {		// Wait for new data?
 		FAMEZ_UNLOCK(&config->legible_slot_lock);
 		if (file->f_flags & O_NONBLOCK)
-			return -EAGAIN;
+			return ERR_PTR(-EAGAIN);
 		PR_V2(FZ "read() waiting...\n");
 		if (wait_event_interruptible(config->legible_slot_wqh, 
 					     config->legible_slot))
-			return -ERESTARTSYS;
+			return ERR_PTR(-ERESTARTSYS);
 		if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
-			return ret;
+			return ERR_PTR(ret);
 	}
-	return config->legible_slot->msglen;
+	return config->legible_slot;
 }
 
 void famez_release_legible_slot(famez_configuration_t *config)
@@ -201,30 +208,32 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
 {
 	famez_configuration_t *config = extract_config(file);
-	ssize_t inlen;
+	famez_mailslot_t *legible_slot;
 	char sender_id_str[8];
 	int ret;
 
-	if ((inlen = famez_await_legible_slot(file, config)) < 0)
-		return inlen;
-	PR_V2(FZSP "wait finished, %ld bytes to read\n", inlen);
-	if (buflen < inlen + SENDER_ID_LEN) {
+	legible_slot = famez_await_legible_slot(file, config);
+	if (IS_ERR(legible_slot))
+		return PTR_ERR(legible_slot);
+	PR_V2(FZSP "wait finished, %llu bytes to read\n", legible_slot->msglen);
+	if (buflen < legible_slot->msglen + SENDER_ID_LEN) {
 		ret = -E2BIG;
-		goto release;
+		goto read_complete;
 	}
 
 	// First emit the sender ID.
 	sprintf(sender_id_str, SENDER_ID_FMT, config->legible_slot->peer_id);
 	if ((ret = copy_to_user(buf, sender_id_str, SENDER_ID_LEN))) {
 		if (ret > 0) ret= -EFAULT;	// partial transfer
-		goto release;
+		goto read_complete;
 	}
 
 	// Now the message body proper, after the colon of the previous message.
-	ret = copy_to_user(buf + SENDER_ID_LEN, config->legible_slot->msg, inlen);
-	ret = ret ? -EFAULT : inlen + SENDER_ID_LEN;
+	ret = copy_to_user(buf + SENDER_ID_LEN,
+		legible_slot->msg, legible_slot->msglen);
+	ret = ret ? -EFAULT : legible_slot->msglen + SENDER_ID_LEN;
 
-release:	// Whether I used it or not, let everything go
+read_complete:	// Whether I used it or not, let everything go
 	famez_release_legible_slot(config);
 	return ret;
 }
@@ -257,7 +266,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 
 	// Split body into two strings around the first colon.
 	if (!(msgbody = strchr(buffers->wbuf, ':'))) {
-		pr_err(FZ "I see no colon in \"%s\"\n", buffers->wbuf);
+		pr_err(FZBR "I see no colon in \"%s\"\n", buffers->wbuf);
 		ret = -EBADMSG;
 		goto unlock_return;
 	}

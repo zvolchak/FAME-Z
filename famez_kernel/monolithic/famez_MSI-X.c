@@ -50,7 +50,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 }
 //-------------------------------------------------------------------------
 
-STATIC famez_mailslot_t __iomem *calculate_mailslot(
+static famez_mailslot_t __iomem *calculate_mailslot(
 	famez_configuration_t *config,
 	unsigned slotnum)
 {
@@ -70,7 +70,7 @@ STATIC famez_mailslot_t __iomem *calculate_mailslot(
 
 //-------------------------------------------------------------------------
 
-STATIC irqreturn_t all_msix(int vector, void *data) {
+static irqreturn_t all_msix(int vector, void *data) {
 	famez_configuration_t *config = data;
 	int slotnum;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
