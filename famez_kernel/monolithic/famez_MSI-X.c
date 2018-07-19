@@ -9,17 +9,17 @@
 #include "famez.h"
 
 //-------------------------------------------------------------------------
-// Assume a legal C string is passed in message.  Return positive (bytecount)
-// on success, negative on error, never 0.  I don't really believe 
-// usleep_range is atomic-safe but I'm on mutices now.
+// Return positive (bytecount) on success, negative on error, never 0.
+// I don't really believe usleep_range is atomic-safe but I'm on mutices now.
 
-int famez_sendstring(uint32_t peer_id, char *msg, famez_configuration_t *config)
+int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
+		   famez_configuration_t *config)
 {
-	size_t msglen = strlen(msg);
 	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
 	ivshmsg_ringer_t ringer;
 
-	PR_V1("sendstring(\"%s\") (len %lu) to %d\n", msg, msglen, peer_id);
+	// Might NOT be printable C string.
+	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
 
 	if (peer_id < 1 || peer_id > config->server_id)
 		return -EBADSLT;
@@ -103,7 +103,7 @@ STATIC irqreturn_t all_msix(int vector, void *data) {
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
 	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4))
-		famez_sendstring(sender_id, "pong", config);
+		famez_sendmail(sender_id, "pong", 4, config);
 	else {
 		int bad_lock = FAMEZ_LOCK(&(config->legible_slot_lock));
 		if (config->legible_slot)

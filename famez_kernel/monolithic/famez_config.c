@@ -213,11 +213,11 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
-		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n", CARDLOC(pdev));
+		PR_V1("IVSHMEM @ %s is not my circus\n", CARDLOC(pdev));
 		ret = -ENODEV;
 		goto err_pci_disable_device;
 	}
-	pr_info(FZ "IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
+	PR_V1("IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
 
 	if (IS_ERR_VALUE((config = create_config(pdev)))) {
 		ret = PTR_ERR(config);
@@ -244,7 +244,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 	if (!ret) {
 		list_add_tail(&config->lister, &famez_active_list);
-		PR_V1(FZSP "config added to active list\n")
+		PR_V1("config added to active list\n")
 	}
 	spin_unlock_bh(&famez_active_lock);
 	if (ret) {
@@ -255,22 +255,23 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// Tell the server I'm here.
 	snprintf(imalive, sizeof(imalive) - 1,
 		"Client %d is ready", config->my_id);
-	ret = famez_sendstring(config->server_id, imalive, config);
+	ret = famez_sendmail(config->server_id,
+		imalive, strlen(imalive), config);
 	if (ret > 0)
 		ret = ret == strlen(imalive) ? 0 : -EIO;
 
 	return ret;
 
 err_bridge_teardown:
-	pr_warn(FZSP "tearing down bridge %s\n", CARDLOC(pdev));
+	PR_V1("tearing down bridge %s\n", CARDLOC(pdev));
 	famez_bridge_teardown(pdev);
 
 err_MSIX_teardown:
-	pr_warn(FZSP "tearing down MSI-X %s\n", CARDLOC(pdev));
+	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
 	famez_MSIX_teardown(pdev);
 
 err_pci_disable_device:
-	pr_warn(FZSP "disabling device %s\n", CARDLOC(pdev));
+	PR_V1("disabling device %s\n", CARDLOC(pdev));
 	pci_disable_device(pdev);
 
 // err_destroy_config:
@@ -325,18 +326,12 @@ int __init famez_init(void)
 	pr_info(FZ FAMEZ_VERSION "; parms:\n");
 	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
 
-	// Out with the old:
-	// while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev)))
+	if (!(ret = pci_register_driver(&famez_pci_driver)))
+        	pr_warn(FZ "pci_register_driver() successful\n");
+	else
+		pr_err(FZ "pci_register_driver() = %d\n", ret);
 
-	if ((ret = pci_register_driver(&famez_pci_driver)) < 0) {
-            pr_err(FZ "pci_register_driver() = %d\n", ret);
-	    return ret;
-	}
-
-	// Everything else depends on probe finishing.
-        pr_warn(FZ "pci_register_driver() successful\n");
-
-	return 0;
+	return ret;
 }
 
 module_init(famez_init);

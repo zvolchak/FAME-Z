@@ -155,17 +155,16 @@ static int bridge_release(struct inode *inode, struct file *file)
 }
 
 //-------------------------------------------------------------------------
+// Final step on the way to stacked modules, also code reuse for
+// bridge_read and bridge_ioctl.  Failure returns < 0 without lock held;
+// success returns >=0 number of bytes ready with lock held.
+// Intermix locking with that in msix_all().
 
-static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
-                          loff_t *ppos)
+ssize_t famez_await_legible_slot(struct file *file,
+				 famez_configuration_t *config)
 {
-	famez_configuration_t *config = extract_config(file);
 	int ret;
-	char sender_id[8];	// sprintf(sender_id, "%03:", ....
-	size_t sender_id_len;
 
-	// FIXME: encapsulate this in famez_MSI-X, down to EOENCAPSULATION.
-	// Do the same for the resource release at label "release:"
 	if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
 		return ret;
 	while (!config->legible_slot) {		// Wait for new data?
@@ -179,62 +178,82 @@ static ssize_t bridge_read(struct file *file, char __user *buf, size_t len,
 		if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
 			return ret;
 	}
+	return config->legible_slot->msglen;
+}
+
+void famez_release_legible_slot(famez_configuration_t *config)
+{
+	config->legible_slot->msglen = 0;	// In the slot of the remote sender
+	config->legible_slot = NULL;		// Seen by local MSIX handler
 	FAMEZ_UNLOCK(&config->legible_slot_lock);
-	// EOENCAPSULATION
+}
 
-	PR_V2(FZSP "wait finished, %llu bytes to read\n",
-		 config->legible_slot->msglen);
+//-------------------------------------------------------------------------
+// Prepend the sender id as a field separated by a colon, realized by two
+// calls to copy_to_user and avoiding a temporary buffer here. copy_to_user
+// can sleep and returns the number of bytes that could NOT be copied or
+// -ERRNO.  Require both copies to work all the way.  
 
-	sprintf(sender_id, "%03llu:", config->legible_slot->peer_id);
-	sender_id_len = strlen(sender_id);
-	if (len < config->legible_slot->msglen + sender_id_len) {
+#define SENDER_ID_FMT	"%03llu:"	// These must agree
+#define SENDER_ID_LEN	4
+
+static ssize_t bridge_read(struct file *file, char __user *buf,
+			   size_t buflen, loff_t *ppos)
+{
+	famez_configuration_t *config = extract_config(file);
+	ssize_t inlen;
+	char sender_id_str[8];
+	int ret;
+
+	if ((inlen = famez_await_legible_slot(file, config)) < 0)
+		return inlen;
+	PR_V2(FZSP "wait finished, %ld bytes to read\n", inlen);
+	if (buflen < inlen + SENDER_ID_LEN) {
 		ret = -E2BIG;
 		goto release;
 	}
 
-	// copy_to_user can sleep and returns the number of bytes that could NOT
-	// be copied or -ERRNO.  Require all copies to work all the way.  First
-	// emit the sender ID so the user knows from whence the message came.
-	if ((ret = copy_to_user(buf, sender_id, sender_id_len))) {
+	// First emit the sender ID.
+	sprintf(sender_id_str, SENDER_ID_FMT, config->legible_slot->peer_id);
+	if ((ret = copy_to_user(buf, sender_id_str, SENDER_ID_LEN))) {
 		if (ret > 0) ret= -EFAULT;	// partial transfer
 		goto release;
 	}
 
 	// Now the message body proper, after the colon of the previous message.
-	len = config->legible_slot->msglen;
-	ret = copy_to_user(buf + sender_id_len, config->legible_slot->msg, len);
-	ret = ret ? -EFAULT : len + sender_id_len;
+	ret = copy_to_user(buf + SENDER_ID_LEN, config->legible_slot->msg, inlen);
+	ret = ret ? -EFAULT : inlen + SENDER_ID_LEN;
 
 release:	// Whether I used it or not, let everything go
-	config->legible_slot->msglen = 0;	// In the slot of the remote sender
-	config->legible_slot = NULL;		// Seen by local MSIX handler
+	famez_release_legible_slot(config);
 	return ret;
 }
 
 //-------------------------------------------------------------------------
 
 static ssize_t bridge_write(struct file *file, const char __user *buf,
-			   size_t len, loff_t *ppos)
+			    size_t buflen, loff_t *ppos)
 {
 	famez_configuration_t *config = extract_config(file);
 	bridge_buffers_t *buffers = config->writer_support;
-	ssize_t spooflen = len;
+	ssize_t successlen = buflen;
 	char *msgbody;
 	int ret;
 	uint16_t peer_id;
 
 	// Use many idiot checks.  Performance is not the issue here.
 	// FIXME It could be raw data with nulls at some point...
-	if (len >= config->max_msglen - 1)	// Paranoia on term NUL
+	if (buflen >= config->max_msglen - 1) {	// Paranoia on term NUL
+		PR_V1("msglen of %lu is too big\n", buflen);
 		return -E2BIG;
-
+	}
 	if ((ret = FAMEZ_LOCK(&buffers->wbuf_lock)))	// Multiuse of *file
 		goto unlock_return;
-	if (copy_from_user(buffers->wbuf, buf, len)) {
+	if (copy_from_user(buffers->wbuf, buf, buflen)) {
 		ret = -EIO;
 		goto unlock_return;
 	}
-	buffers->wbuf[len] = '\0';
+	buffers->wbuf[buflen] = '\0';
 
 	// Split body into two strings around the first colon.
 	if (!(msgbody = strchr(buffers->wbuf, ':'))) {
@@ -244,14 +263,8 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	}
 	*msgbody = '\0';	// chomp ':', now two complete strings
 	msgbody++;
-	len -= (uint64_t)msgbody - (uint64_t)buffers->wbuf;
+	buflen -= (uint64_t)msgbody - (uint64_t)buffers->wbuf;
 
-	// FIXME: assumes ASCII data, not binary which may have embedded NULs
-	if (!(len = strlen(msgbody))) {
-		pr_warn(FZ "msgbody length mismatch\n");
-		ret = spooflen;	// spoof success to caller
-		goto unlock_return;
-	}
 	if (STREQ(buffers->wbuf, "server"))
 		peer_id = config->server_id;
 	else {
@@ -263,9 +276,11 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	// this final len is always shorter than the original length.  Some
 	// code (ie, "echo") will resubmit the partial if the count is
 	// short.  So lie about it to the caller.
-	ret = famez_sendstring(peer_id, msgbody, config);
-	if (ret == len)
-		ret = spooflen;
+	ret = famez_sendmail(peer_id, msgbody, buflen, config);
+	if (ret == buflen)
+		ret = successlen;
+	else if (ret >= 0)
+		ret = -EIO;	// partial transfer paranoia
 
 unlock_return:
 	FAMEZ_UNLOCK(&buffers->wbuf_lock);
