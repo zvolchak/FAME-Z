@@ -11,7 +11,7 @@
 # famez.ko will read the global data to understand the mailbox layout.
 
 # All numbers are unsigned long long (8 bytes).  All strings are multiples
-# of 16 (including the C terminating NULL) on 16 byte boundaries.  Then it
+# of 16 (including the C terminating NULL) on 32-byte boundaries.  Then it
 # all looks good in "od -Ad -c" and even better in "od -Ad -c -tu8".
 
 import mmap
@@ -26,19 +26,21 @@ from pdb import set_trace
 class FAMEZ_MailBox(object):
 
     MAILBOX_MAX_SLOTS = 64
-    MAILBOX_SLOTSIZE = 256          # 128 of metadata, 128 of message
+    MAILBOX_SLOTSIZE = 256          # 64 of metadata, 192 of message
 
     GLOBALS_SLOTSIZE_off = 0        # in the space of mailslot 0
     GLOBALS_MSG_OFFSET_off = 8
     GLOBALS_NSLOTS_off = 16
 
-    # Metadata (front of famez_mailslot_t) takes up 32 + 8 + 4 = 44 bytes
+    # Metadata (front of famez_mailslot_t) is char[32] plus a few uint64_t.
+    # The actual message space starts after that, 32-byte aligned, which
+    # makes this look pretty: od -Ad -c -tx8 /dev/shm/famez_mailbox.
     MAILSLOT_NODENAME_off = 0
     MAILSLOT_NODENAME_SIZE = 32                     # NULL terminated
-    MAILSLOT_MSGLEN_off = MAILSLOT_NODENAME_SIZE    # uint64_t, so...
-    MAILSLOT_PEER_ID_off = MAILSLOT_MSGLEN_off + 8  # uint32_t, so...
-    MAILSLOT_NEXT_off = MAILSLOT_PEER_ID_off + 8
-    MAILSLOT_MSG_off = 64                           # Currently 2 pads
+    MAILSLOT_MSGLEN_off = MAILSLOT_NODENAME_SIZE
+    MAILSLOT_PEER_ID_off = MAILSLOT_MSGLEN_off + 8
+    MAILSLOT_LAST_RESPONDER_off = MAILSLOT_PEER_ID_off + 8
+    MAILSLOT_MSG_off = 64                           # Currently 1 pad
     MAILSLOT_MAX_MSGLEN = 192
 
     #-----------------------------------------------------------------------
