@@ -14,11 +14,13 @@
 
 #define FAMEZ_VERSION	FAMEZ_NAME " v0.7.5: endgame chardev"
 
-// Used from user context, sleeping is allowed
-#define FAMEZ_LOCK_STRUCT	struct mutex
-#define FAMEZ_LOCK_INIT(LLL)	mutex_init(LLL)
-#define FAMEZ_LOCK(LLL)		mutex_lock_interruptible(LLL)
-#define FAMEZ_UNLOCK(LLL)	mutex_unlock(LLL)
+// Used from user context, sleeping must be allowed.  Even though they can run
+// through thousands of transactions, eventually even a mutex will BUG with
+// "scheduling while atomic" when using "cat" as a receiver.
+#define FAMEZ_LOCK_STRUCT	struct semaphore
+#define FAMEZ_LOCK_INIT(LLL)	sema_init(LLL, 1)	// effectively a mutex
+#define FAMEZ_LOCK(LLL)		down_interruptible(LLL)
+#define FAMEZ_UNLOCK(LLL)	up(LLL)
 
 typedef struct {			// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
