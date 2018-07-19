@@ -137,13 +137,24 @@ STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
 	if ((ret = mapBARs(pdev)))
 		return ERR_PTR(ret);
 
-	// Now that there's access to globals and registers...
-	// Docs for pci_iomap() say to use io[read|write]32.
-	// Since this is QEMU, direct memory references should work.
-	config->my_id = config->regs->IVPosition;
-	config->server_id = config->globals->nSlots - 1;  // that's the rule
+	// Now that there's access to globals and registers...Docs for 
+	// pci_iomap() say to use io[read|write]32.  Since this is QEMU,
+	// direct memory references should work.  The offset passed in
+	// globals is handcrafted in Python, make sure it's all kosher.
+	// If these fail, go back and add tests to Python, not here.
+	ret = -EINVAL;
+	if (offsetof(famez_mailslot_t, msg) != config->globals->msg_offset) {
+		pr_err(FZ "MSG_OFFSET global != C offset in here\n");
+		goto err_kfree;
+	}
+	if (config->globals->slotsize <= config->globals->msg_offset) {
+		pr_err(FZ "MSG_OFFSET global is > SLOTSIZE global\n");
+		goto err_kfree;
+	}
 	config->max_msglen = config->globals->slotsize -
 			     config->globals->msg_offset;
+	config->my_id = config->regs->IVPosition;
+	config->server_id = config->globals->nSlots - 1;  // that's the rule
 
 	// All the needed parameters are set to finish this off.
 	ret = -ENOMEM;
@@ -157,8 +168,6 @@ STATIC famez_configuration_t *create_config(struct pci_dev *pdev)
 	config->my_slot = (void *)(
 		(uint64_t)config->globals + config->my_id * config->globals->slotsize);
 	memset(config->my_slot, 0, config->globals->slotsize);
-	// FIXME: idiot check that offsetof(msg) == msg_offset
-	// ..........config->globals->msg_offset)
 	snprintf(config->my_slot->nodename,
 		 sizeof(config->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, config->pdev->devfn >> 3);

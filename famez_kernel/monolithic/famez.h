@@ -28,7 +28,7 @@ typedef struct {			// BAR 0
 } ivshmem_registers_t;
 
 typedef struct {			// BAR 1: Not mapped, not used.  YET.
-	uint32_t junk;
+	uint32_t junk1, junk2;
 } ivshmem_msi_x_table_pba_t;
 
 // The famez_server.py controls the mailbox slot size and number of slots
@@ -43,19 +43,14 @@ typedef struct {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
 } famez_globals_t;
 
-typedef struct {
-	int num;
-	void *target;
-	char *info;
-} famez_BARtab_t;
-
 // Use only uint64_t and keep the msg[] on a 32-byte alignment for this:
 // od -Ad -w32 -c -tx8 /dev/shm/famez_mailbox
 typedef struct __attribute__ ((packed)) {
 	char nodename[32];		// off  0: of the owning client
 	uint64_t msglen,		// off 32:
 		 peer_id,		// off 40: Convenience; set by server
-		 pad1, pad2;
+		 last_responder,	// off 48: To assist stale stompage
+		 pad;			// off 56
 	char msg[];			// off 64: globals->msg_offset
 } famez_mailslot_t;
 
