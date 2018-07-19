@@ -1,8 +1,6 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG devices
 // HP(E) lineage: res2hot from MMS PoC "mimosa" mms_base.c, flavored by zhpe.
 
-#include <linux/delay.h>
-#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
@@ -48,77 +46,142 @@ static DEFINE_SPINLOCK(famez_active_lock);
 // (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
 // the proscribed calls do the start/end/length math so use them.
 
-STATIC void unmapBARs(struct pci_dev *pdev)
+static void unmapBARs(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 
-	if (config->scratch_msg) kfree(config->scratch_msg);
-	config->scratch_msg = NULL;
+	if (config->regs) pci_iounmap(pdev, config->regs);	// else whine
+	config->regs = NULL;
 	if (config->globals) pci_iounmap(pdev, config->globals);
 	config->globals = NULL;
-	if (config->UNUSED) pci_iounmap(pdev, config->UNUSED);
-	config->UNUSED = NULL;
-	if (config->regs) pci_iounmap(pdev, config->regs);
-	config->regs = NULL;
+	pci_release_regions(pdev);
 }
 
-//-------------------------------------------------------------------------
-// This has a kmalloc so can't be done in IRQ context (ie, no spinlocks)
-
-STATIC int mapBARs(struct pci_dev *pdev)
+static int mapBARs(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
+	int ret;
 
-	pr_info(FZSP "Mapping BAR0 regs (%llu bytes)\n",
+	// "cat /proc/iomem" seems to be very finicky about spaces and
+	// punctuation even if there are other things in there with it.
+	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
+		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
+		return ret;
+	}
+
+	PR_V1(FZSP "Mapping BAR0 regs (%llu bytes)\n",
 		pci_resource_len(pdev, 0));
 	if (!(config->regs = pci_iomap(pdev, 0, 0)))
 		goto err_unmap;
 
-#if 0
-	pr_info(FZSP "Mapping BAR1 MSI-X (%llu bytes)\n",
-		pci_resource_len(pdev, 1));
-	if (!(config->UNUSED = pci_iomap(pdev, 1, 0)))
-		goto err_unmap;
-#endif
-
-	pr_info(FZSP "Mapping BAR2 globals/mailslots (%llu bytes)\n",
+	PR_V1(FZSP "Mapping BAR2 globals/mailslots (%llu bytes)\n",
 		pci_resource_len(pdev, 2));
 	if (!(config->globals = pci_iomap(pdev, 2, 0)))
 		goto err_unmap;
+	
+	return 0;
 
-	// Set up more globals and mailbox references to work around padding.
-	// Docs for pci_iomap() say to use io[read|write]32.
-	// Since this is QEMU, direct memory references should work.
+err_unmap:
+	unmapBARs(pdev);
+	return -ENOMEM;
+}
 
-	config->my_id = config->regs->IVPosition;
-	config->server_id = config->globals->nSlots - 1;  // cuz I said so
+//-------------------------------------------------------------------------
+// Set up more globals and mailbox references to realize dynamic padding.
+
+
+static void destroy_config(famez_configuration_t *config)
+{
+	struct pci_dev *pdev;
+
+	if (!config) return;	// probably not worth whining
+	if (!(pdev = config->pdev)) {
+		pr_err(FZ "destroy_config() has NULL pdev\n");
+		return;
+	}
+
+	unmapBARs(pdev);	// May have be done, doesn't hurt
+
+	dev_set_drvdata(&pdev->dev, NULL);
+	pci_set_drvdata(pdev, NULL);
+	config->pdev = NULL;
+
+	if (config->msix_entries) kfree(config->msix_entries);
+	config->msix_entries = NULL;
+	// Probably memory leakage if this ever executes.
+	if (config->writer_support) kfree(config->writer_support);
+	config->writer_support = NULL;
+
+	kfree(config);
+}
+
+static famez_configuration_t *create_config(struct pci_dev *pdev)
+{
+	famez_configuration_t *config = NULL;
+	int ret;
+
+	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
+		pr_err(FZSP "Cannot kzalloc(config)\n");
+		return ERR_PTR(-ENOMEM);
+	}
+	// Lots of backpointers.
+	pci_set_drvdata(pdev, config);		// Just pass around pdev.
+	dev_set_drvdata(&pdev->dev, config);	// Never hurts to go deep.
+	config->pdev = pdev;			// Reverse pointers never hurt.
+
+	// Simple fields.
+	init_waitqueue_head(&(config->legible_slot_wqh));
+	FAMEZ_LOCK_INIT(&(config->legible_slot_lock));
+
+	// Real work.
+	if ((ret = mapBARs(pdev)))
+		return ERR_PTR(ret);
+
+	// Now that there's access to globals and registers...Docs for 
+	// pci_iomap() say to use io[read|write]32.  Since this is QEMU,
+	// direct memory references should work.  The offset passed in
+	// globals is handcrafted in Python, make sure it's all kosher.
+	// If these fail, go back and add tests to Python, not here.
+	ret = -EINVAL;
+	if (offsetof(famez_mailslot_t, msg) != config->globals->msg_offset) {
+		pr_err(FZ "MSG_OFFSET global != C offset in here\n");
+		goto err_kfree;
+	}
+	if (config->globals->slotsize <= config->globals->msg_offset) {
+		pr_err(FZ "MSG_OFFSET global is > SLOTSIZE global\n");
+		goto err_kfree;
+	}
 	config->max_msglen = config->globals->slotsize -
 			     config->globals->msg_offset;
+	config->my_id = config->regs->IVPosition;
+	config->server_id = config->globals->nSlots - 1;  // that's the rule
 
-	// My slot and invariant info.
+	// All the needed parameters are set to finish this off.
+	ret = -ENOMEM;
+	if (!(config->msix_entries = kzalloc(
+		config->globals->nSlots * sizeof(struct msix_entry), GFP_KERNEL))) {
+		pr_err(FZ "Can't create MSI-X entries table\n");
+		goto err_kfree;
+	}
+
+	// My slot and message pointers.
 	config->my_slot = (void *)(
 		(uint64_t)config->globals + config->my_id * config->globals->slotsize);
 	memset(config->my_slot, 0, config->globals->slotsize);
-	config->my_slot->msg = (void *)(
-		(uint64_t)config->my_slot + config->globals->msg_offset);
 	snprintf(config->my_slot->nodename,
 		 sizeof(config->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, config->pdev->devfn >> 3);
-
-	if (!(config->scratch_msg = kmalloc(config->max_msglen, GFP_KERNEL)))
-		return -ENOMEM;
 
 	PR_V1(FZSP "mailslot size=%llu, message offset=%llu, server=%d\n",
 		config->globals->slotsize,
 		config->globals->msg_offset,
 		config->server_id);
 
-	return 0;
+	return config;
 
-err_unmap:
-	pr_err(FZSP "mapping failed\n");
-	unmapBARs(pdev);
-	return -ENOMEM;
+err_kfree:
+	destroy_config(config);
+	return ERR_PTR(ret);
 }
 
 //-------------------------------------------------------------------------
@@ -127,161 +190,123 @@ err_unmap:
 
 int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
-	struct famez_configuration *config = NULL, *cur = NULL;
-	int ret;
+	famez_configuration_t *config = NULL, *cur = NULL;
+	int ret = -ENOTTY;
 	char imalive[80];
 
-	pr_info(FZ "probe(%s)\n", CARDLOC(pdev));
+	PR_V1("probe(%s)\n", CARDLOC(pdev));
 
 	// Has this device been configured already?
 
-	ret = -EALREADY;
 	if (pci_get_drvdata(pdev)) {	// Is this possible?
-		pr_err(FZSP "This device is already configured (1)\n");
-		goto err_out;
+		pr_err(FZSP "This device is already configured\n");
+		return -EALREADY;
 	}
 
-	// enable it and discriminate
+	// Enable it to discriminate values and create a configuration for
+	// this instance.
 
-	ret = -ENODEV;
 	if ((ret = pci_enable_device(pdev)) < 0) {
 		pr_err(FZSP "pci_enable_device failed: %d\n", ret);
-		goto err_out;
+		return ret;
 	}
 	if (pdev->revision != 1 ||
 	    !pdev->msix_cap ||
 	    !pci_resource_start(pdev, 1)) {
-		pr_warn(FZSP "IVSHMEM @ %s is not my circus\n", CARDLOC(pdev));
+		PR_V1("IVSHMEM @ %s is missing IVSHMSG features\n", CARDLOC(pdev));
+		ret = -ENODEV;
 		goto err_pci_disable_device;
 	}
-	pr_info(FZ "IVSHMSG @ %s is my monkey\n", CARDLOC(pdev));
+	pr_info(FZ "IVSHMEM @ %s has IVSHMSG features\n", CARDLOC(pdev));
 
-	// "cat /proc/iomem" seems to be very finicky about spaces and
-	// punctuation even if there are other things in there with it.
-	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
-		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
+	if (IS_ERR_VALUE((config = create_config(pdev)))) {
+		ret = PTR_ERR(config);
+		config = NULL;
 		goto err_pci_disable_device;
 	}
 
-	// Make space and add it.  Either could sleep, as can many things after this
-	// (esp kzalloc).  Initialize some standalone fields now.
-	
-	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
-		pr_err(FZSP "Cannot kzalloc(config)\n");
-		ret = -ENOMEM;
-		goto err_out;
-	}
-	spin_lock_init(&(config->legible_slot_lock));
-	init_waitqueue_head(&(config->legible_slot_wqh));
-
-	spin_lock_bh(&famez_active_lock);
-	list_for_each_entry(cur, &famez_active_list, lister) {
-		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
-			pr_err(FZSP "This device is already configured (2)\n");
-			spin_unlock_bh(&famez_active_lock);
-			goto err_out;
-		}
-	}
-	list_add_tail(&config->lister, &famez_active_list);
-	spin_unlock_bh(&famez_active_lock);
-	PR_V1(FZSP "config added to active list\n")
-
-	// Remainder of config
-
-	pci_set_drvdata(pdev, config);		// Now everyone has it.
-	dev_set_drvdata(&pdev->dev, config);	// Never hurts to go deep.
-	config->pdev = pdev;			// Reverse pointers never hurt.
-
-	if ((ret = mapBARs(pdev)))
-		goto err_pci_release_regions;
-	
 	if ((ret = famez_MSIX_setup(pdev)))
-		goto err_unmapBARs;
+		goto err_pci_disable_device;
 
 	// FIXME: rewrite this as a separate module that registers itself.
 	if ((ret = famez_bridge_setup(pdev)))
 		goto err_MSIX_teardown;
 
+	// It's a keeper...unless it's already there.  Unlikely, but it's
+	// not paranoia when in the kernel.
+	spin_lock_bh(&famez_active_lock);
+	ret = 0;
+	list_for_each_entry(cur, &famez_active_list, lister) {
+		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
+			ret = -EALREADY;
+			break;
+		}
+	}
+	if (!ret) {
+		list_add_tail(&config->lister, &famez_active_list);
+		PR_V1("config added to active list\n")
+	}
+	spin_unlock_bh(&famez_active_lock);
+	if (ret) {
+		pr_err(FZSP "This device is already in active list\n");
+		goto err_bridge_teardown;
+	}
+
 	// Tell the server I'm here.
 	snprintf(imalive, sizeof(imalive) - 1,
 		"Client %d is ready", config->my_id);
-	ret = famez_sendstring(config->server_id, imalive, config);
-	pr_info(FZSP "sendstring(\"%s\") to server %s\n", imalive,
-		ret > 0 ? "succeeded" : "FAILED");
+	ret = famez_sendmail(config->server_id,
+		imalive, strlen(imalive), config);
+	if (ret > 0)
+		ret = ret == strlen(imalive) ? 0 : -EIO;
 
-	return 0;
+	return ret;
+
+err_bridge_teardown:
+	PR_V1("tearing down bridge %s\n", CARDLOC(pdev));
+	famez_bridge_teardown(pdev);
 
 err_MSIX_teardown:
-	PR_V2(FZSP "tearing down MSI-X %s\n", CARDLOC(pdev));
+	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
 	famez_MSIX_teardown(pdev);
 
-err_unmapBARs:
-	PR_V2(FZSP "unmapping BAR(S) %s\n", CARDLOC(pdev));
-	unmapBARs(pdev);
-
-err_pci_release_regions:
-	PR_V2(FZSP "releasing regions %s\n", CARDLOC(pdev));
-	pci_release_regions(pdev);
-
 err_pci_disable_device:
-	PR_V2(FZSP "disabling device %s\n", CARDLOC(pdev));
+	PR_V1("disabling device %s\n", CARDLOC(pdev));
 	pci_disable_device(pdev);
 
-err_out:
-	if (config) {	// It's almost certainly in the list
-		spin_lock_bh(&famez_active_lock);
-#if 0
-		list_for_each_entry(cur, &famez_active_list, lister) {
-			if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
-				pr_err(FZSP "This device is already configured (2)\n");
-				spin_unlock_bh(&famez_active_lock);
-				goto err_out;
-			}
-		}
-		list_add_tail(&config->lister, &famez_active_list);
-#endif
-		spin_unlock_bh(&famez_active_lock);
-		kfree(config);
-	}
-	pci_set_drvdata(pdev, NULL);
-	dev_set_drvdata(&pdev->dev, NULL);
+// err_destroy_config:
+	destroy_config(config);
 	return ret;
 }
 
 void famez_remove(struct pci_dev *pdev)
 {
-	struct famez_configuration *cur, *next, *config = pci_get_drvdata(pdev);
+	famez_configuration_t *cur, *next, *config = pci_get_drvdata(pdev);
 
-	pr_info(FZ "famez_remove(%s)", CARDLOC(pdev));
+	pr_info(FZ "famez_remove(%s): ", CARDLOC(pdev));
 	if (!config) {
-		pr_info(FZSP "still not my circus\n");
+		pr_cont("still not my circus\n");
 		return;
 	}
-	pr_info(FZSP "disabling/removing/freeing resources\n");
+	pr_cont("disabling/removing/freeing resources\n");
 
 	famez_bridge_teardown(pdev);
 
-	// Stop activations.  Can't do this in an "IRQ context" (ie, spinlocks)
 	famez_MSIX_teardown(pdev);
 
-	spin_lock_bh(&famez_active_lock);	// some things sleep
-
-	unmapBARs(pdev);
-
-	pci_release_regions(pdev);
 	pci_disable_device(pdev);
-	pci_set_drvdata(pdev, NULL);
+
+	if (atomic_read(&config->nr_users))
+		pr_err(FZSP "# users is non-zero, very interesting\n");
 	
+	spin_lock_bh(&famez_active_lock);
 	list_for_each_entry_safe(cur, next, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
 			list_del(&(cur->lister));
 	}
-
-	if (atomic_read(&config->nr_users))
-		pr_err(FZSP "# users is non-zero, very interesting\n");
-
 	spin_unlock_bh(&famez_active_lock);
-	kfree(config);
+
+	destroy_config(config);
 }
 
 static struct pci_driver famez_pci_driver = {
@@ -297,22 +322,14 @@ int __init famez_init(void)
 {
 	int ret;
 
-	pr_info("-----------------------------------------------------------");
-	pr_info(FZ FAMEZ_VERSION "; parms:\n");
-	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
+	PR_V1("-----------------------------------------------------------");
+	PR_V1(FZ FAMEZ_VERSION "; parms:\n");
+	PR_V1(FZSP "famez_verbose = %d\n", famez_verbose);
 
-	// Out with the old:
-	// while ((dev = pci_get_device(IVSHMEM_VENDOR, IVSHMEM_DEVICE, dev)))
+	if ((ret = pci_register_driver(&famez_pci_driver)))
+		pr_err(FZ "pci_register_driver() = %d\n", ret);
 
-	if ((ret = pci_register_driver(&famez_pci_driver)) < 0) {
-            pr_err(FZ "pci_register_driver() = %d\n", ret);
-	    return ret;
-	}
-
-	// Everything else depends on probe finishing.
-        pr_warn(FZ "pci_register_driver() successful\n");
-
-	return 0;
+	return ret;
 }
 
 module_init(famez_init);
@@ -326,41 +343,3 @@ void famez_exit(void)
 }
 
 module_exit(famez_exit);
-
-//-------------------------------------------------------------------------
-// Assume a legal C string is passed in message.
-// Return positive (bytecount) on success, negative on error, never 0.
-// Has a spinlock-safe sleep.
-
-int famez_sendstring(uint32_t peer_id, char *msg,
-		     struct famez_configuration *config)
-{
-	size_t msglen = strlen(msg);
-	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
-	union ringer ringer;
-
-	PR_ENTER("sending \"%s\" to %d\n", msg, peer_id);
-
-	if (peer_id < 1 || peer_id > config->server_id)
-		return -EBADSLT;
-	if (msglen >= config->max_msglen)
-		return -E2BIG;
-	if (!msglen)
-		return -ENODATA; // FIXME: is there value to a "silent kick"?
-
-	// Pseudo-HW ready: wait until my_slot has pushed a previous write
-	// through, ie, the most recent responder clears my msglen.
-	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
-		usleep_range(50000, 80000);
-	if (config->my_slot->msglen)
-		pr_warn(FZ "sendstring() is stomping on previous message\n");
-
-	// Keep nodename and msg pointer; update msglen and msg contents.
-	memset(config->my_slot->msg, 0, config->max_msglen);
-	config->my_slot->msglen = msglen;
-	memcpy(config->my_slot->msg, msg, msglen);
-	ringer.vector = config->my_id;		// from this
-	ringer.peer = peer_id;			// to this
-	config->regs->Doorbell = ringer.push;
-	return msglen;
-}

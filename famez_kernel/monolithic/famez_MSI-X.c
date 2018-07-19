@@ -32,6 +32,11 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// through. In truth it's the previous responder clearing my msglen.
 	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
 		 usleep_range(50000, 80000);
+
+
+	// FIXME: add stompcounter field, when it hits 5 ret(-ENOBUFS).
+	// To start with, just emit that error on first occurrence and
+	// see what falls out.
 	if (config->my_slot->msglen)
 		pr_warn(FZ "%s() stomps previous message to %llu\n",
 			__FUNCTION__, config->my_slot->last_responder);
@@ -48,6 +53,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	config->regs->Doorbell = ringer.Doorbell;
 	return msglen;
 }
+
 //-------------------------------------------------------------------------
 
 static famez_mailslot_t __iomem *calculate_mailslot(

@@ -4,6 +4,9 @@
 #define FAMEZ_DOT_H
 
 #include <linux/list.h>
+#include <linux/mutex.h>
+
+#define FAMEZ_DEBUG			// See "Debug assistance" below
 
 #define FAMEZ_NAME	"famez"
 #define FZ		"famez: "	// pr_xxxx header
@@ -11,18 +14,24 @@
 
 #define FAMEZ_VERSION	FAMEZ_NAME " v0.7.5: endgame chardev"
 
-#define FAMEZ_DEBUG			// See "Debug assistance" below
+// Used from user context, sleeping must be allowed.  Even though they can run
+// through thousands of transactions, eventually even a mutex will BUG with
+// "scheduling while atomic" when using "cat" as a receiver.
+#define FAMEZ_LOCK_STRUCT	struct semaphore
+#define FAMEZ_LOCK_INIT(LLL)	sema_init(LLL, 1)	// effectively a mutex
+#define FAMEZ_LOCK(LLL)		down_interruptible(LLL)
+#define FAMEZ_UNLOCK(LLL)	up(LLL)
 
-struct ivshmem_registers {		// BAR 0
+typedef struct {			// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
 			Rev1Reserved2,	// Rev 0: Interrupt status
 			IVPosition,	// My peer id
 			Doorbell;	// Upper and lower half
-};
+} ivshmem_registers_t;
 
-struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
-	uint32_t junk;
-};
+typedef struct {			// BAR 1: Not mapped, not used.  YET.
+	uint32_t junk1, junk2;
+} ivshmem_msi_x_table_pba_t;
 
 // The famez_server.py controls the mailbox slot size and number of slots
 // (and therefore the total file size).  It gives these numbers to this driver.
@@ -32,61 +41,71 @@ struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
 // ID == nSlots - 1) is for the Python server.  The remaining slots are for
 // client IDs 1 through (nSlots - 2).
 
-struct famez_globals {			// BAR 2: Start of IVSHMEM
+typedef struct {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
-};
+} famez_globals_t;
 
-struct famez_mailslot {
-	char nodename[32];		// of the owning client
-	uint64_t msglen;
-	uint32_t peer_id;		// Convenience; set by server
-	// padding in here, calculate at runtime...
-	char *msg;			// ...via globals->msg_offset
-};
+// Use only uint64_t and keep the msg[] on a 32-byte alignment for this:
+// od -Ad -w32 -c -tx8 /dev/shm/famez_mailbox
+typedef struct __attribute__ ((packed)) {
+	char nodename[32];		// off  0: of the owning client
+	uint64_t msglen,		// off 32:
+		 peer_id,		// off 40: Convenience; set by server
+		 last_responder,	// off 48: To assist stale stompage
+		 pad;			// off 56
+	char msg[];			// off 64: globals->msg_offset
+} famez_mailslot_t;
 
-// The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
-// the lower 16 bits.  The combo must be assigned atomically.
-union __attribute__ ((packed)) ringer {
+// The IVSHMEM "vector" will map to an MSI-X "entry" value.  "vector" is
+// the lower 16 bits and the combo must be assigned atomically.
+
+typedef union __attribute__ ((packed)) {
 	struct { uint16_t vector, peer; };
-	uint32_t push;
-};
+	uint32_t Doorbell;
+} ivshmsg_ringer_t;
 
-struct famez_configuration {
+// The primary configuration/context data.
+typedef struct {
 	struct list_head lister;
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_msglen;
-	char *scratch_msg;				// kmalloc(max_msglen)
 	uint16_t my_id, server_id;			// match ringer.peer 
-	struct ivshmem_registers __iomem *regs;		// BAR0
-	struct ivshmem_msi_x_msi_pba __iomem *UNUSED;	// BAR1
-	struct famez_globals __iomem *globals;		// BAR2
-	struct famez_mailslot *my_slot;			// indexed by my_id
-	struct msix_entry *msix_entries;		// kzalloc an array
+	ivshmem_registers_t __iomem *regs;		// BAR0
+	famez_globals_t __iomem *globals;		// BAR2
+	famez_mailslot_t *my_slot;			// indexed by my_id
+	struct msix_entry *msix_entries;		// pci.h: kzalloc array
 
 	// Per-config handshaking between doorbell/mail delivery and a
 	// driver read().  Doorbell comes in and sets the pointer then
 	// issues a wakeup.  read() follows the pointer then sets it
-	// to NULL for next one.
+	// to NULL for next one.  Since reading is more of a one-to-many
+	// relationship this module can hold the one.
 
-	struct famez_mailslot *legible_slot;
-	spinlock_t legible_slot_lock;
+	famez_mailslot_t *legible_slot;
 	struct wait_queue_head legible_slot_wqh;
-};
+	FAMEZ_LOCK_STRUCT legible_slot_lock;
+
+	// Writing is many to one, so support buffers etc are the
+	// responsibility of that module.
+	void *writer_support;
+
+} famez_configuration_t;
 
 //-------------------------------------------------------------------------
 // famez_config.c - insmod and later probe() setup; final teardown of rmmod
 
 extern int famez_verbose;				// insmod parameter
 
-int famez_sendstring(uint32_t , char *, struct famez_configuration *);
-
 //-------------------------------------------------------------------------
-// famez_MSI-X.c - handle interrupts from other FAME-Z peers
+// famez_MSI-X.c - handle interrupts from other FAME-Z peers (input)
+// and sendstring (output).
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
+
+int famez_sendmail(uint32_t , char *, size_t, famez_configuration_t *);
 
 //-------------------------------------------------------------------------
 // famez_bridge.c - a device file with simple Gen-Z bridge capabilities.
@@ -109,9 +128,9 @@ void famez_bridge_teardown(struct pci_dev *);
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
 
 #ifdef FAMEZ_DEBUG
-#define PR_V1(a...)	{ if (famez_verbose) pr_info(a); }
-#define PR_V2(a...)	{ if (famez_verbose > 1) pr_info(a); }
-#define PR_V3(a...)	{ if (famez_verbose > 2) pr_info(a); }
+#define PR_V1(a...)	{ if (famez_verbose) pr_info(FZ a); }
+#define PR_V2(a...)	{ if (famez_verbose > 1) pr_info(FZ a); }
+#define PR_V3(a...)	{ if (famez_verbose > 2) pr_info(FZ a); }
 #else
 #define PR_V1(a...)
 #define PR_V2(a...)
@@ -125,22 +144,5 @@ void famez_bridge_teardown(struct pci_dev *);
 				pr_info(FZ "exit %s: ", _F_); pr_cont(a); }}
 
 #define PR_SLEEPMS(_txt, _ms) { pr_info(FZ " " _txt); msleep(_ms); }
-
-//-------------------------------------------------------------------------
-// During callgraph generation, "flipping" these values will create a
-// more detailed map.  Otherwise use normal/idiot-proofing/performant values.
-
-#define CALLGRAPH
-
-#ifdef CALLGRAPH
-#define STATIC		
-#define NOINLINE	noinline
-#else
-#define STATIC		static
-#define NOINLINE
-#endif
-
-// #define spin_lock(AAA)
-// #define spin_unlock(AAA)
 
 #endif

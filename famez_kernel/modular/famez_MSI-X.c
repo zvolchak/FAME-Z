@@ -1,77 +1,124 @@
-// Configure and handle MSI-X interrupts from IVSHMEM device.
+// Configure and handle MSI-X interrupts from IVSHMEM device.  The sendstring
+// method is also here, which keeps all "hardware IO" in one place.
 
-#include <linux/interrupt.h>
-#include <linux/pci.h>
+#include <linux/delay.h>	// usleep_range, wait_event*
+#include <linux/jiffies.h>	// jiffies
+#include <linux/interrupt.h>	// irq_enable, etc
+#include <linux/pci.h>		// all kinds
 
 #include "famez.h"
 
 //-------------------------------------------------------------------------
+// Return positive (bytecount) on success, negative on error, never 0.
+// I don't really believe usleep_range is atomic-safe but I'm on mutices now.
 
-struct famez_mailslot __iomem *famez_get_mailslot(
-	struct famez_configuration *config,
+int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
+		   famez_configuration_t *config)
+{
+	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
+	ivshmsg_ringer_t ringer;
+
+	// Might NOT be printable C string.
+	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
+
+	if (peer_id < 1 || peer_id > config->server_id)
+		return -EBADSLT;
+	if (msglen >= config->max_msglen)
+		return -E2BIG;
+	if (!msglen)
+		return -ENODATA; // FIXME: is there value to a "silent kick"?
+
+	// Pseudo-"HW ready": wait until my_slot has pushed a previous write
+	// through. In truth it's the previous responder clearing my msglen.
+	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
+		 usleep_range(50000, 80000);
+
+
+	// FIXME: add stompcounter field, when it hits 5 ret(-ENOBUFS).
+	// To start with, just emit that error on first occurrence and
+	// see what falls out.
+	if (config->my_slot->msglen)
+		pr_warn(FZ "%s() stomps previous message to %llu\n",
+			__FUNCTION__, config->my_slot->last_responder);
+
+	// Keep nodename and msg pointer; update msglen and msg contents.
+	// memset(config->my_slot->msg, 0, config->max_msglen);	# overkill
+	config->my_slot->msglen = msglen;
+	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
+	config->my_slot->last_responder = peer_id;
+
+	memcpy(config->my_slot->msg, msg, msglen);
+	ringer.vector = config->my_id;		// from this
+	ringer.peer = peer_id;			// to this
+	config->regs->Doorbell = ringer.Doorbell;
+	return msglen;
+}
+
+//-------------------------------------------------------------------------
+
+static famez_mailslot_t __iomem *calculate_mailslot(
+	famez_configuration_t *config,
 	unsigned slotnum)
 {
-	struct famez_mailslot __iomem *slot;
+	famez_mailslot_t __iomem *slot;
 
 	// Slot 0 is the globals data, don't play in there.  The last slot
-	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2]
+	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2].
+	// This check should never occur :-)
 	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
-		pr_err(FZ ": %u is out of range\n", slotnum);
+		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
 		return NULL;
 	}
 	slot = (void *)(
 		(uint64_t)config->globals + slotnum * config->globals->slotsize);
-	slot->msg = (void *)((uint64_t)slot + config->globals->msg_offset);
 	return slot;
 }
 
 //-------------------------------------------------------------------------
 
 static irqreturn_t all_msix(int vector, void *data) {
-	struct famez_configuration *config = data;
+	famez_configuration_t *config = data;
 	int slotnum;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
-	struct famez_mailslot __iomem *sender_slot;
+	famez_mailslot_t __iomem *sender_slot;
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
 	// FIXME: preload a lookup table if I ever care about speed.
 	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
-		if (vector == config->msix_entries[slotnum].vector) {
-			sender_id = config->msix_entries[slotnum].entry;
+		if (vector == config->msix_entries[slotnum].vector)
 			break;
-		}
 	}
 	if (slotnum >= config->globals->nSlots) {
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
+	sender_id = config->msix_entries[slotnum].entry;
 
 	// All returns from here are IRQ_HANDLED
 
-	if (!(sender_slot = famez_get_mailslot(config, sender_id))) {
+	if (!(sender_slot = calculate_mailslot(config, sender_id))) {
 		pr_err(FZ "Could not match peer %u\n", sender_id);
 		return IRQ_HANDLED;
 	}
-	PR_V1(FZ "IRQ %d == sender %u -> \"%s\"\n",
+	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
 		vector, sender_id, sender_slot->msg);
 
+	sender_slot->peer_id = sender_id;	// FIXME WHY IS THIS NEEDED?
+
 	// Easy loopback test as proof of life.  Handle it all right here
-	// right now, don't let normal kernel code or user ever see it.
-	if STREQ_N(sender_slot->msg, "ping", 4) {
-		char pong[16];
-
-		snprintf(pong, sizeof(pong) - 1, "pong (%2d)", config->my_id);
-		famez_sendstring(sender_id, pong, config);
-	} else {
+	// right now, don't let driver layers even see it.
+	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4))
+		famez_sendmail(sender_id, "pong", 4, config);
+	else {
+		int bad_lock = FAMEZ_LOCK(&(config->legible_slot_lock));
 		if (config->legible_slot)
-			pr_warn(FZ "stomping on legible slot\n");
-		spin_lock(&(config->legible_slot_lock));
+			pr_warn(FZ "stomping legible slot\n");
 		config->legible_slot = sender_slot;
-		spin_unlock(&(config->legible_slot_lock));
-
-		// FIXME: better abstraction and encapsulation
-		wake_up_all(&(config->legible_slot_wqh));
+		// On wakeup, it's gonna grab the lock first so...
+		if (!bad_lock)
+			FAMEZ_UNLOCK(&(config->legible_slot_lock));
+		wake_up(&(config->legible_slot_wqh));
 	}
 	return IRQ_HANDLED;
 }
@@ -82,7 +129,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 int famez_MSIX_setup(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int ret, i, nvectors = 0, last_irq_index;
 
 	if ((nvectors = pci_msix_vec_count(pdev)) < 0) {
@@ -104,11 +151,6 @@ int famez_MSIX_setup(struct pci_dev *pdev)
 	}
 
 	nvectors = config->globals->nSlots;		// legibility
-	if (!(config->msix_entries = kzalloc(
-		nvectors * sizeof(struct msix_entry), GFP_KERNEL))) {
-		pr_err(FZ "Can't create MSI-X entries table\n");
-		return -ENOMEM;
-	}
 	// .vector was zeroed by kzalloc
 	for (i = 0; i < nvectors; i++)
 		config->msix_entries[i].entry  = i;
@@ -181,7 +223,7 @@ err_kfree_msix_entries:
 
 void famez_MSIX_teardown(struct pci_dev *pdev)
 {
-	struct famez_configuration *config = pci_get_drvdata(pdev);
+	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int i;
 
 	if (!config->msix_entries)	// Been there, done that
