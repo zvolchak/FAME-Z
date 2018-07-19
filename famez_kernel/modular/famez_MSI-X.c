@@ -2,6 +2,7 @@
 // method is also here, which keeps all "hardware IO" in one place.
 
 #include <linux/delay.h>	// usleep_range, wait_event*
+#include <linux/export.h>
 #include <linux/jiffies.h>	// jiffies
 #include <linux/interrupt.h>	// irq_enable, etc
 #include <linux/pci.h>		// all kinds
@@ -53,6 +54,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	config->regs->Doorbell = ringer.Doorbell;
 	return msglen;
 }
+EXPORT_SYMBOL(famez_sendmail);
 
 //-------------------------------------------------------------------------
 

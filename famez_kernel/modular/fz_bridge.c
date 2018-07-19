@@ -39,6 +39,7 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/miscdevice.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/poll.h>
 #include <linux/spinlock.h>
@@ -47,9 +48,18 @@
 #include <asm-generic/bug.h>	// yes after the others
 
 #include "famez.h"
-#include "famez_bridge.h"
+#include "fz_bridge.h"
 
-static int fzbridge_verbose = 2;
+MODULE_LICENSE("GPL");
+MODULE_VERSION(FAMEZ_VERSION);
+MODULE_AUTHOR("Rocky Craig <rocky.craig@hpe.com>");
+MODULE_DESCRIPTION("Base subsystem for FAME-Z project.");
+
+// module parameters are global
+
+int fzbridge_verbose = 0;
+module_param(fzbridge_verbose, int, S_IRUGO);
+MODULE_PARM_DESC(fzbridge_verbose, "increase amount of printk info (0)");
 
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
@@ -159,40 +169,6 @@ static int bridge_release(struct inode *inode, struct file *file)
 	kfree(buffers);
 	config->writer_support = NULL;
 	return 0;
-}
-
-//-------------------------------------------------------------------------
-// Final step on the way to stacked modules, also code reuse for
-// bridge_read and bridge_ioctl.  Failure returns < 0 without lock held;
-// success returns >=0 number of bytes ready with lock held.
-// Intermix locking with that in msix_all().
-
-famez_mailslot_t *famez_await_legible_slot(struct file *file,
-					   famez_configuration_t *config)
-{
-	int ret;
-
-	if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
-		return ERR_PTR(ret);
-	while (!config->legible_slot) {		// Wait for new data?
-		FAMEZ_UNLOCK(&config->legible_slot_lock);
-		if (file->f_flags & O_NONBLOCK)
-			return ERR_PTR(-EAGAIN);
-		PR_V2(FZ "read() waiting...\n");
-		if (wait_event_interruptible(config->legible_slot_wqh, 
-					     config->legible_slot))
-			return ERR_PTR(-ERESTARTSYS);
-		if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
-			return ERR_PTR(ret);
-	}
-	return config->legible_slot;
-}
-
-void famez_release_legible_slot(famez_configuration_t *config)
-{
-	config->legible_slot->msglen = 0;	// In the slot of the remote sender
-	config->legible_slot = NULL;		// Seen by local MSIX handler
-	FAMEZ_UNLOCK(&config->legible_slot_lock);
 }
 
 //-------------------------------------------------------------------------
@@ -364,3 +340,30 @@ void famez_bridge_teardown(struct pci_dev *pdev)
 	kfree(lookup);
 	config->teardown_lookup = NULL;
 }
+
+//-------------------------------------------------------------------------
+
+int __init fzbridge_init(void)
+{
+	int ret = 0;
+
+	PR_V1("-----------------------------------------------------------");
+	PR_V1(FZBR FZBRIDGE_VERSION "; parms:\n");
+	PR_V1(FZSP "fzbridge_verbose = %d\n", fzbridge_verbose);
+
+	famez_register();
+
+	return ret;
+}
+
+module_init(fzbridge_init);
+
+//-------------------------------------------------------------------------
+// Called from rmmod.
+
+void fzbridge_exit(void)
+{
+	famez_unregister(NULL);
+}
+
+module_exit(fzbridge_exit);

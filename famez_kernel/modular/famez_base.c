@@ -1,6 +1,7 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG devices
 // HP(E) lineage: res2hot from MMS PoC "mimosa" mms_base.c, flavored by zhpe.
 
+#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
@@ -11,7 +12,7 @@
 MODULE_LICENSE("GPL");
 MODULE_VERSION(FAMEZ_VERSION);
 MODULE_AUTHOR("Rocky Craig <rocky.craig@hpe.com>");
-MODULE_DESCRIPTION("Simple driver to wiggle interrupts for FAME-Z project.");
+MODULE_DESCRIPTION("Base subsystem for FAME-Z project.");
 
 // Find the one macro that does the right thing.  Notice there is no "device"
 // for QEMU in the PCI ID database, just the sub* things.
@@ -228,10 +229,6 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	if ((ret = famez_MSIX_setup(pdev)))
 		goto err_pci_disable_device;
 
-	// FIXME: rewrite this as a separate module that registers itself.
-	if ((ret = famez_bridge_setup(pdev)))
-		goto err_MSIX_teardown;
-
 	// It's a keeper...unless it's already there.  Unlikely, but it's
 	// not paranoia when in the kernel.
 	spin_lock_bh(&famez_active_lock);
@@ -249,7 +246,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	spin_unlock_bh(&famez_active_lock);
 	if (ret) {
 		pr_err(FZSP "This device is already in active list\n");
-		goto err_bridge_teardown;
+		goto err_MSIX_teardown;
 	}
 
 	// Tell the server I'm here.
@@ -261,10 +258,6 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		ret = ret == strlen(imalive) ? 0 : -EIO;
 
 	return ret;
-
-err_bridge_teardown:
-	PR_V1("tearing down bridge %s\n", CARDLOC(pdev));
-	famez_bridge_teardown(pdev);
 
 err_MSIX_teardown:
 	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
@@ -290,8 +283,6 @@ void famez_remove(struct pci_dev *pdev)
 	}
 	pr_cont("disabling/removing/freeing resources\n");
 
-	famez_bridge_teardown(pdev);
-
 	famez_MSIX_teardown(pdev);
 
 	pci_disable_device(pdev);
@@ -309,14 +300,29 @@ void famez_remove(struct pci_dev *pdev)
 	destroy_config(config);
 }
 
+//-------------------------------------------------------------------------
+
+famez_configuration_t *famez_register(void)
+{
+	pr_info(FZ "Somebody wants in!\n");
+	return NULL;
+}
+EXPORT_SYMBOL(famez_register);
+
+void famez_unregister(famez_configuration_t *config)
+{
+	pr_info(FZ "And now they want out!\n");
+}
+EXPORT_SYMBOL(famez_unregister);
+
+//-------------------------------------------------------------------------
+
 static struct pci_driver famez_pci_driver = {
 	.name      = FAMEZ_NAME,
 	.id_table  = famez_PCI_ID_table,
 	.probe     = famez_probe,
 	.remove    = famez_remove
 };
-
-//-------------------------------------------------------------------------
 
 int __init famez_init(void)
 {
