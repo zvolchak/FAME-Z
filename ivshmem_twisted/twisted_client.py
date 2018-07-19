@@ -262,7 +262,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Dirty disconnect')
         elif self.args.verbose:
             print('Clean disconnect')
-        self.mailbox.clear_my_mailslot()     # In particular, nodename
+        if self.mailbox:
+            self.mailbox.clear_my_mailslot()     # In particular, nodename
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 

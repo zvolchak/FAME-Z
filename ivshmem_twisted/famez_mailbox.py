@@ -20,7 +20,7 @@ import struct
 from time import sleep as SLEEP
 from time import time as NOW
 
-from os.path import stat as STAT     # for constants
+from os.path import stat as STAT    # for constants
 from pdb import set_trace
 
 class FAMEZ_MailBox(object):
@@ -28,18 +28,18 @@ class FAMEZ_MailBox(object):
     MAILBOX_MAX_SLOTS = 64
     MAILBOX_SLOTSIZE = 256          # 128 of metadata, 128 of message
 
-    GLOBALS_SLOTSIZE_off = 0     # in the space of mailslot 0
+    GLOBALS_SLOTSIZE_off = 0        # in the space of mailslot 0
     GLOBALS_MSG_OFFSET_off = 8
     GLOBALS_NSLOTS_off = 16
 
     # Metadata (front of famez_mailslot_t) takes up 32 + 8 + 4 = 44 bytes
     MAILSLOT_NODENAME_off = 0
-    MAILSLOT_NODENAME_SIZE = 32                       # NULL terminated
-    MAILSLOT_MSGLEN_off = MAILSLOT_NODENAME_SIZE      # uint64_t, so...
-    MAILSLOT_PEER_ID_off = MAILSLOT_MSGLEN_off + 8    # uint32_t, so...
-    MAILSLOT_NEXT_off = MAILSLOT_PEER_ID_off + 4
-    MAILSLOT_MSG_off = 128
-    MAILSLOT_MAX_MSGLEN = 128
+    MAILSLOT_NODENAME_SIZE = 32                     # NULL terminated
+    MAILSLOT_MSGLEN_off = MAILSLOT_NODENAME_SIZE    # uint64_t, so...
+    MAILSLOT_PEER_ID_off = MAILSLOT_MSGLEN_off + 8  # uint32_t, so...
+    MAILSLOT_NEXT_off = MAILSLOT_PEER_ID_off + 8
+    MAILSLOT_MSG_off = 64                           # Currently 2 pads
+    MAILSLOT_MAX_MSGLEN = 192
 
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
@@ -61,10 +61,12 @@ class FAMEZ_MailBox(object):
         # Set the peer_id for each slot as a C integer.  While python client
         # can discern a sender, the famez.ko driver needs it "inband".
 
-        for slot in range(1, 8):
+        for slot in range(1, self.nSlots):
             index = slot * self.MAILBOX_SLOTSIZE + self.MAILSLOT_PEER_ID_off
-            packed_peer = struct.pack('i', slot)   # uint32_t
-            self.mm[index:index + 4] = packed_peer
+            packed_peer = struct.pack('Q', slot)   # uint64_t
+            # print('------- index = %d, size =  = %d' %
+                # (index, len(packed_peer)))
+            self.mm[index:index + len(packed_peer)] = packed_peer
 
         # My "hostname", zero-padded
         data = self.nodename.encode()
@@ -214,7 +216,7 @@ class FAMEZ_MailBox(object):
         self.mm = mmap.mmap(self.fd, 0)
         self.nSlots = struct.unpack(
             'Q',
-            self.mm[self.GLOBALS_NSLOTS_OFFSET:self.GLOBALS_NSLOTS_off + 8]
+            self.mm[self.GLOBALS_NSLOTS_off:self.GLOBALS_NSLOTS_off + 8]
         )[0]
         assert 4 <= self.nSlots <= 64, 'nSlots is bad: %d' % self.nSlots
         self.server_id = self.nSlots - 1

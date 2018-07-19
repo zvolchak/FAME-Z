@@ -78,7 +78,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # set up a callback.  This early arming is not a race condition
             # as the peer for which this is destined has not yet been told
             # of the fds it would use to trigger here.
-            print(self.args, file=sys.stderr)
+            # print(self.args, file=sys.stderr)
             if not self.args.silent:
                 self.__class__.famez_notifiers = ivshmem_event_notifier_list(
                     self.args.nSlots)

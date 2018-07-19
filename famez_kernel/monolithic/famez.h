@@ -49,16 +49,18 @@ typedef struct {
 	char *info;
 } famez_BARtab_t;
 
+// Use only uint64_t and keep the msg[] on a 32-byte alignment for this:
+// od -Ad -w32 -c -tx8 /dev/shm/famez_mailbox
 typedef struct __attribute__ ((packed)) {
-	char nodename[32];		// of the owning client
-	uint64_t msglen;
-	uint32_t peer_id;		// Convenience; set by server
-	// padding in here, calculate at runtime...
-	char *msg;			// ...via globals->msg_offset
+	char nodename[32];		// off  0: of the owning client
+	uint64_t msglen,		// off 32:
+		 peer_id,		// off 40: Convenience; set by server
+		 pad1, pad2;
+	char msg[];			// off 64: globals->msg_offset
 } famez_mailslot_t;
 
-// The IVSHMEM "vector" will map to an MSI-X "entry" value.  It is
-// the lower 16 bits.  The combo must be assigned atomically.
+// The IVSHMEM "vector" will map to an MSI-X "entry" value.  "vector" is
+// the lower 16 bits and the combo must be assigned atomically.
 
 typedef union __attribute__ ((packed)) {
 	struct { uint16_t vector, peer; };

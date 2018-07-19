@@ -39,5 +39,5 @@ install:
 
 versioncheck:
 	@[ $V -eq ${VMUST} -a $P -ge ${PMIN} ] && exit 0; \
-	 echo This build needs ${VMUST}.${PMIN} or greater, not $V.$P; exit 1
+	 echo Kernel headers are $V.$P, need \>= ${VMUST}.${PMIN}; exit 1
 
