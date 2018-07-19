@@ -101,7 +101,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 return sorted(self.id2nodename.keys())
             elif instr.lower() == 'others':
                 tmp = list(self.id2nodename.keys())
-                del tmp[self.my_id]
+                tmp.remove(self.my_id)
                 return sorted(tmp)
 
             for id, nodename in self.id2nodename.items():
