@@ -15,7 +15,7 @@ P:=$(shell make --no-print-directory -C ${KERNELDIR} kernelversion | cut -d. -f2
 
 obj-$(CONFIG_FAMEZ) += famez.o famez_bridge.o
 
-famez-objs := famez_base.o famez_MSI-X.o famez_ivshmsg.o
+famez-objs := famez_base.o famez_MSI-X.o famez_ivshmsg.o famez_register.o
 
 famez_bridge-objs := fz_bridge.o
 

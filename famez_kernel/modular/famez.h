@@ -98,12 +98,10 @@ typedef struct {
 // famez_base.c - insmod and later probe() setup; final teardown of rmmod
 
 extern int famez_verbose;				// insmod parameter
+extern struct list_head famez_active_list;
+extern struct semaphore famez_active_sema;
 
-// EXPORTed
-extern int famez_misc_register(char *, const struct file_operations *);
-extern int famez_misc_deregister(const struct file_operations *);
-
-//-------------------------------------------------------------------------
+//.........................................................................
 // famez_ivshmsg.c - the meat of the actual messaging
 
 // EXPORTed
@@ -112,12 +110,19 @@ extern famez_mailslot_t *famez_await_legible_slot(struct file *,
 						  famez_configuration_t *);
 extern void famez_release_legible_slot(famez_configuration_t *);
 
-//-------------------------------------------------------------------------
+//.........................................................................
 // famez_MSI-X.c - handle interrupts from other FAME-Z peers (input)
 // and sendstring (output).
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
+
+//.........................................................................
+// famez_register.c - accept end-driver requests to use FAME-Z.
+
+// EXPORTed
+extern int famez_misc_register(char *, const struct file_operations *);
+extern int famez_misc_deregister(const struct file_operations *);
 
 //-------------------------------------------------------------------------
 // Legibility assistance

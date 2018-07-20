@@ -1,10 +1,9 @@
 // Initial discovery and setup of IVSHMEM/IVSHMSG devices
 // HP(E) lineage: res2hot from MMS PoC "mimosa" mms_base.c, flavored by zhpe.
 
-#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/spinlock.h>
+#include <linux/semaphore.h>
 #include <linux/utsname.h>
 
 #include "famez.h"
@@ -39,8 +38,8 @@ MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 // core does everything I need but I can't shake the feeling I want this for
 // something else...right now it just tracks insmod/rmmod.
 
-static LIST_HEAD(famez_active_list);
-static DEFINE_SEMAPHORE(famez_active_sema);
+LIST_HEAD(famez_active_list);
+DEFINE_SEMAPHORE(famez_active_sema);
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -89,7 +88,6 @@ err_unmap:
 
 //-------------------------------------------------------------------------
 // Set up more globals and mailbox references to realize dynamic padding.
-
 
 static void destroy_config(famez_configuration_t *config)
 {
@@ -272,6 +270,8 @@ err_pci_disable_device:
 	return ret;
 }
 
+//-------------------------------------------------------------------------
+
 void famez_remove(struct pci_dev *pdev)
 {
 	famez_configuration_t *cur, *next, *config = pci_get_drvdata(pdev);
@@ -300,104 +300,6 @@ void famez_remove(struct pci_dev *pdev)
 
 	destroy_config(config);
 }
-
-//-------------------------------------------------------------------------
-// In the monolithic driver this was famez_bridge_setup()
-
-int famez_misc_register(char *basename, const struct file_operations *fops)
-{
-	famez_configuration_t *config;
-	struct pci_dev *pdev;
-	miscdev2config_t *lookup;
-	char *ownername, *devname;
-	int ret, nbindings;
-
-	ownername = fops->owner->name;
-
-	if ((ret = down_interruptible(&famez_active_sema)))
-		return ret;
-
-	nbindings = 0;
-	list_for_each_entry(config, &famez_active_list, lister) {
-
-		pdev = config->pdev;
-		pr_info(FZ "binding %s to %s: ",
-			ownername, pci_resource_name(pdev, 1));
-
-		ret = -ENOMEM;
-		if (!(lookup = kzalloc(sizeof(miscdev2config_t),
-				       GFP_KERNEL)))
-			goto up_and_out;
-		if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
-				     GFP_KERNEL))) {
-			kfree(lookup);
-			goto up_and_out;
-		}
-
-		// Device file name is meant to be reminiscent of lspci output
-		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
-		lookup->miscdev.name = devname;
-		lookup->miscdev.fops = fops;
-		lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
-		lookup->miscdev.mode = 0666;
-	
-		lookup->config = config;	// Don't point that thing at me
-		config->teardown_lookup = lookup;
-		if ((ret = misc_register(&lookup->miscdev))) {
-			kfree(devname);
-			kfree(lookup);
-			goto up_and_out;
-		}
-		pr_cont("success\n");
-		nbindings++;
-	}
-	ret = nbindings;
-
-up_and_out:
-	if (ret < 0)
-		pr_cont("FAILURE\n");
-	up(&famez_active_sema);
-	return ret;
-}
-EXPORT_SYMBOL(famez_misc_register);
-
-//-------------------------------------------------------------------------
-// In the monolithic driver this was famez_bridge_teardown().  Return the
-// count of bindings broken or -ERRNO.
-
-int famez_misc_deregister(const struct file_operations *fops)
-{
-	famez_configuration_t *config;
-	miscdev2config_t *lookup;
-	char *ownername;
-	int ret;
-
-	ownername = fops->owner->name;
-
-	if ((ret = down_interruptible(&famez_active_sema)))
-		return ret;
-
-	ret = 0;
-	list_for_each_entry(config, &famez_active_list, lister) {
-		pr_info(FZ "UNbind %s from %s: ",
-			ownername, pci_resource_name(config->pdev, 0));
-
-		if ((lookup = config->teardown_lookup) &&
-		    (lookup->miscdev.fops == fops)) {
-				misc_deregister(&lookup->miscdev);
-				kfree(lookup->miscdev.name);
-				kfree(lookup);
-				config->teardown_lookup = NULL;
-				ret++;
-				pr_cont("success\n");
-		} else
-			pr_cont("not actually bound\n");
-	}
-	up(&famez_active_sema);
-	return ret;
-
-}
-EXPORT_SYMBOL(famez_misc_deregister);
 
 //-------------------------------------------------------------------------
 
