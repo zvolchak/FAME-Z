@@ -364,8 +364,7 @@ EXPORT_SYMBOL(famez_misc_register);
 void famez_misc_deregister(const struct file_operations *fops)
 {
 	famez_configuration_t *config;
-	struct pci_dev *pdev;
-	// miscdev2config_t *lookup;
+	miscdev2config_t *lookup;
 	char *ownername;
 	int ret;
 
@@ -376,9 +375,15 @@ void famez_misc_deregister(const struct file_operations *fops)
 
 	list_for_each_entry(config, &famez_active_list, lister) {
 
-		pdev = config->pdev;
 		pr_err(FZ "UNbinding %s from %s: FAILURE\n",
-			ownername, pci_resource_name(pdev, 1));
+			ownername, pci_resource_name(config->pdev, 0));
+
+		lookup = config->teardown_lookup;
+	
+		misc_deregister(&lookup->miscdev);
+		kfree(lookup->miscdev.name);
+		kfree(lookup);
+		config->teardown_lookup = NULL;
 	}
 	up(&famez_active_sema);
 

@@ -89,7 +89,7 @@ typedef struct {
 	FAMEZ_LOCK_STRUCT legible_slot_lock;
 
 	// Writing is many to one, so support buffers etc are the
-	// responsibility of that module.
+	// responsibility of that module, managed by open() & release().
 	void *writer_support;
 
 } famez_configuration_t;

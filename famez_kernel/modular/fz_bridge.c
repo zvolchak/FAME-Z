@@ -273,19 +273,7 @@ static const struct file_operations bridge_fops = {
 };
 
 //-------------------------------------------------------------------------
-
-void famez_bridge_teardown(struct pci_dev *pdev)
-{
-	famez_configuration_t *config = pci_get_drvdata(pdev);
-	miscdev2config_t *lookup = config->teardown_lookup;
-	
-	misc_deregister(&lookup->miscdev);
-	kfree(lookup->miscdev.name);
-	kfree(lookup);
-	config->teardown_lookup = NULL;
-}
-
-//-------------------------------------------------------------------------
+// Called from insmod.  Bind the driver set to all available FAME-Z devices.
 
 int __init fzbridge_init(void)
 {
@@ -299,7 +287,7 @@ int __init fzbridge_init(void)
 module_init(fzbridge_init);
 
 //-------------------------------------------------------------------------
-// Called from rmmod.
+// Called from rmmod.  Unbind this driver set from any registered bindings.
 
 void fzbridge_exit(void)
 {

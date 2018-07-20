@@ -34,7 +34,6 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
 		 usleep_range(50000, 80000);
 
-
 	// FIXME: add stompcounter field, when it hits 5 ret(-ENOBUFS).
 	// To start with, just emit that error on first occurrence and
 	// see what falls out.
@@ -71,7 +70,7 @@ famez_mailslot_t *famez_await_legible_slot(struct file *file,
 		FAMEZ_UNLOCK(&config->legible_slot_lock);
 		if (file->f_flags & O_NONBLOCK)
 			return ERR_PTR(-EAGAIN);
-		PR_V2(FZ "read() waiting...\n");
+		PR_V2("read() waiting...\n");
 		if (wait_event_interruptible(config->legible_slot_wqh, 
 					     config->legible_slot))
 			return ERR_PTR(-ERESTARTSYS);
