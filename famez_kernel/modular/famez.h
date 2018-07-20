@@ -4,6 +4,7 @@
 #define FAMEZ_DOT_H
 
 #include <linux/list.h>
+#include <linux/miscdevice.h>
 #include <linux/mutex.h>
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
@@ -99,9 +100,8 @@ typedef struct {
 extern int famez_verbose;				// insmod parameter
 
 // EXPORTed
-extern famez_configuration_t *famez_register(char *,
-					     const struct file_operations *);
-extern void famez_unregister(famez_configuration_t *config);
+extern int famez_misc_register(char *, const struct file_operations *);
+extern void famez_misc_deregister(const struct file_operations *);
 
 //-------------------------------------------------------------------------
 // famez_ivshmsg.c - the meat of the actual messaging
@@ -120,7 +120,7 @@ int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
 
 //-------------------------------------------------------------------------
-// Legibility and debug assistance
+// Legibility assistance
 
 // linux/pci.h missed one
 #ifndef pci_resource_name
@@ -132,6 +132,34 @@ void famez_MSIX_teardown(struct pci_dev *);
 #define STREQ(s1, s2) (!strcmp(s1, s2))
 #define STREQ_N(s1, s2, lll) (!strncmp(s1, s2, lll))
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
+
+// https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
+// A lookup table to take advantage of misc_register putting its argument
+// into file->private at open().  Fill in the blanks for each config and go.
+// This technique relies on the desired field being a pointer AND the first
+// field, so that "container_of(..., anchor)" is a pointer to a pointer.
+// I modified the article's solution to treat it as a container pointer and
+// just grab whatever field I want, it doesn't even have to be the first one.
+// If I put the "primary key" structure as the first field, then I wouldn't
+// even need container_of as the address is synonymous with both.
+
+typedef struct {
+	struct miscdevice miscdev;	// full structure, not a ptr
+	famez_configuration_t *config;	// what I want to recover
+} miscdev2config_t;
+
+static inline famez_configuration_t *extract_config(struct file *file)
+{
+	struct miscdevice *encapsulated_miscdev = file->private_data;
+	miscdev2config_t *lookup = container_of(
+		encapsulated_miscdev,	// the pointer to the member
+		miscdev2config_t,	// the type of the container struct
+		miscdev);		// the name of the member in the struct
+	return lookup->config;
+}
+
+//-------------------------------------------------------------------------
+// Debug assistance
 
 #ifdef FAMEZ_DEBUG
 #define PR_V1(a...)	{ if (famez_verbose) pr_info(FZ a); }

@@ -38,7 +38,6 @@
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/poll.h>
@@ -62,31 +61,6 @@ module_param(fzbridge_verbose, int, S_IRUGO);
 MODULE_PARM_DESC(fzbridge_verbose, "increase amount of printk info (0)");
 
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
-
-// https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
-// A lookup table to take advantage of misc_register putting its argument
-// into file->private at open().  Fill in the blanks for each config and go.
-// This technique relies on the desired field being a pointer AND the first
-// field, so that "container_of(..., anchor)" is a pointer to a pointer.
-// I modified the article's solution to treat it as a container pointer and
-// just grab whatever field I want, it doesn't even have to be the first one.
-// If I put the "primary key" structure as the first field, then I wouldn't
-// even need container_of as the address is synonymous with both.
-
-typedef struct {
-	struct miscdevice miscdev;	// full structure, not a ptr
-	famez_configuration_t *config;	// what I want to recover
-} miscdev2config_t;
-
-static inline famez_configuration_t *extract_config(struct file *file)
-{
-	struct miscdevice *encapsulated_miscdev = file->private_data;
-	miscdev2config_t *lookup = container_of(
-		encapsulated_miscdev,	// the pointer to the member
-		miscdev2config_t,	// the type of the container struct
-		miscdev);		// the name of the member in the struct
-	return lookup->config;
-}
 
 //-------------------------------------------------------------------------
 // file->private is set to the miscdevice structure used in misc_register.
@@ -299,36 +273,6 @@ static const struct file_operations bridge_fops = {
 };
 
 //-------------------------------------------------------------------------
-// Follow convention of PCI core: all (early) setup takes a pdev.
-// The argument of misc_register ends up in file->private_data.
-
-int famez_bridge_setup(struct pci_dev *pdev)
-{
-	famez_configuration_t *config = pci_get_drvdata(pdev);
-	miscdev2config_t *lookup;
-	char *name;
-
-	if (!(lookup = kzalloc(sizeof(miscdev2config_t), GFP_KERNEL)))
-		return -ENOMEM;
-	if (!(name = kzalloc(32, GFP_KERNEL))) {
-		kfree(lookup);
-		return -ENOMEM;
-	}
-
-	// Name is meant to be reminiscent of lspci output
-	sprintf(name, "%s%02x_bridge", FAMEZ_NAME, config->pdev->devfn >> 3);
-	lookup->miscdev.name = name;
-	lookup->miscdev.fops = &bridge_fops;
-	lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
-	lookup->miscdev.mode = 0666;
-
-	lookup->config = config;	// Don't point that thing at me
-	config->teardown_lookup = lookup;
-	return misc_register(&lookup->miscdev);
-}
-
-//-------------------------------------------------------------------------
-// Follow convention of PCI core: all (early) setup takes a pdev.
 
 void famez_bridge_teardown(struct pci_dev *pdev)
 {
@@ -345,16 +289,11 @@ void famez_bridge_teardown(struct pci_dev *pdev)
 
 int __init fzbridge_init(void)
 {
-	int ret = 0;
-
 	PR_V1("-----------------------------------------------------------");
 	PR_V1(FZBRIDGE_VERSION "; parms:\n");
 	PR_V1("fzbridge_verbose = %d\n", fzbridge_verbose);
 
-	pr_info(FZBR "this module name is %s\n", THIS_MODULE->name);
-	famez_register("bridge", &bridge_fops);
-
-	return ret;
+	return famez_misc_register("bridge", &bridge_fops);
 }
 
 module_init(fzbridge_init);
@@ -364,7 +303,7 @@ module_init(fzbridge_init);
 
 void fzbridge_exit(void)
 {
-	famez_unregister(NULL);
+	famez_misc_deregister(&bridge_fops);
 }
 
 module_exit(fzbridge_exit);

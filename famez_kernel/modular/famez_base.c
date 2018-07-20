@@ -40,7 +40,7 @@ MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 // something else...right now it just tracks insmod/rmmod.
 
 static LIST_HEAD(famez_active_list);
-static DEFINE_SPINLOCK(famez_active_lock);
+static DEFINE_SEMAPHORE(famez_active_sema);
 
 //-------------------------------------------------------------------------
 // Map the regions and overlay data structures.  Since it's QEMU, ioremap
@@ -231,7 +231,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 
 	// It's a keeper...unless it's already there.  Unlikely, but it's
 	// not paranoia when in the kernel.
-	spin_lock_bh(&famez_active_lock);
+	ret = down_interruptible(&famez_active_sema);	// FIXME: deal with ret
 	ret = 0;
 	list_for_each_entry(cur, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
@@ -243,7 +243,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		list_add_tail(&config->lister, &famez_active_list);
 		PR_V1("config added to active list\n")
 	}
-	spin_unlock_bh(&famez_active_lock);
+	up(&famez_active_sema);
 	if (ret) {
 		pr_err(FZSP "This device is already in active list\n");
 		goto err_MSIX_teardown;
@@ -275,6 +275,7 @@ err_pci_disable_device:
 void famez_remove(struct pci_dev *pdev)
 {
 	famez_configuration_t *cur, *next, *config = pci_get_drvdata(pdev);
+	int ret;
 
 	pr_info(FZ "famez_remove(%s): ", CARDLOC(pdev));
 	if (!config) {
@@ -290,31 +291,99 @@ void famez_remove(struct pci_dev *pdev)
 	if (atomic_read(&config->nr_users))
 		pr_err(FZSP "# users is non-zero, very interesting\n");
 	
-	spin_lock_bh(&famez_active_lock);
+	ret = down_interruptible(&famez_active_sema);	// FIXME: deal with ret
 	list_for_each_entry_safe(cur, next, &famez_active_list, lister) {
 		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
 			list_del(&(cur->lister));
 	}
-	spin_unlock_bh(&famez_active_lock);
+	up(&famez_active_sema);
 
 	destroy_config(config);
 }
 
 //-------------------------------------------------------------------------
+// In the monolithic driver this was famez_bridge_setup()
 
-famez_configuration_t *famez_register(char *basename,
-				      const struct file_operations *fops)
+int famez_misc_register(char *basename, const struct file_operations *fops)
 {
-	pr_info(FZ "Somebody wants in!\n");
-	return NULL;
-}
-EXPORT_SYMBOL(famez_register);
+	famez_configuration_t *config;
+	struct pci_dev *pdev;
+	miscdev2config_t *lookup;
+	char *ownername, *devname;
+	int ret;
 
-void famez_unregister(famez_configuration_t *config)
-{
-	pr_info(FZ "And now they want out!\n");
+	ownername = fops->owner->name;
+
+	if ((ret = down_interruptible(&famez_active_sema)))
+		return ret;
+
+	list_for_each_entry(config, &famez_active_list, lister) {
+
+		pdev = config->pdev;
+		pr_info(FZ "binding %s to %s: ",
+			ownername, pci_resource_name(pdev, 1));
+
+		ret = -ENOMEM;
+		if (!(lookup = kzalloc(sizeof(miscdev2config_t),
+				       GFP_KERNEL)))
+			goto up_and_out;
+		if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
+				     GFP_KERNEL))) {
+			kfree(lookup);
+			goto up_and_out;
+		}
+
+		// Device file name is meant to be reminiscent of lspci output
+		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
+		lookup->miscdev.name = devname;
+		lookup->miscdev.fops = fops;
+		lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
+		lookup->miscdev.mode = 0666;
+	
+		lookup->config = config;	// Don't point that thing at me
+		config->teardown_lookup = lookup;
+		if ((ret = misc_register(&lookup->miscdev))) {
+			kfree(devname);
+			kfree(lookup);
+			goto up_and_out;
+		}
+		pr_cont("success\n");
+	}
+
+up_and_out:
+	if (ret)
+		pr_cont("FAILURE\n");
+	up(&famez_active_sema);
+	return ret;
 }
-EXPORT_SYMBOL(famez_unregister);
+EXPORT_SYMBOL(famez_misc_register);
+
+//-------------------------------------------------------------------------
+// In the monolithic driver this was famez_bridge_teardown()
+
+void famez_misc_deregister(const struct file_operations *fops)
+{
+	famez_configuration_t *config;
+	struct pci_dev *pdev;
+	// miscdev2config_t *lookup;
+	char *ownername;
+	int ret;
+
+	ownername = fops->owner->name;
+
+	if ((ret = down_interruptible(&famez_active_sema)))
+		return;
+
+	list_for_each_entry(config, &famez_active_list, lister) {
+
+		pdev = config->pdev;
+		pr_err(FZ "UNbinding %s from %s: FAILURE\n",
+			ownername, pci_resource_name(pdev, 1));
+	}
+	up(&famez_active_sema);
+
+}
+EXPORT_SYMBOL(famez_misc_deregister);
 
 //-------------------------------------------------------------------------
 
