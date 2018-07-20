@@ -1,11 +1,8 @@
 // Configure and handle MSI-X interrupts from IVSHMEM device.  The sendstring
 // method is also here, which keeps all "hardware IO" in one place.
 
-#include <linux/delay.h>	// usleep_range, wait_event*
 #include <linux/export.h>
-#include <linux/jiffies.h>	// jiffies
 #include <linux/interrupt.h>	// irq_enable, etc
-#include <linux/pci.h>		// all kinds
 
 #include "famez.h"
 

@@ -4,8 +4,6 @@
 #include <linux/delay.h>	// usleep_range, wait_event*
 #include <linux/export.h>
 #include <linux/jiffies.h>	// jiffies
-#include <linux/interrupt.h>	// irq_enable, etc
-#include <linux/pci.h>		// all kinds
 
 #include "famez.h"
 

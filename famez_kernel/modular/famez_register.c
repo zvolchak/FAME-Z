@@ -20,11 +20,7 @@
 
 #include <linux/export.h>
 #include <linux/fs.h>
-#include <linux/kernel.h>
-#include <linux/list.h>
-#include <linux/module.h>
-#include <linux/pci.h>
-#include <linux/semaphore.h>
+#include <linux/module.h>	// fops->owner
 
 #include "famez.h"
 

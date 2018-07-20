@@ -5,7 +5,9 @@
 
 #include <linux/list.h>
 #include <linux/miscdevice.h>
-#include <linux/mutex.h>
+#include <linux/pci.h>
+#include <linux/semaphore.h>
+#include <linux/wait.h>
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
@@ -95,14 +97,20 @@ typedef struct {
 } famez_configuration_t;
 
 //-------------------------------------------------------------------------
-// famez_base.c - insmod and later probe() setup; final teardown of rmmod
+// famez_pci_base.c - insmod/rmmod handling with pci_register probe()/remove()
 
 extern int famez_verbose;				// insmod parameter
 extern struct list_head famez_active_list;
 extern struct semaphore famez_active_sema;
 
+//-------------------------------------------------------------------------
+// famez_config.c - create/populate and destroy a config structure
+
+famez_configuration_t *famez_create_config(struct pci_dev *);
+void famez_destroy_config(famez_configuration_t *);
+
 //.........................................................................
-// famez_ivshmsg.c - the meat of the actual messaging
+// famez_ivshmsg.c - the actual messaging IO.
 
 // EXPORTed
 extern int famez_sendmail(uint32_t, char *, size_t, famez_configuration_t *);
@@ -111,8 +119,7 @@ extern famez_mailslot_t *famez_await_legible_slot(struct file *,
 extern void famez_release_legible_slot(famez_configuration_t *);
 
 //.........................................................................
-// famez_MSI-X.c - handle interrupts from other FAME-Z peers (input)
-// and sendstring (output).
+// famez_MSI-X.c - handle interrupts from other FAME-Z peers (input).
 
 int famez_MSIX_setup(struct pci_dev *);
 void famez_MSIX_teardown(struct pci_dev *);
