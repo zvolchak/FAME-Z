@@ -275,13 +275,22 @@ static const struct file_operations bridge_fops = {
 //-------------------------------------------------------------------------
 // Called from insmod.  Bind the driver set to all available FAME-Z devices.
 
+static int _nbindings = 0;
+
 int __init fzbridge_init(void)
 {
+	int ret;
+
 	PR_V1("-----------------------------------------------------------");
 	PR_V1(FZBRIDGE_VERSION "; parms:\n");
 	PR_V1("fzbridge_verbose = %d\n", fzbridge_verbose);
 
-	return famez_misc_register("bridge", &bridge_fops);
+	_nbindings = 0;
+	if ((ret = famez_misc_register("bridge", &bridge_fops)) < 0)
+		return ret;
+	_nbindings = ret;
+	pr_info(FZBR "%d bindings made\n", _nbindings);
+	return _nbindings ? 0 : -ENODEV;
 }
 
 module_init(fzbridge_init);
@@ -291,7 +300,11 @@ module_init(fzbridge_init);
 
 void fzbridge_exit(void)
 {
-	famez_misc_deregister(&bridge_fops);
+	int ret = famez_misc_deregister(&bridge_fops);
+	if (ret >= 0)
+		pr_info(FZBR "%d/%d bindings released\n", ret, _nbindings);
+	else
+		pr_err(FZBR "module exit errno %d\n", -ret);
 }
 
 module_exit(fzbridge_exit);

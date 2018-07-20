@@ -310,13 +310,14 @@ int famez_misc_register(char *basename, const struct file_operations *fops)
 	struct pci_dev *pdev;
 	miscdev2config_t *lookup;
 	char *ownername, *devname;
-	int ret;
+	int ret, nbindings;
 
 	ownername = fops->owner->name;
 
 	if ((ret = down_interruptible(&famez_active_sema)))
 		return ret;
 
+	nbindings = 0;
 	list_for_each_entry(config, &famez_active_list, lister) {
 
 		pdev = config->pdev;
@@ -348,10 +349,12 @@ int famez_misc_register(char *basename, const struct file_operations *fops)
 			goto up_and_out;
 		}
 		pr_cont("success\n");
+		nbindings++;
 	}
+	ret = nbindings;
 
 up_and_out:
-	if (ret)
+	if (ret < 0)
 		pr_cont("FAILURE\n");
 	up(&famez_active_sema);
 	return ret;
@@ -359,9 +362,10 @@ up_and_out:
 EXPORT_SYMBOL(famez_misc_register);
 
 //-------------------------------------------------------------------------
-// In the monolithic driver this was famez_bridge_teardown()
+// In the monolithic driver this was famez_bridge_teardown().  Return the
+// count of bindings broken or -ERRNO.
 
-void famez_misc_deregister(const struct file_operations *fops)
+int famez_misc_deregister(const struct file_operations *fops)
 {
 	famez_configuration_t *config;
 	miscdev2config_t *lookup;
@@ -371,21 +375,26 @@ void famez_misc_deregister(const struct file_operations *fops)
 	ownername = fops->owner->name;
 
 	if ((ret = down_interruptible(&famez_active_sema)))
-		return;
+		return ret;
 
+	ret = 0;
 	list_for_each_entry(config, &famez_active_list, lister) {
-
-		pr_err(FZ "UNbinding %s from %s: FAILURE\n",
+		pr_info(FZ "UNbind %s from %s: ",
 			ownername, pci_resource_name(config->pdev, 0));
 
-		lookup = config->teardown_lookup;
-	
-		misc_deregister(&lookup->miscdev);
-		kfree(lookup->miscdev.name);
-		kfree(lookup);
-		config->teardown_lookup = NULL;
+		if ((lookup = config->teardown_lookup) &&
+		    (lookup->miscdev.fops == fops)) {
+				misc_deregister(&lookup->miscdev);
+				kfree(lookup->miscdev.name);
+				kfree(lookup);
+				config->teardown_lookup = NULL;
+				ret++;
+				pr_cont("success\n");
+		} else
+			pr_cont("not actually bound\n");
 	}
 	up(&famez_active_sema);
+	return ret;
 
 }
 EXPORT_SYMBOL(famez_misc_deregister);

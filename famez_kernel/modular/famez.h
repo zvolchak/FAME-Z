@@ -101,7 +101,7 @@ extern int famez_verbose;				// insmod parameter
 
 // EXPORTed
 extern int famez_misc_register(char *, const struct file_operations *);
-extern void famez_misc_deregister(const struct file_operations *);
+extern int famez_misc_deregister(const struct file_operations *);
 
 //-------------------------------------------------------------------------
 // famez_ivshmsg.c - the meat of the actual messaging
