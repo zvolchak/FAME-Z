@@ -348,10 +348,11 @@ int __init fzbridge_init(void)
 	int ret = 0;
 
 	PR_V1("-----------------------------------------------------------");
-	PR_V1(FZBR FZBRIDGE_VERSION "; parms:\n");
-	PR_V1(FZSP "fzbridge_verbose = %d\n", fzbridge_verbose);
+	PR_V1(FZBRIDGE_VERSION "; parms:\n");
+	PR_V1("fzbridge_verbose = %d\n", fzbridge_verbose);
 
-	famez_register();
+	pr_info(FZBR "this module name is %s\n", THIS_MODULE->name);
+	famez_register("bridge", &bridge_fops);
 
 	return ret;
 }

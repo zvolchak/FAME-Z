@@ -302,7 +302,8 @@ void famez_remove(struct pci_dev *pdev)
 
 //-------------------------------------------------------------------------
 
-famez_configuration_t *famez_register(void)
+famez_configuration_t *famez_register(char *basename,
+				      const struct file_operations *fops)
 {
 	pr_info(FZ "Somebody wants in!\n");
 	return NULL;

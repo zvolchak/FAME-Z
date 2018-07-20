@@ -10,53 +10,6 @@
 #include "famez.h"
 
 //-------------------------------------------------------------------------
-// Return positive (bytecount) on success, negative on error, never 0.
-// I don't really believe usleep_range is atomic-safe but I'm on mutices now.
-
-int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
-		   famez_configuration_t *config)
-{
-	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
-	ivshmsg_ringer_t ringer;
-
-	// Might NOT be printable C string.
-	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
-
-	if (peer_id < 1 || peer_id > config->server_id)
-		return -EBADSLT;
-	if (msglen >= config->max_msglen)
-		return -E2BIG;
-	if (!msglen)
-		return -ENODATA; // FIXME: is there value to a "silent kick"?
-
-	// Pseudo-"HW ready": wait until my_slot has pushed a previous write
-	// through. In truth it's the previous responder clearing my msglen.
-	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
-		 usleep_range(50000, 80000);
-
-
-	// FIXME: add stompcounter field, when it hits 5 ret(-ENOBUFS).
-	// To start with, just emit that error on first occurrence and
-	// see what falls out.
-	if (config->my_slot->msglen)
-		pr_warn(FZ "%s() stomps previous message to %llu\n",
-			__FUNCTION__, config->my_slot->last_responder);
-
-	// Keep nodename and msg pointer; update msglen and msg contents.
-	// memset(config->my_slot->msg, 0, config->max_msglen);	# overkill
-	config->my_slot->msglen = msglen;
-	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
-	config->my_slot->last_responder = peer_id;
-
-	memcpy(config->my_slot->msg, msg, msglen);
-	ringer.vector = config->my_id;		// from this
-	ringer.peer = peer_id;			// to this
-	config->regs->Doorbell = ringer.Doorbell;
-	return msglen;
-}
-EXPORT_SYMBOL(famez_sendmail);
-
-//-------------------------------------------------------------------------
 
 static famez_mailslot_t __iomem *calculate_mailslot(
 	famez_configuration_t *config,
