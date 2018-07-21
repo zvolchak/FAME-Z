@@ -69,7 +69,7 @@ static int bridge_open(struct inode *inode, struct file *file)
 			ret = -ENOMEM;
 			goto alldone;
 		}
-		FAMEZ_LOCK_INIT(&(buffers->wbuf_lock));
+		mutex_init(&(buffers->wbuf_mutex));
 		config->writer_support = buffers;
 	} else {
 		pr_warn(FZBRSP "Sorry, just exclusive open() for now\n");
@@ -146,6 +146,8 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 	char sender_id_str[8];
 	int ret;
 
+	// A successful return holds a lock in another module requiring
+	// a call to famez_release_legible_slot().
 	legible_slot = famez_await_legible_slot(file, config);
 	if (IS_ERR(legible_slot))
 		return PTR_ERR(legible_slot);
@@ -165,7 +167,8 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 	// Now the message body proper, after the colon of the previous message.
 	ret = copy_to_user(buf + SENDER_ID_LEN,
 		legible_slot->msg, legible_slot->msglen);
-	ret = ret ? -EFAULT : legible_slot->msglen + SENDER_ID_LEN;
+	ret = !ret ? legible_slot->msglen + SENDER_ID_LEN :
+		(ret > 0 ? -EFAULT : ret);
 
 read_complete:	// Whether I used it or not, let everything go
 	famez_release_legible_slot(config);
@@ -173,6 +176,8 @@ read_complete:	// Whether I used it or not, let everything go
 }
 
 //-------------------------------------------------------------------------
+// Use many idiot checks.  Performance is not the issue here.  The data
+// might be binary (including unprintables and NULs), not just a C string.
 
 static ssize_t bridge_write(struct file *file, const char __user *buf,
 			    size_t buflen, loff_t *ppos)
@@ -184,23 +189,23 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	int ret;
 	uint16_t peer_id;
 
-	// Use many idiot checks.  Performance is not the issue here.
-	// FIXME It could be raw data with nulls at some point...
-	if (buflen >= config->max_msglen - 1) {	// Paranoia on term NUL
+	if (buflen >= config->max_msglen - 1) {		// Paranoia on term NUL
 		PR_V1("msglen of %lu is too big\n", buflen);
 		return -E2BIG;
 	}
-	if ((ret = FAMEZ_LOCK(&buffers->wbuf_lock)))	// Multiuse of *file
-		goto unlock_return;
-	if (copy_from_user(buffers->wbuf, buf, buflen)) {
-		ret = -EIO;
+	mutex_lock(&buffers->wbuf_mutex);	// Multiuse of *file
+	if ((ret = copy_from_user(buffers->wbuf, buf, buflen))) {
+		if (ret > 0)
+			ret = -EFAULT;
 		goto unlock_return;
 	}
-	buffers->wbuf[buflen] = '\0';
+	// Even if it's not a string, this puts a bound on the strchr(':')
+	buffers->wbuf[buflen] = '\0';		
 
-	// Split body into two strings around the first colon.
+	// Split body into two pieces around the first colon: a proper string
+	// and whatever the real payload is (string or binary).
 	if (!(msgbody = strchr(buffers->wbuf, ':'))) {
-		pr_err(FZBR "I see no colon in \"%s\"\n", buffers->wbuf);
+		pr_err(FZBR "no colon in \"%s\"\n", buffers->wbuf);
 		ret = -EBADMSG;
 		goto unlock_return;
 	}
@@ -226,7 +231,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		ret = -EIO;	// partial transfer paranoia
 
 unlock_return:
-	FAMEZ_UNLOCK(&buffers->wbuf_lock);
+	mutex_unlock(&buffers->wbuf_mutex);
 	return ret;
 }
 

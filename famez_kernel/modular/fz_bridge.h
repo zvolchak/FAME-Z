@@ -16,8 +16,8 @@
 
 // Just write support for now.
 typedef struct {
-	char *wbuf;		// kmalloc(max_msglen)
-	FAMEZ_LOCK_STRUCT wbuf_lock;
+	char *wbuf;			// kmalloc(max_msglen)
+	struct mutex wbuf_mutex;
 } bridge_buffers_t;
 
 //-------------------------------------------------------------------------

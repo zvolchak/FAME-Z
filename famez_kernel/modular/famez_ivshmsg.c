@@ -14,7 +14,7 @@
 int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		   famez_configuration_t *config)
 {
-	uint64_t hw_timeout = get_jiffies_64() + HZ/2;	// 500 ms
+	unsigned long now = 0, hw_timeout = get_jiffies_64() + HZ/5;	// 200 ms
 	ivshmsg_ringer_t ringer;
 
 	// Might NOT be printable C string.
@@ -29,18 +29,29 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 
 	// Pseudo-"HW ready": wait until my_slot has pushed a previous write
 	// through. In truth it's the previous responder clearing my msglen.
-	while (config->my_slot->msglen && get_jiffies_64() < hw_timeout)
-		 usleep_range(50000, 80000);
+	// The macro makes many references to its parameters, so...
+	while (config->my_slot->msglen && time_before(now, hw_timeout)) {
+		if (in_interrupt())
+			mdelay(25);	// udelay(25k) leads to compiler error
+		else
+		 	usleep_range(30000, 60000);
+	       now = get_jiffies_64();
+	}
 
-	// FIXME: add stompcounter field, when it hits 5 ret(-ENOBUFS).
-	// To start with, just emit that error on first occurrence and
-	// see what falls out.
-	if (config->my_slot->msglen)
-		pr_warn(FZ "%s() stomps previous message to %llu\n",
+	// FIXME: add stompcounter tracker, return -EXXXX. To start with, just
+	// emit an error on first occurrence and see what falls out.
+	if (config->my_slot->msglen) {
+		if (config->my_slot->last_responder == peer_id) {
+			pr_err("Peer %u has left the building\n", peer_id);
+			config->my_slot->msglen = 0;
+			config->my_slot->last_responder = 0;
+			return -EHOSTDOWN;
+		}
+		PR_V1("%s() would stomp previous message to %llu\n",
 			__FUNCTION__, config->my_slot->last_responder);
-
+		return -ENOBUFS;
+	}
 	// Keep nodename and msg pointer; update msglen and msg contents.
-	// memset(config->my_slot->msg, 0, config->max_msglen);	# overkill
 	config->my_slot->msglen = msglen;
 	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
 	config->my_slot->last_responder = peer_id;
@@ -60,21 +71,18 @@ EXPORT_SYMBOL(famez_sendmail);
 famez_mailslot_t *famez_await_legible_slot(struct file *file,
 					   famez_configuration_t *config)
 {
-	int ret;
-
-	if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
-		return ERR_PTR(ret);
+	spin_lock(&config->legible_slot_lock);
 	while (!config->legible_slot) {		// Wait for new data?
-		FAMEZ_UNLOCK(&config->legible_slot_lock);
+		spin_unlock(&config->legible_slot_lock);
 		if (file->f_flags & O_NONBLOCK)
 			return ERR_PTR(-EAGAIN);
 		PR_V2("read() waiting...\n");
 		if (wait_event_interruptible(config->legible_slot_wqh, 
 					     config->legible_slot))
 			return ERR_PTR(-ERESTARTSYS);
-		if ((ret = FAMEZ_LOCK(&config->legible_slot_lock)))
-			return ERR_PTR(ret);
+		spin_lock(&config->legible_slot_lock);
 	}
+	spin_unlock(&config->legible_slot_lock);
 	return config->legible_slot;
 }
 EXPORT_SYMBOL(famez_await_legible_slot);
@@ -83,8 +91,9 @@ EXPORT_SYMBOL(famez_await_legible_slot);
 
 void famez_release_legible_slot(famez_configuration_t *config)
 {
+	spin_lock(&config->legible_slot_lock);
 	config->legible_slot->msglen = 0;	// In the slot of the remote sender
 	config->legible_slot = NULL;		// Seen by local MSIX handler
-	FAMEZ_UNLOCK(&config->legible_slot_lock);
+	spin_unlock(&config->legible_slot_lock);
 }
 EXPORT_SYMBOL(famez_release_legible_slot);

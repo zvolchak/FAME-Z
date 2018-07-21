@@ -60,18 +60,17 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
-	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4))
+	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4)) {
+		// Needs to be okay with interrupt context.
 		famez_sendmail(sender_id, "pong", 4, config);
-	else {
-		int bad_lock = FAMEZ_LOCK(&(config->legible_slot_lock));
-		if (config->legible_slot)
-			pr_warn(FZ "stomping legible slot\n");
-		config->legible_slot = sender_slot;
-		// On wakeup, it's gonna grab the lock first so...
-		if (!bad_lock)
-			FAMEZ_UNLOCK(&(config->legible_slot_lock));
-		wake_up(&(config->legible_slot_wqh));
+		return IRQ_HANDLED;
 	}
+	spin_lock(&(config->legible_slot_lock));
+	if (config->legible_slot)
+		pr_warn(FZ "stomping legible slot\n");
+	config->legible_slot = sender_slot;
+	spin_unlock(&(config->legible_slot_lock));
+	wake_up(&(config->legible_slot_wqh));
 	return IRQ_HANDLED;
 }
 

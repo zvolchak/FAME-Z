@@ -115,7 +115,7 @@ famez_configuration_t *famez_create_config(struct pci_dev *pdev)
 
 	// Simple fields.
 	init_waitqueue_head(&(config->legible_slot_wqh));
-	FAMEZ_LOCK_INIT(&(config->legible_slot_lock));
+	spin_lock_init(&(config->legible_slot_lock));
 
 	// Real work.
 	if ((ret = mapBARs(pdev)))

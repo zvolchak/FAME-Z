@@ -17,14 +17,6 @@
 
 #define FAMEZ_VERSION	FAMEZ_NAME " v0.7.5: endgame chardev"
 
-// Used from user context, sleeping must be allowed.  Even though they can run
-// through thousands of transactions, eventually even a mutex will BUG with
-// "scheduling while atomic" when using "cat" as a receiver.
-#define FAMEZ_LOCK_STRUCT	struct semaphore
-#define FAMEZ_LOCK_INIT(LLL)	sema_init(LLL, 1)	// effectively a mutex
-#define FAMEZ_LOCK(LLL)		down_interruptible(LLL)
-#define FAMEZ_UNLOCK(LLL)	up(LLL)
-
 typedef struct {			// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
 			Rev1Reserved2,	// Rev 0: Interrupt status
@@ -39,10 +31,10 @@ typedef struct {			// BAR 1: Not mapped, not used.  YET.
 // The famez_server.py controls the mailbox slot size and number of slots
 // (and therefore the total file size).  It gives these numbers to this driver.
 // There are always a power-of-two number of mailbox slots, indexed by IVSHMSG
-// client ID.  Slot 0 is reserved for global data; it's easy to find :-); 
-// besides, ID 0 doesn't seem to work in the doorbell.  The last slot (with 
-// ID == nSlots - 1) is for the Python server.  The remaining slots are for
-// client IDs 1 through (nSlots - 2).
+// client ID.  Slot 0 is reserved for global data cuz it's easy to find :-)
+// Besides, ID 0 doesn't seem to work in the QEMU doorbell mechanism.  The
+// last slot (with ID == nSlots - 1) is for the Python server.  The remaining
+// slots are for client IDs 1 through (nSlots - 2).
 
 typedef struct {			// BAR 2: Start of IVSHMEM
 	uint64_t slotsize, msg_offset, nSlots;
@@ -88,7 +80,7 @@ typedef struct {
 
 	famez_mailslot_t *legible_slot;
 	struct wait_queue_head legible_slot_wqh;
-	FAMEZ_LOCK_STRUCT legible_slot_lock;
+	spinlock_t legible_slot_lock;
 
 	// Writing is many to one, so support buffers etc are the
 	// responsibility of that module, managed by open() & release().
