@@ -1,0 +1,1 @@
+START=`date +%s`; W=0; trap "break" 2;while true; do echo -n "3:0123456789" > /dev/famez_bridge_0a || break; let W++; done; echo; END=`date +%s`; let END-=$START; echo $W writes '/' $END secs; let WPS=$W/$END; echo $WPS 'w/s'
