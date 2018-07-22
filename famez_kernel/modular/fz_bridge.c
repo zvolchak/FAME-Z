@@ -135,8 +135,8 @@ static int bridge_release(struct inode *inode, struct file *file)
 // can sleep and returns the number of bytes that could NOT be copied or
 // -ERRNO.  Require both copies to work all the way.  
 
-#define SENDER_ID_FMT	"%03llu:"	// These must agree
-#define SENDER_ID_LEN	4
+#define SENDER_ID_FMT	"%02llu:"	// These must agree
+#define SENDER_ID_LEN	3
 
 static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
@@ -169,6 +169,8 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 		legible_slot->msg, legible_slot->msglen);
 	ret = !ret ? legible_slot->msglen + SENDER_ID_LEN :
 		(ret > 0 ? -EFAULT : ret);
+	if (ret > 0)
+		*ppos = 0;
 
 read_complete:	// Whether I used it or not, let everything go
 	famez_release_legible_slot(config);
@@ -270,9 +272,9 @@ int __init fzbridge_init(void)
 {
 	int ret;
 
-	PR_V1("-----------------------------------------------------------");
-	PR_V1(FZBRIDGE_VERSION "; parms:\n");
-	PR_V1("fzbridge_verbose = %d\n", fzbridge_verbose);
+	pr_info("-------------------------------------------------------");
+	pr_info(FZBR FZBRIDGE_VERSION "; parms:\n");
+	pr_info(FZSP "fzbridge_verbose = %d\n", fzbridge_verbose);
 
 	_nbindings = 0;
 	if ((ret = famez_misc_register("bridge", &bridge_fops)) < 0)

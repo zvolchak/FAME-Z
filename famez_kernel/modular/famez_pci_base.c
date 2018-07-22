@@ -169,9 +169,9 @@ int __init famez_init(void)
 {
 	int ret;
 
-	PR_V1("-----------------------------------------------------------");
-	PR_V1(FZ FAMEZ_VERSION "; parms:\n");
-	PR_V1(FZSP "famez_verbose = %d\n", famez_verbose);
+	pr_info("-------------------------------------------------------");
+	pr_info(FZ FAMEZ_VERSION "; parms:\n");
+	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
 
 	if ((ret = pci_register_driver(&famez_pci_driver)))
 		pr_err(FZ "pci_register_driver() = %d\n", ret);

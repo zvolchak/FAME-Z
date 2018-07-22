@@ -14,7 +14,11 @@
 int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		   famez_configuration_t *config)
 {
-	unsigned long now = 0, hw_timeout = get_jiffies_64() + HZ/5;	// 200 ms
+	// Currently doing 18 xfers/sec, or about 50 ms/xfer, in full synchronous
+	// mode.  I'm thinking that's a QEMU thing regardless of the delays used
+	// below.  While a 4x timeout sounds nice, it sometimes goes long enough
+	// to starve the rcu process.   Try 3x for a while.
+	unsigned long now = 0, hw_timeout = get_jiffies_64() + HZ/7; // 142 ms
 	ivshmsg_ringer_t ringer;
 
 	// Might NOT be printable C string.
@@ -32,9 +36,9 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// The macro makes many references to its parameters, so...
 	while (config->my_slot->msglen && time_before(now, hw_timeout)) {
 		if (in_interrupt())
-			mdelay(25);	// udelay(25k) leads to compiler error
+			mdelay(20);	// udelay(25k) leads to compiler error
 		else
-		 	usleep_range(30000, 60000);
+		 	msleep(20);
 	       now = get_jiffies_64();
 	}
 

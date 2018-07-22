@@ -30,7 +30,7 @@ static famez_mailslot_t __iomem *calculate_mailslot(
 
 static irqreturn_t all_msix(int vector, void *data) {
 	famez_configuration_t *config = data;
-	int slotnum;
+	int slotnum, stomped = 0;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
 	famez_mailslot_t __iomem *sender_slot;
 
@@ -67,10 +67,13 @@ static irqreturn_t all_msix(int vector, void *data) {
 	}
 	spin_lock(&(config->legible_slot_lock));
 	if (config->legible_slot)
-		pr_warn(FZ "stomping legible slot\n");
+		stomped = 1;	// print outside the spinlock
 	config->legible_slot = sender_slot;
 	spin_unlock(&(config->legible_slot_lock));
 	wake_up(&(config->legible_slot_wqh));
+	if (stomped)
+		pr_warn(FZ "%s stomping legible slot %d\n",
+			__FUNCTION__, slotnum);
 	return IRQ_HANDLED;
 }
 
