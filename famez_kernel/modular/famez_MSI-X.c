@@ -27,12 +27,16 @@ static famez_mailslot_t __iomem *calculate_mailslot(
 }
 
 //-------------------------------------------------------------------------
+// FIXME: can a spurious interrupt get me here "too fast" so that I'm
+// overrunning the legible slot during a tight loop client?
 
 static irqreturn_t all_msix(int vector, void *data) {
 	famez_configuration_t *config = data;
 	int slotnum, stomped = 0;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
 	famez_mailslot_t __iomem *sender_slot;
+
+	spin_lock(&(config->legible_slot_lock));
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
@@ -42,6 +46,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 			break;
 	}
 	if (slotnum >= config->globals->nSlots) {
+		spin_unlock(&(config->legible_slot_lock));
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
@@ -50,30 +55,34 @@ static irqreturn_t all_msix(int vector, void *data) {
 	// All returns from here are IRQ_HANDLED
 
 	if (!(sender_slot = calculate_mailslot(config, sender_id))) {
+		spin_unlock(&(config->legible_slot_lock));
 		pr_err(FZ "Could not match peer %u\n", sender_id);
 		return IRQ_HANDLED;
 	}
+
+	// This may do weird things with the spinlock held...
 	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
 		vector, sender_id, sender_slot->msg);
 
-	sender_slot->peer_id = sender_id;	// FIXME WHY IS THIS NEEDED?
+	// sender_slot->peer_id = sender_id;	// FIXME WHY IS THIS NEEDED?
 
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
 	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4)) {
 		// Needs to be okay with interrupt context.
+		spin_unlock(&(config->legible_slot_lock));
 		famez_sendmail(sender_id, "pong", 4, config);
 		return IRQ_HANDLED;
 	}
-	spin_lock(&(config->legible_slot_lock));
-	if (config->legible_slot)
-		stomped = 1;	// print outside the spinlock
+	if (config->legible_slot)	// print outside the spinlock
+		stomped = config->legible_slot->peer_id;
 	config->legible_slot = sender_slot;
 	spin_unlock(&(config->legible_slot_lock));
+
 	wake_up(&(config->legible_slot_wqh));
 	if (stomped)
-		pr_warn(FZ "%s stomping legible slot %d\n",
-			__FUNCTION__, slotnum);
+		pr_warn(FZ "%s() stomped legible slot for reader %d\n",
+			__FUNCTION__, config->my_id);
 	return IRQ_HANDLED;
 }
 

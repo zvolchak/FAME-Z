@@ -16,8 +16,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 {
 	// Currently doing 18 xfers/sec, or about 50 ms/xfer, in full synchronous
 	// mode.  I'm thinking that's a QEMU thing regardless of the delays used
-	// below.  While a 4x timeout sounds nice, it sometimes goes long enough
-	// to starve the rcu process.   Try 3x for a while.
+	// below.  While a 4x timeout sounds nice, go with 3x for now.
 	unsigned long now = 0, hw_timeout = get_jiffies_64() + HZ/7; // 142 ms
 	ivshmsg_ringer_t ringer;
 
@@ -46,7 +45,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// emit an error on first occurrence and see what falls out.
 	if (config->my_slot->msglen) {
 		if (config->my_slot->last_responder == peer_id) {
-			pr_err("Peer %u has left the building\n", peer_id);
+			pr_err(FZ "peer %u has left the building\n", peer_id);
 			config->my_slot->msglen = 0;
 			config->my_slot->last_responder = 0;
 			return -EHOSTDOWN;
@@ -56,6 +55,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		return -ENOBUFS;
 	}
 	// Keep nodename and msg pointer; update msglen and msg contents.
+	// msglen is the handshake out to the world that I'm busy.
 	config->my_slot->msglen = msglen;
 	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
 	config->my_slot->last_responder = peer_id;
@@ -69,24 +69,27 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 EXPORT_SYMBOL(famez_sendmail);
 
 //-------------------------------------------------------------------------
-// Failure returns < 0 without lock held; success returns >=0 number of bytes
-// ready with lock held.  Intermix locking with that in msix_all().
+// Return a pointer to the data structure or ERRPTR, rather than an integer
+// ret, so the caller doesn't need to understand the config structure to
+// look it up.  Intermix locking with that in msix_all().
 
 famez_mailslot_t *famez_await_legible_slot(struct file *file,
 					   famez_configuration_t *config)
 {
-	spin_lock(&config->legible_slot_lock);
-	while (!config->legible_slot) {		// Wait for new data?
-		spin_unlock(&config->legible_slot_lock);
-		if (file->f_flags & O_NONBLOCK)
-			return ERR_PTR(-EAGAIN);
-		PR_V2("read() waiting...\n");
-		if (wait_event_interruptible(config->legible_slot_wqh, 
-					     config->legible_slot))
-			return ERR_PTR(-ERESTARTSYS);
-		spin_lock(&config->legible_slot_lock);
-	}
-	spin_unlock(&config->legible_slot_lock);
+	int ret = 0;
+
+	if (config->legible_slot)
+		return config->legible_slot;
+	if (file->f_flags & O_NONBLOCK)
+		return ERR_PTR(-EAGAIN);
+	PR_V2("%s() waiting...\n", __FUNCTION__);
+
+	// wait_event_xxx checks the the condition BEFORE waiting but
+	// does modify the run state.  Does that side effect matter?
+	// FIXME: wait_event_interruptible_locked?
+	if ((ret = wait_event_interruptible(config->legible_slot_wqh, 
+					    config->legible_slot)))
+		return ERR_PTR(ret);
 	return config->legible_slot;
 }
 EXPORT_SYMBOL(famez_await_legible_slot);
