@@ -144,36 +144,43 @@ class FAMEZ_MailBox(object):
         self._populate()
 
     #----------------------------------------------------------------------
+    # Dig the mail and node name out of the slot for peer_id (1:1 mapping).
+    # It's not so much (passively) receivng mail as it is actively getting.
 
-    def pickup_from_slot(self, slotnum, asbytes=False):
+    def empty(self, peer_id, asbytes=False, clear=True):
         '''Return the nodename and message.'''
-        assert 1 <= slotnum <= self.server_id, \
+        assert 1 <= peer_id <= self.server_id, \
             'Slotnum is out of domain 1 - %d' % (self.server_id)
-        index = slotnum * self.MAILBOX_SLOTSIZE     # start of nodename
+        index = peer_id * self.MAILBOX_SLOTSIZE     # start of nodename
         nodename, msglen = struct.unpack('32sQ', self.mm[index:index + 40])
         nodename = nodename.split(b'\0', 1)[0].decode()
         index += self.MAILSLOT_MSG_off
         fmt = '%ds' % msglen
         msg = struct.unpack(fmt, self.mm[index:index + msglen])
 
-        # The message is copied so mark the mailslot length zero as permission
-        # for the requester to send another message (not necessarily to me).
+        # The message is copied so mark the mailslot length zero as handshake
+        # to the requester that its mailbox has been emptied.
 
-        index = slotnum * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
-        self.mm[index:index + 8] = struct.pack('Q', 0)
+        if clear:
+            index = peer_id * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
+            self.mm[index:index + 8] = struct.pack('Q', 0)
 
         # Clean up the message copyout, which is a single element tuple
-        # that should be NUL-padded to end.
-        msg = msg[0].split(b'\0', 1)[0]
+        # that has a NUL at msglen.
+        # msg = msg[0].split(b'\0', 1)[0] # only valid for pure stringsA
+        msg = msg[0][:msglen]
         if not asbytes:
             msg = msg.decode()
         return nodename, msg
 
     #----------------------------------------------------------------------
+    # Post a message to the indicated mailbox slot but don't kick the
+    # EventFD.  First, this routine doesn't know about them and second,
+    # keeping it a separate operation facilitates spoofing in the client.
 
-    def place_in_slot(self, slotnum, msg):
-        assert 1 <= slotnum <= self.server_id, \
-            'Slotnum is out of domain 1 - %d' % (self.server_id)
+    def fill(self, sender_id, msg):
+        assert 1 <= sender_id <= self.server_id, \
+            'Peer ID is out of domain 1 - %d' % (self.server_id)
         if isinstance(msg, str):
             msg = msg.encode()
         assert isinstance(msg, bytes), 'msg must be string or bytes'
@@ -182,16 +189,17 @@ class FAMEZ_MailBox(object):
 
         # The previous responder needs to clear the msglen to indicate it
         # has pulled the message out of the sender's mailbox.
-        index = slotnum * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
+        index = sender_id * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
         stop = NOW() + 1.2
         while NOW() < stop and struct.unpack('Q', self.mm[index:index+8])[0]:
             print('psuedo-HW not ready to send')
             SLEEP(0.1)
 
         self.mm[index:index + 8] = struct.pack('Q', msglen)
-        index = slotnum * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSG_off
+        index = sender_id * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSG_off
         self.mm[index:index + msglen] = msg
-        self.mm[index + msglen] = 0	# The kernel will appreciate this :-)
+        # For Justin: NUL-terminate the message.
+        self.mm[index + msglen] = 0
 
     #----------------------------------------------------------------------
     # Called by Python client on graceful shutdowns, and always by server

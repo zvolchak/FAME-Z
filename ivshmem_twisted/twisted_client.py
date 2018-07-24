@@ -81,9 +81,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     def get_nodenames(self):
         self.id2nodename = OrderedDict()
-        for id in sorted(self.fd_list):   # integer keys: their ID
-            nodename, _ = self.mailbox.pickup_from_slot(id)
-            self.id2nodename[id] = nodename
+        for peer_id in sorted(self.fd_list):   # integer keys()
+            nodename, _ = self.mailbox.empty(peer_id, clear=False)
+            self.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
         '''Return a list even for one item for consistency with keywords
@@ -122,7 +122,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         assert src_indices, 'missing or unknown source(s)'
         assert dest_indices, 'missing or unknown destination(s)'
         for S in src_indices:
-            self.mailbox.place_in_slot(S, msg)
+            self.mailbox.fill(S, msg)
             for D in dest_indices:
                 if self.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
@@ -270,7 +270,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     @staticmethod
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
-        nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
+        peer_id = vectorobj.num
+        peer = selph.peer_list.get(peer_id, None)
+        if peer is None:
+            selph.logmsg('Disappeering act %d' % peer_id)
+            return
+        nodename, msg = selph.mailbox.empty(peer_id)
+
         try:
             print('%10s (%2d) -> "%s" (len %d)' % (
                 nodename, vectorobj.num, msg, len(msg)))
@@ -278,7 +284,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             pass
         if msg == 'ping':
             try:
-                selph.place_and_go(vectorobj.num, 'pong(%2d)' % selph.my_id)
+                selph.mailbox.fill(selph.my_id, 'pong')
+                selph.peer_list[peer_id][selph.my_id].incr()
             except Exception as e:
                 print('pong bombed:', str(e))
 

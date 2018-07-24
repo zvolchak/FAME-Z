@@ -37,8 +37,8 @@ except ImportError as e:
     from .famez_mailbox import FAMEZ_MailBox
     from .commander import Commander
 
-# Don't use peer ID 0, certain documentation implies it's reserved.  Put the
-# server ID at the end of the list (nSlots-1) and use the middle for clients.
+# Don't use peer ID 0, certain docs imply it's reserved.  Put the server
+# slot at the end of the area (nSlots-1) and use the middle for clients.
 
 IVSHMEM_UNUSED_ID = 0
 
@@ -240,22 +240,29 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     @staticmethod
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
-        nodename, msg = selph.mailbox.pickup_from_slot(vectorobj.num)
-        selph.logmsg('"%s" (%d) -> "%s"' % (nodename, vectorobj.num, msg))
-        if msg == 'ping':                       # shortcut handling
-            for peer in selph.peer_list:        # paranoia
-                if peer.id == vectorobj.num:
-                    break
-            else:                               # The peer disappeared?
-                selph.logmsg('Disappeering act %d' % vectorobj.num)
-                return
-            selph.mailbox.place_in_slot(selph.my_id, 'PONG')
+        assert selph.my_id == selph.args.nSlots - 1, "non-server callback?"
+        peer_id = vectorobj.num
+        nodename, msg = selph.mailbox.empty(peer_id)
+        selph.logmsg('"%s" (%d) -> "%s"' % (nodename, peer_id, msg))
+
+        # Find the peer in the list.  FIXME: convert to dict{} like client.
+        for peer in selph.peer_list:
+            if peer.id == vectorobj.num:
+                break
+        else:
+            selph.logmsg('Disappeering act %d' % vectorobj.num)
+            return
+
+        # Someday pass and parse the message (like the discover stuff).
+        # For now just do the shortcut.
+        if msg == 'ping':
+            selph.mailbox.fill(selph.my_id, 'PONG')
             peer.vectors[selph.my_id].incr()
 
 ###########################################################################
-# Normally the Endpoint and listen() call is done explicitly,
-# interwoven with passing this constructor.  This approach hides
-# all the twisted things in this module.
+# Normally the Endpoint and listen() call is done explicitly, interwoven
+# with passing this constructor.  This approach used here hides all the
+# twisted things in this module.
 
 
 class FactoryIVSHMSGServer(TIPServerFactory):
