@@ -23,6 +23,7 @@ gbuf = ('%d:' % target) + '0123456789' * mult
 if not fast:
     gbuf = gbuf.encode()
 gbuflen = len(gbuf)
+print('START', time.ctime())    # has it's own LF
 delta = time.time()
 try:
     w = 0
@@ -42,6 +43,7 @@ except Exception as e:
 delta = int(time.time() - delta)
 if not delta:
     raise SystemExit('Run it longer')
+print('\nSTOP ', time.ctime())    # has it's own LF
 
 bytes = w * mult * 10
 print("\n%d writes, %d bytes in %d seconds = %d w/s, %d b/s" %
