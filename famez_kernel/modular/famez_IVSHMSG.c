@@ -10,14 +10,19 @@
 //-------------------------------------------------------------------------
 // Return positive (bytecount) on success, negative on error, never 0.
 // I don't really believe usleep_range is atomic-safe but I'm on mutices now.
+// Currently doing 18 xfers/sec, or about 50 ms/xfer, in full synchronous
+// mode.  I'm thinking that's a QEMU thing regardless of the delays used
+// below.  I tried a 3x timeout whose success varied from 2 minutes to
+// three hours before it popped.
+
+#define PREVIOUS_WAIT (HZ/5)	// 4x
+
+static unsigned long longest = PREVIOUS_WAIT/2;
 
 int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		   famez_configuration_t *config)
 {
-	// Currently doing 18 xfers/sec, or about 50 ms/xfer, in full synchronous
-	// mode.  I'm thinking that's a QEMU thing regardless of the delays used
-	// below.  While a 4x timeout sounds nice, go with 3x for now.
-	unsigned long now = 0, hw_timeout = get_jiffies_64() + HZ/7; // 142 ms
+	unsigned long now = 0, hw_timeout = get_jiffies_64() + PREVIOUS_WAIT;
 	ivshmsg_ringer_t ringer;
 
 	// Might NOT be printable C string.
@@ -40,29 +45,30 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		 	msleep(20);
 	       now = get_jiffies_64();
 	}
+	if ((hw_timeout -= now) > longest) {
+		// pr_warn(FZ "%s() biggest TO goes from %lu to %lu\n",
+			// __FUNCTION__, longest, hw_timeout);
+		longest = hw_timeout;
+	}
 
 	// FIXME: add stompcounter tracker, return -EXXXX. To start with, just
 	// emit an error on first occurrence and see what falls out.
 	if (config->my_slot->msglen) {
-		if (config->my_slot->last_responder == peer_id) {
-			pr_err(FZ "peer %u has left the building\n", peer_id);
-			config->my_slot->msglen = 0;
-			config->my_slot->last_responder = 0;
-			return -EHOSTDOWN;
-		}
 		PR_V1("%s() would stomp previous message to %llu\n",
 			__FUNCTION__, config->my_slot->last_responder);
-		return -ENOBUFS;
+		return -ETIMEDOUT;
 	}
 	// Keep nodename and msg pointer; update msglen and msg contents.
 	// msglen is the handshake out to the world that I'm busy.
 	config->my_slot->msglen = msglen;
 	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
 	config->my_slot->last_responder = peer_id;
-
 	memcpy(config->my_slot->msg, msg, msglen);
-	ringer.vector = config->my_id;		// from this
-	ringer.peer = peer_id;			// to this
+
+	// Choose the correct vector set from all sent to me via the peer.
+	// Trigger the vector corresponding to me with the vector.
+	ringer.peer = peer_id;
+	ringer.vector = config->my_id;
 	config->regs->Doorbell = ringer.Doorbell;
 	return msglen;
 }
