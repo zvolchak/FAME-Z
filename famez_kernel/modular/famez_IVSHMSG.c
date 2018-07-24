@@ -14,7 +14,7 @@
 // three hours before it popped. 4x was better, lasted until I did a
 // compile, so...
 
-#define PRIOR_RESP_WAIT (HZ/4)	// 5x
+#define PRIOR_RESP_WAIT (5 * HZ)	// 5x
 #define DELAY_MS	10	// or about 100 writes/second
 
 static unsigned long longest = PRIOR_RESP_WAIT/2;
@@ -54,7 +54,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// FIXME: add stompcounter tracker, return -EXXXX. To start with, just
 	// emit an error on first occurrence and see what falls out.
 	if (config->my_slot->msglen) {
-		PR_V1("%s() would stomp previous message to %llu\n",
+		pr_err("%s() would stomp previous message to %llu\n",
 			__FUNCTION__, config->my_slot->last_responder);
 		return -ETIMEDOUT;
 	}
