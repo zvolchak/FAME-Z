@@ -9,20 +9,20 @@
 
 //-------------------------------------------------------------------------
 // Return positive (bytecount) on success, negative on error, never 0.
-// I don't really believe usleep_range is atomic-safe but I'm on mutices now.
-// Currently doing 18 xfers/sec, or about 50 ms/xfer, in full synchronous
-// mode.  I'm thinking that's a QEMU thing regardless of the delays used
-// below.  I tried a 3x timeout whose success varied from 2 minutes to
-// three hours before it popped.
+// The synchronous rate seems to be determined mostly by the sleep 
+// duration. I tried a 3x timeout whose success varied from 2 minutes to
+// three hours before it popped. 4x was better, lasted until I did a
+// compile, so...
 
-#define PREVIOUS_WAIT (HZ/5)	// 4x
+#define PRIOR_RESP_WAIT (HZ/4)	// 5x
+#define DELAY_MS	10	// or about 100 writes/second
 
-static unsigned long longest = PREVIOUS_WAIT/2;
+static unsigned long longest = PRIOR_RESP_WAIT/2;
 
 int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		   famez_configuration_t *config)
 {
-	unsigned long now = 0, hw_timeout = get_jiffies_64() + PREVIOUS_WAIT;
+	unsigned long now = 0, hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
 	ivshmsg_ringer_t ringer;
 
 	// Might NOT be printable C string.
@@ -40,9 +40,9 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// The macro makes many references to its parameters, so...
 	while (config->my_slot->msglen && time_before(now, hw_timeout)) {
 		if (in_interrupt())
-			mdelay(20);	// udelay(25k) leads to compiler error
+			mdelay(DELAY_MS); // udelay(25k) leads to compiler error
 		else
-		 	msleep(20);
+		 	msleep(DELAY_MS);
 	       now = get_jiffies_64();
 	}
 	if ((hw_timeout -= now) > longest) {
