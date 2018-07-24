@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 
-fast = True
-
 import os
 import sys
 import time
+
+fast = os.getenv('FAST', '0').lower() not in ('0', 'n', 'no', 'false')
+print('FAST mode:', fast)
 
 from pdb import set_trace
 
