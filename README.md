@@ -39,17 +39,15 @@ Unfortunately [```ivshmem-server.c```](https://github.com/qemu/qemu/tree/master/
 
 This FAME-Z project started out as a rewrite of ivshmem-server in Python using Twisted as the network-handling framework.  ```famez_server.py``` is run in place of ```ivshmem-server```.  It correctly serves ```ivshmem-client``` as well as real QEMU processes.  
 
-FAME-Z is intended for simple device connectivity, ie, bridge-to-bridge with some simple switches.  As with all emulations there will be a point at which the effort fails to reproduce the environment accurately.  This experiment will find that breakdown point and determine whether the functional section is indeed sufficient to allow Gen-Z software development in the absence of hardware.
-
-A new feature over ```ivshmem-server``` is that ```famez_server``` can receive messages from clients.  Thus the famez_server can participate in fabric messaging and serve as fabric intelligence (ie, a switch).  Again, the accuracy and validity of the project must lead to the creation of "pure Gen-Z" software above it, meaning it will run on real hardware someday without modification.
-
-
 ![alt text][FAME-Z]
 
 [FAME-Z]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/FAME-Z%20block.png "Figure 2"
 
+FAME-Z is intended for simple device connectivity, ie, bridge-to-bridge with some simple switches.  As with all emulations there will be a point at which the effort fails to reproduce the environment accurately.  This experiment will find that breakdown point and determine whether the functional section is indeed sufficient to allow Gen-Z software development in the absence of hardware.
 
-## Python rewrites
+A new feature over ```ivshmem-server``` is that ```famez_server``` can receive messages from clients.  Thus the famez_server can participate in fabric messaging and serve as fabric intelligence (ie, a switch).  Again, the accuracy and validity of the project must lead to the creation of "pure Gen-Z" software above it, meaning it will run on real hardware someday without modification.
+
+## Running the Python rewrites
 
 As the famez_server.py was created, there is also a famez_client.py to supplant the stock ivshmem-client.  It has an expanded command set over the original.  Over time its use as a monitor/debugger/injector will certainly grow.  To see these packages function as a simple chat framework, you don't need QEMU.
 
@@ -59,7 +57,7 @@ As the famez_server.py was created, there is also a famez_client.py to supplant 
 1. In a second (or more) terminal window run 'ivshmem-client '.  You'll see them get added in the server log output.
 1. In one of the clients, hit return, then type "help".  Play with sending messages to the other client(s) or the server.
 
-## Connecting VMs - extending the chatroom
+## Connecting VMs
 
 While a QEMU process does the actual connection to the famez_server.py, it's the VM inside QEMU where the messaging endpoints take place.  Building a QEMU image is beyond the scope of this project.  The FAME project mentioned previously is a great place to accomplish that.
 
