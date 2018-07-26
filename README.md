@@ -4,7 +4,7 @@ The Gen-Z spec and working groups are evolving that standard, and early hardware
   
 ### Beyond IVSHMEM
 
-QEMU has another feature of interest in a multi-actor messaging environment such as Gen-Z.  By applying a slightly different stanza, the IVSHMEM virtual PCI device is enabled to send messages and handle interrupts.   An interrupt to the virtual PCI device is generated from an "event notification" issued to the QEMU process by a similarly configured peer QEMU.  But how are these peers connected?
+QEMU has another feature of interest in a multi-actor messaging environment like that of Gen-Z.  By applying a slightly different stanza, the IVSHMEM virtual PCI device is enabled to send messages and handle interrupts in a "mailbox/doorbell" setup.   An interrupt to the virtual PCI device is generated from an "event notification" issued to the QEMU process by a similarly configured peer QEMU.  But how are these peers connected?
 
 The scheme starts with a separate program delivered with QEMU, [```/usr/bin/ivshmem-server. ivshmem-server```](https://www.google.com/search?newwindow=1&qivshmem-spec.txt) establishes a UNIX-domain socket and must be started before any properly-configured QEMU VMs.  As a QEMU process starts, it connects to the socket and is given its own set of event channels, as well as being advised of all other peers.  The idea is that each VM can issue messages through its PCI device which are delivered directly to another QEMU process as a Linux event.  The target QEMU turns that event into a PCI interrupt for its guest OS.  ```ivshmem-server``` only informs each QEMU of the other peers, it does not participate in further peer-to-peer communcation.  A backing file must also be specified during this scenario to be used as a mailbox for larger messages.
 
@@ -28,17 +28,17 @@ or in a domain XML file,
 
 Another program, ```ivshmem-client```, is also delivered with QEMU.  Using just ivshmem-server and multiple ivshmem-clients you can get a feel for the messaging abilities of IVSHMEM/IVSHMSG.  Combining the mailbox idea of IVHSMEM suggests a potential development environment for Gen-Z, once the server is extended.
 
-## FAME-Z Potential
+## Potential Gen-Z Emulation
 
 Unfortunately [```ivshmem-server.c```](https://github.com/qemu/qemu/tree/master/contrib/ivshmem-server) is written within the QEMU build framework.  It is not a standalone program that permits easy development.  And C is a bit limited for higher-level data constructs anticipated for a Gen-Z emulation.
 
 This FAME-Z project started out as a rewrite of ivshmem-server in Python using Twisted as the network-handling framework.  ```famez_server.py``` is run in place of ```ivshmem-server```.  It correctly serves ```ivshmem-client``` as well as real QEMU processes.  A new feature over ```ivshmem-server``` is that ```famez_server``` can receive messages from clients.  I anticipate this will be needed to facilitate some of the Gen-Z messaging support.
 
+FAME-Z is intended for simple device connectivity, ie, bridge-to-bridge with some simple switches.  As with all emulations there will be a point at which the effort fails to reproduce the environment accurately.  This experiment will find that breakdown point and determine whether the functional section is indeed sufficient to allow Gen-Z software development in the absence of hardware.
+
 ![alt text][FAME-Z]
 
 [FAME-Z]: https://github.com/coloroco/FAME-Z/blob/master/docs/images/FAME-Z%20block.png "Figure 2"
-
-The intended first use of FAME-Z is support for the [Gen-Z Management Architecture Authoring Sub-Team (MAAST)](https://genz.causewaynow.com/wg/swmgmt/document/folder/100).  MAAST is providing a suggested reference procedure and architecture for Gen-Z discovery, configuration and management.  Once again a suitable platform for actual software development is lacking and FAME-Z could fill that void.
 
 ## Running with ivshmem-client
 
