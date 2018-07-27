@@ -56,7 +56,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	if (config->my_slot->msglen) {
 		pr_err("%s() would stomp previous message to %llu\n",
 			__FUNCTION__, config->my_slot->last_responder);
-		return -ETIMEDOUT;
+		return -ERESTARTSYS;
 	}
 	// Keep nodename and msg pointer; update msglen and msg contents.
 	// msglen is the handshake out to the world that I'm busy.
