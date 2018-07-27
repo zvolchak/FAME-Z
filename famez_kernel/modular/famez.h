@@ -15,7 +15,7 @@
 #define FZ		"famez: "	// pr_xxxx header
 #define FZSP		"       "	// pr_xxxx header same length indent
 
-#define FAMEZ_VERSION	FAMEZ_NAME " v0.8.1: modular w/bridge"
+#define FAMEZ_VERSION	FAMEZ_NAME " v0.8.2: modular w/bridge"
 
 typedef struct {			// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask
