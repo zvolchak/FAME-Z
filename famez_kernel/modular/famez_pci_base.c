@@ -28,7 +28,7 @@ MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
 // module parameters are global
 
 int famez_verbose = 0;
-module_param(famez_verbose, int, S_IRUGO);
+module_param(famez_verbose, uint, 0644);
 MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
 
 // Multiple bridge "devices" accepted by famez_probe().  It might be that PCI

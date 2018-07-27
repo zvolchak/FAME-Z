@@ -41,7 +41,7 @@ MODULE_DESCRIPTION("Base subsystem for FAME-Z project.");
 // module parameters are global
 
 int fzbridge_verbose = 0;
-module_param(fzbridge_verbose, int, S_IRUGO);
+module_param(fzbridge_verbose, uint, 0644);
 MODULE_PARM_DESC(fzbridge_verbose, "increase amount of printk info (0)");
 
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
@@ -188,7 +188,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	bridge_buffers_t *buffers = config->writer_support;
 	ssize_t successlen = buflen;
 	char *msgbody;
-	int ret;
+	int ret, restarts;
 	uint16_t peer_id;
 
 	if (buflen >= config->max_msglen - 1) {		// Paranoia on term NUL
@@ -226,8 +226,15 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	// this final len is always shorter than the original length.  Some
 	// code (ie, "echo") will resubmit the partial if the count is
 	// short.  So lie about it to the caller.
+
+	restarts = 0;
+restart:
 	ret = famez_sendmail(peer_id, msgbody, buflen, config);
-	if (ret == buflen)
+	if (ret == -ERESTARTSYS) {	// spurious timeout
+		if (++restarts < 2)
+			goto restart;
+		ret = -ETIMEDOUT;
+	} else if (ret == buflen)
 		ret = successlen;
 	else if (ret >= 0)
 		ret = -EIO;	// partial transfer paranoia
