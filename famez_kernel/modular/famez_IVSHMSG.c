@@ -1,11 +1,31 @@
-// Configure and handle MSI-X interrupts from IVSHMEM device.  The sendstring
-// method is also here, which keeps all "hardware IO" in one place.
+// Implement the mailbox/mailslot protocol of IVSHMSG.
 
 #include <linux/delay.h>	// usleep_range, wait_event*
 #include <linux/export.h>
 #include <linux/jiffies.h>	// jiffies
 
 #include "famez.h"
+
+//-------------------------------------------------------------------------
+// Convenience routine needed by ISR handler, which will vary by architecture.
+// Respect the "knowledge domain" of this source module.
+// Slot 0 is the globals data, don't play in there.  The last slot
+// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2].
+
+famez_mailslot_t __iomem *calculate_mailslot(
+	famez_configuration_t *config,
+	unsigned slotnum)
+{
+	famez_mailslot_t __iomem *slot;
+
+	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
+		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
+		return NULL;
+	}
+	slot = (void *)(
+		(uint64_t)config->globals + slotnum * config->globals->slotsize);
+	return slot;
+}
 
 //-------------------------------------------------------------------------
 // Return positive (bytecount) on success, negative on error, never 0.

@@ -1,30 +1,9 @@
-// Configure and handle MSI-X interrupts from IVSHMEM device.  The sendstring
-// method is also here, which keeps all "hardware IO" in one place.
+// Arch-specific ISR handler for x86_64: configure and handle MSI-X interrupts
+// from IVSHMEM device.
 
-#include <linux/export.h>
 #include <linux/interrupt.h>	// irq_enable, etc
 
 #include "famez.h"
-
-//-------------------------------------------------------------------------
-
-static famez_mailslot_t __iomem *calculate_mailslot(
-	famez_configuration_t *config,
-	unsigned slotnum)
-{
-	famez_mailslot_t __iomem *slot;
-
-	// Slot 0 is the globals data, don't play in there.  The last slot
-	// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2].
-	// This check should never occur :-)
-	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
-		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
-		return NULL;
-	}
-	slot = (void *)(
-		(uint64_t)config->globals + slotnum * config->globals->slotsize);
-	return slot;
-}
 
 //-------------------------------------------------------------------------
 // FIXME: can a spurious interrupt get me here "too fast" so that I'm
@@ -90,7 +69,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 // As there are only nSlots-2 actual clients (because mailslot 0 is globals
 // and server @ nslots-1) I SHOULDN'T actually activate those two IRQs.
 
-int famez_MSIX_setup(struct pci_dev *pdev)
+int famez_ISR_setup(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int ret, i, nvectors = 0, last_irq_index;
@@ -184,7 +163,7 @@ err_kfree_msix_entries:
 // There is no disable control on this "device", hope one doesn't fire...
 // Can be called from setup() above.
 
-void famez_MSIX_teardown(struct pci_dev *pdev)
+void famez_ISR_teardown(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int i;

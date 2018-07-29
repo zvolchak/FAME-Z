@@ -79,7 +79,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		goto err_pci_disable_device;
 	}
 
-	if ((ret = famez_MSIX_setup(pdev)))
+	if ((ret = famez_ISR_setup(pdev)))
 		goto err_pci_disable_device;
 
 	// It's a keeper...unless it's already there.  Unlikely, but it's
@@ -114,7 +114,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 
 err_MSIX_teardown:
 	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
-	famez_MSIX_teardown(pdev);
+	famez_ISR_teardown(pdev);
 
 err_pci_disable_device:
 	PR_V1("disabling device %s\n", CARDLOC(pdev));
@@ -139,7 +139,7 @@ void famez_remove(struct pci_dev *pdev)
 	}
 	pr_cont("disabling/removing/freeing resources\n");
 
-	famez_MSIX_teardown(pdev);
+	famez_ISR_teardown(pdev);
 
 	pci_disable_device(pdev);
 

@@ -102,7 +102,11 @@ famez_configuration_t *famez_create_config(struct pci_dev *);
 void famez_destroy_config(famez_configuration_t *);
 
 //.........................................................................
-// famez_ivshmsg.c - the actual messaging IO.
+// famez_IVSHMSG.c - the actual messaging IO.
+
+// Linked in to famez.ko
+famez_mailslot_t __iomem *calculate_mailslot(famez_configuration_t *config,
+	unsigned slotnum);
 
 // EXPORTed
 extern int famez_sendmail(uint32_t, char *, size_t, famez_configuration_t *);
@@ -111,10 +115,13 @@ extern famez_mailslot_t *famez_await_legible_slot(struct file *,
 extern void famez_release_legible_slot(famez_configuration_t *);
 
 //.........................................................................
-// famez_MSI-X.c - handle interrupts from other FAME-Z peers (input).
+// famez_???.c - handle interrupts from other FAME-Z peers (input). By arch:
+// x86_64:	famez_MSI-X.c
+// ARM64:	not written yet
+// RISCV:	not written yet
 
-int famez_MSIX_setup(struct pci_dev *);
-void famez_MSIX_teardown(struct pci_dev *);
+int famez_ISR_setup(struct pci_dev *);
+void famez_ISR_teardown(struct pci_dev *);
 
 //.........................................................................
 // famez_register.c - accept end-driver requests to use FAME-Z.
