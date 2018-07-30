@@ -70,7 +70,7 @@ typedef struct {
 	ivshmem_registers_t __iomem *regs;		// BAR0
 	famez_globals_t __iomem *globals;		// BAR2
 	famez_mailslot_t *my_slot;			// indexed by my_id
-	struct msix_entry *msix_entries;		// pci.h: kzalloc array
+	void *IRQ_private;				// arch-dependent
 
 	// Per-config handshaking between doorbell/mail delivery and a
 	// driver read().  Doorbell comes in and sets the pointer then

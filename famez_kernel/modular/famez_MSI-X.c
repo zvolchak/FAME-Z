@@ -11,6 +11,7 @@
 
 static irqreturn_t all_msix(int vector, void *data) {
 	famez_configuration_t *config = data;
+	struct msix_entry *msix_entries = config->IRQ_private;
 	int slotnum, stomped = 0;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
 	famez_mailslot_t __iomem *sender_slot;
@@ -21,7 +22,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 	// Turns out i and msix_entries[i].entry are identical in famez.
 	// FIXME: preload a lookup table if I ever care about speed.
 	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
-		if (vector == config->msix_entries[slotnum].vector)
+		if (vector == msix_entries[slotnum].vector)
 			break;
 	}
 	if (slotnum >= config->globals->nSlots) {
@@ -29,7 +30,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
-	sender_id = config->msix_entries[slotnum].entry;
+	sender_id = msix_entries[slotnum].entry;
 
 	// All returns from here are IRQ_HANDLED
 
@@ -73,6 +74,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
 	int ret, i, nvectors = 0, last_irq_index;
+	struct msix_entry *msix_entries;	// pci.h, will be an array
 
 	if ((nvectors = pci_msix_vec_count(pdev)) < 0) {
 		pr_err(FZ "Error retrieving MSI-X vector count\n");
@@ -91,16 +93,24 @@ int famez_ISR_setup(struct pci_dev *pdev)
 			config->globals->nSlots, nvectors);
 		return -ENOSPC;
 	}
-
 	nvectors = config->globals->nSlots;		// legibility
+
+	ret = -ENOMEM;
+	if (!(msix_entries = kzalloc(
+			nvectors * sizeof(struct msix_entry), GFP_KERNEL))) {
+		pr_err(FZ "Can't allocate MSI-X entries table\n");
+		goto err_kfree_msix_entries;
+	}
+	config->IRQ_private = msix_entries;
+
 	// .vector was zeroed by kzalloc
 	for (i = 0; i < nvectors; i++)
-		config->msix_entries[i].entry  = i;
+		msix_entries[i].entry  = i;
 
 	// There used to be a direct call for "exact match".  Re-create it.
 	if ((ret = pci_alloc_irq_vectors(
 		pdev, nvectors, nvectors, PCI_IRQ_MSIX)) < 0) {
-			pr_err(FZ "Can't allocate MSI-X vectors\n");
+			pr_err(FZ "Can't allocate MSI-X IRQ vectors\n");
 			goto err_kfree_msix_entries;
 		}
 	pr_info(FZSP "%2d MSI-X vectors used      (%sabled)\n",
@@ -121,7 +131,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 			pr_err("pci_irq_vector(%d) failed: %d\n", i, ret);
 			goto err_pci_free_irq_vectors;
 		}
-		config->msix_entries[i].vector = ret;
+		msix_entries[i].vector = ret;
 	}
 
 	// Now that they're all batched, assign them.  Each successful request
@@ -131,7 +141,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 	     last_irq_index < nvectors;
 	     last_irq_index++) {
 		if ((ret = request_irq(
-			config->msix_entries[last_irq_index].vector,
+			msix_entries[last_irq_index].vector,
 			all_msix,
 			0,
 			"FAME-Z",
@@ -142,20 +152,20 @@ int famez_ISR_setup(struct pci_dev *pdev)
 		}
 		PR_V1(FZSP "%d = %d\n",
 		      last_irq_index,
-		      config->msix_entries[last_irq_index].vector);
+		      msix_entries[last_irq_index].vector);
 	}
 	return 0;
 
 err_free_completed_irqs:
 	for (i = 0; i < last_irq_index; i++)
-		free_irq(config->msix_entries[i].vector, config);
+		free_irq(msix_entries[i].vector, config);
 
 err_pci_free_irq_vectors:
 	pci_free_irq_vectors(pdev);
 
 err_kfree_msix_entries:
-	kfree(config->msix_entries);
-	config->msix_entries = NULL;	// sentinel for teardown
+	kfree(msix_entries);
+	config->IRQ_private = NULL;	// sentinel for teardown
 	return ret;
 }
 
@@ -166,14 +176,15 @@ err_kfree_msix_entries:
 void famez_ISR_teardown(struct pci_dev *pdev)
 {
 	famez_configuration_t *config = pci_get_drvdata(pdev);
+	struct msix_entry *msix_entries = config->IRQ_private;
 	int i;
 
-	if (!config->msix_entries)	// Been there, done that
+	if (!msix_entries)	// Been there, done that
 		return;
 
 	for (i = 0; i < config->globals->nSlots; i++)
-		free_irq(config->msix_entries[i].vector, config);
+		free_irq(msix_entries[i].vector, config);
 	pci_free_irq_vectors(pdev);
-	kfree(config->msix_entries);
-	config->msix_entries = NULL;
+	kfree(msix_entries);
+	config->IRQ_private = NULL;
 }

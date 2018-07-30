@@ -87,8 +87,8 @@ void famez_destroy_config(famez_configuration_t *config)
 	pci_set_drvdata(pdev, NULL);
 	config->pdev = NULL;
 
-	if (config->msix_entries) kfree(config->msix_entries);
-	config->msix_entries = NULL;
+	if (config->IRQ_private) kfree(config->IRQ_private);
+	config->IRQ_private = NULL;
 	// Probably memory leakage if this ever executes.
 	if (config->writer_support) kfree(config->writer_support);
 	config->writer_support = NULL;
@@ -141,12 +141,6 @@ famez_configuration_t *famez_create_config(struct pci_dev *pdev)
 	config->server_id = config->globals->nSlots - 1;  // that's the rule
 
 	// All the needed parameters are set to finish this off.
-	ret = -ENOMEM;
-	if (!(config->msix_entries = kzalloc(
-		config->globals->nSlots * sizeof(struct msix_entry), GFP_KERNEL))) {
-		pr_err(FZ "Can't create MSI-X entries table\n");
-		goto err_kfree;
-	}
 
 	// My slot and message pointers.
 	config->my_slot = (void *)(
