@@ -51,16 +51,16 @@ DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
 static int bridge_open(struct inode *inode, struct file *file)
 {
-	famez_configuration_t *config = extract_config(file);
+	struct famez_config *config = extract_config(file);
 	int n, ret;
 
 	// FIXME: got to come up with more 'local module' support for this.
 	// Just keep it single user for now.
 	ret = 0;
 	if ((n = atomic_add_return(1, &config->nr_users) == 1)) {
-		bridge_buffers_t *buffers;
+		struct bridge_buffers *buffers;
 
-		if (!(buffers = kzalloc(sizeof(bridge_buffers_t), GFP_KERNEL))) {
+		if (!(buffers = kzalloc(sizeof(*buffers), GFP_KERNEL))) {
 			ret = -ENOMEM;
 			goto alldone;
 		}
@@ -90,7 +90,7 @@ alldone:
 
 static int bridge_flush(struct file *file, fl_owner_t id)
 {
-	famez_configuration_t *config = extract_config(file);
+	struct famez_config *config = extract_config(file);
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
@@ -113,8 +113,8 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 
 static int bridge_release(struct inode *inode, struct file *file)
 {
-	famez_configuration_t *config = extract_config(file);
-	bridge_buffers_t *buffers = config->writer_support;
+	struct famez_config *config = extract_config(file);
+	struct bridge_buffers *buffers = config->writer_support;
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
@@ -141,8 +141,8 @@ static int bridge_release(struct inode *inode, struct file *file)
 static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
 {
-	famez_configuration_t *config = extract_config(file);
-	famez_mailslot_t *legible_slot;
+	struct famez_config *config = extract_config(file);
+	struct famez_mailslot *legible_slot;
 	char sender_id_str[8];
 	int ret;
 
@@ -184,8 +184,8 @@ read_complete:	// Whether I used it or not, let everything go
 static ssize_t bridge_write(struct file *file, const char __user *buf,
 			    size_t buflen, loff_t *ppos)
 {
-	famez_configuration_t *config = extract_config(file);
-	bridge_buffers_t *buffers = config->writer_support;
+	struct famez_config *config = extract_config(file);
+	struct bridge_buffers *buffers = config->writer_support;
 	ssize_t successlen = buflen;
 	char *msgbody;
 	int ret, restarts;
@@ -249,7 +249,7 @@ unlock_return:
 
 static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 {
-	famez_configuration_t *config = extract_config(file);
+	struct famez_config *config = extract_config(file);
 	uint ret = 0;
 
 	poll_wait(file, &bridge_reader_wait, wait);

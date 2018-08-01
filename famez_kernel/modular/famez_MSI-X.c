@@ -10,11 +10,11 @@
 // overrunning the legible slot during a tight loop client?
 
 static irqreturn_t all_msix(int vector, void *data) {
-	famez_configuration_t *config = data;
+	struct famez_config *config = data;
 	struct msix_entry *msix_entries = config->IRQ_private;
 	int slotnum, stomped = 0;
 	uint16_t sender_id = 0;	// see pci.h for msix_entry
-	famez_mailslot_t __iomem *sender_slot;
+	struct famez_mailslot __iomem *sender_slot;
 
 	spin_lock(&(config->legible_slot_lock));
 
@@ -72,7 +72,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 int famez_ISR_setup(struct pci_dev *pdev)
 {
-	famez_configuration_t *config = pci_get_drvdata(pdev);
+	struct famez_config *config = pci_get_drvdata(pdev);
 	int ret, i, nvectors = 0, last_irq_index;
 	struct msix_entry *msix_entries;	// pci.h, will be an array
 
@@ -175,7 +175,7 @@ err_kfree_msix_entries:
 
 void famez_ISR_teardown(struct pci_dev *pdev)
 {
-	famez_configuration_t *config = pci_get_drvdata(pdev);
+	struct famez_config *config = pci_get_drvdata(pdev);
 	struct msix_entry *msix_entries = config->IRQ_private;
 	int i;
 

@@ -29,9 +29,9 @@
 
 int famez_misc_register(char *basename, const struct file_operations *fops)
 {
-	famez_configuration_t *config;
+	struct famez_config *config;
 	struct pci_dev *pdev;
-	miscdev2config_t *lookup;
+	struct miscdev2config *lookup;
 	char *ownername, *devname;
 	int ret, nbindings;
 
@@ -48,7 +48,7 @@ int famez_misc_register(char *basename, const struct file_operations *fops)
 			ownername, pci_resource_name(pdev, 1));
 
 		ret = -ENOMEM;
-		if (!(lookup = kzalloc(sizeof(miscdev2config_t),
+		if (!(lookup = kzalloc(sizeof(*lookup),
 				       GFP_KERNEL)))
 			goto up_and_out;
 		if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
@@ -90,8 +90,8 @@ EXPORT_SYMBOL(famez_misc_register);
 
 int famez_misc_deregister(const struct file_operations *fops)
 {
-	famez_configuration_t *config;
-	miscdev2config_t *lookup;
+	struct famez_config *config;
+	struct miscdev2config *lookup;
 	char *ownername;
 	int ret;
 

@@ -15,10 +15,10 @@
 #define FZBRIDGE_VERSION	FZBRIDGE_NAME " v0.1.0: gotta start somewhere"
 
 // Just write support for now.
-typedef struct {
+struct bridge_buffers {
 	char *wbuf;			// kmalloc(max_msglen)
 	struct mutex wbuf_mutex;
-} bridge_buffers_t;
+};
 
 //-------------------------------------------------------------------------
 // Debug support

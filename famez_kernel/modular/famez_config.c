@@ -26,7 +26,7 @@
 
 static void unmapBARs(struct pci_dev *pdev)
 {
-	famez_configuration_t *config = pci_get_drvdata(pdev);
+	struct famez_config *config = pci_get_drvdata(pdev);
 
 	if (config->regs) pci_iounmap(pdev, config->regs);	// else whine
 	config->regs = NULL;
@@ -42,7 +42,7 @@ static void unmapBARs(struct pci_dev *pdev)
 
 static int mapBARs(struct pci_dev *pdev)
 {
-	famez_configuration_t *config = pci_get_drvdata(pdev);
+	struct famez_config *config = pci_get_drvdata(pdev);
 	int ret;
 
 	// "cat /proc/iomem" seems to be very finicky about spaces and
@@ -71,7 +71,7 @@ err_unmap:
 
 //-------------------------------------------------------------------------
 
-void famez_destroy_config(famez_configuration_t *config)
+void famez_destroy_config(struct famez_config *config)
 {
 	struct pci_dev *pdev;
 
@@ -99,9 +99,9 @@ void famez_destroy_config(famez_configuration_t *config)
 //-------------------------------------------------------------------------
 // Set up more globals and mailbox references to realize dynamic padding.
 
-famez_configuration_t *famez_create_config(struct pci_dev *pdev)
+struct famez_config *famez_create_config(struct pci_dev *pdev)
 {
-	famez_configuration_t *config = NULL;
+	struct famez_config *config = NULL;
 	int ret;
 
 	if (!(config = kzalloc(sizeof(*config), GFP_KERNEL))) {
@@ -127,7 +127,7 @@ famez_configuration_t *famez_create_config(struct pci_dev *pdev)
 	// globals is handcrafted in Python, make sure it's all kosher.
 	// If these fail, go back and add tests to Python, not here.
 	ret = -EINVAL;
-	if (offsetof(famez_mailslot_t, msg) != config->globals->msg_offset) {
+	if (offsetof(struct famez_mailslot, msg) != config->globals->msg_offset) {
 		pr_err(FZ "MSG_OFFSET global != C offset in here\n");
 		goto err_kfree;
 	}

@@ -44,7 +44,7 @@ DEFINE_SEMAPHORE(famez_active_sema);
 
 int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
-	famez_configuration_t *config = NULL, *cur = NULL;
+	struct famez_config *config = NULL, *cur = NULL;
 	int ret = -ENOTTY;
 	char imalive[80];
 
@@ -129,7 +129,7 @@ err_pci_disable_device:
 
 void famez_remove(struct pci_dev *pdev)
 {
-	famez_configuration_t *cur, *next, *config = pci_get_drvdata(pdev);
+	struct famez_config *cur, *next, *config = pci_get_drvdata(pdev);
 	int ret;
 
 	pr_info(FZ "famez_remove(%s): ", CARDLOC(pdev));

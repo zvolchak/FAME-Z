@@ -12,11 +12,11 @@
 // Slot 0 is the globals data, don't play in there.  The last slot
 // (nSlots - 1) is the for the server.  This code gets [1, nSlots-2].
 
-famez_mailslot_t __iomem *calculate_mailslot(
-	famez_configuration_t *config,
+struct famez_mailslot __iomem *calculate_mailslot(
+	struct famez_config *config,
 	unsigned slotnum)
 {
-	famez_mailslot_t __iomem *slot;
+	struct famez_mailslot __iomem *slot;
 
 	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
 		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
@@ -35,15 +35,20 @@ famez_mailslot_t __iomem *calculate_mailslot(
 // compile, so...
 
 #define PRIOR_RESP_WAIT (5 * HZ)	// 5x
-#define DELAY_MS	10	// or about 100 writes/second
+#define DELAY_MS	10		// or about 100 writes/second
 
 static unsigned long longest = PRIOR_RESP_WAIT/2;
 
 int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
-		   famez_configuration_t *config)
+		   struct famez_config *config)
 {
+	// The IVSHMEM "vector" will map to an MSI-X "entry" value.  "vector"
+	// is the lower 16 bits and the combo must be assigned atomically.
+	union __attribute__ ((packed)) {
+		struct { uint16_t vector, peer; };
+		uint32_t Doorbell;
+	} ringer;
 	unsigned long now = 0, hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
-	ivshmsg_ringer_t ringer;
 
 	// Might NOT be printable C string.
 	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
@@ -99,8 +104,8 @@ EXPORT_SYMBOL(famez_sendmail);
 // ret, so the caller doesn't need to understand the config structure to
 // look it up.  Intermix locking with that in msix_all().
 
-famez_mailslot_t *famez_await_legible_slot(struct file *file,
-					   famez_configuration_t *config)
+struct famez_mailslot *famez_await_legible_slot(struct file *file,
+					   struct famez_config *config)
 {
 	int ret = 0;
 
@@ -122,7 +127,7 @@ EXPORT_SYMBOL(famez_await_legible_slot);
 
 //-------------------------------------------------------------------------
 
-void famez_release_legible_slot(famez_configuration_t *config)
+void famez_release_legible_slot(struct famez_config *config)
 {
 	spin_lock(&config->legible_slot_lock);
 	config->legible_slot->msglen = 0;	// In the slot of the remote sender
