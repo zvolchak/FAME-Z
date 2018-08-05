@@ -108,12 +108,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         recycled = peer.recycled.get(peer.id, None)
         if recycled:
             del peer.recycled[recycled.id]
-        if peer.args.verbose:
-            peer.logmsg('new socket %d == peer id %d %s' %
-                (peer.transport.fileno(), peer.id,
-                 'recycled' if recycled else ''
-                )
-             )
+        msg = 'new socket %d == peer id %d %s' % (
+              peer.transport.fileno(), peer.id,
+              'recycled' if recycled else ''
+        )
+        print(msg, file=sys.stderr) # short and clean because early...
+        if peer.args.verbose:       # ... instantiation has ugly header
+            peer.logmsg(msg)
         if peer.id == -1:
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
