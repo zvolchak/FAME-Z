@@ -70,15 +70,38 @@ struct famez_config {
 	// to NULL for next one.  Since reading is more of a one-to-many
 	// relationship this module can hold the one.
 
-	struct famez_mailslot *legible_slot;
-	struct wait_queue_head legible_slot_wqh;
-	spinlock_t legible_slot_lock;
+	struct famez_mailslot *incoming_slot;
+	struct wait_queue_head incoming_slot_wqh;
+	spinlock_t incoming_slot_lock;
 
 	// Writing is many to one, so support buffers etc are the
 	// responsibility of that module, managed by open() & release().
-	void *writer_support;
+	void *outgoing;
 
 };
+
+// https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
+// A lookup table to take advantage of misc_register putting its argument
+// into file->private at open().  Fill in the blanks for each config and go.
+// I modified the article's solution to treat it as a container pointer and
+// just grab whatever field I want, it doesn't even have to be the first one.
+// If I put the "primary key" structure as the first field, then I wouldn't
+// even need container_of as the address is synonymous with both.
+
+struct miscdev2config {
+	struct miscdevice miscdev;	// full structure, not a ptr
+	struct famez_config *config;	// what I want to recover
+};
+
+static inline struct famez_config *extract_config(struct file *file)
+{
+	struct miscdevice *encapsulated_miscdev = file->private_data;
+	struct miscdev2config  *lookup = container_of(
+		encapsulated_miscdev,	// the pointer to the member
+		struct miscdev2config,	// the type of the container struct
+		miscdev);		// the name of the member in the struct
+	return lookup->config;
+}
 
 //-------------------------------------------------------------------------
 // famez_pci_base.c - insmod/rmmod handling with pci_register probe()/remove()
@@ -90,28 +113,29 @@ extern struct semaphore famez_active_sema;
 //-------------------------------------------------------------------------
 // famez_config.c - create/populate and destroy a config structure
 
+// Linked in to famez.ko, used by various other source modules
 struct famez_config *famez_create_config(struct pci_dev *);
 void famez_destroy_config(struct famez_config *);
+struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
+						  unsigned);
+
+// Nothing EXPORTed
 
 //.........................................................................
 // famez_IVSHMSG.c - the actual messaging IO.
 
-// Linked in to famez.ko
-struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *config,
-	unsigned slotnum);
-
 // EXPORTed
+extern struct famez_mailslot *famez_await_incoming(struct famez_config *, int);
+extern void famez_release_incoming(struct famez_config *);
 extern int famez_sendmail(uint32_t, char *, size_t, struct famez_config *);
-extern struct famez_mailslot *famez_await_legible_slot(struct file *,
-						  struct famez_config *);
-extern void famez_release_legible_slot(struct famez_config *);
 
 //.........................................................................
 // famez_???.c - handle interrupts from other FAME-Z peers (input). By arch:
 // x86_64:	famez_MSI-X.c
-// ARM64:	not written yet
+// ARM64:	famez_MSI-X.c with assist from QEMU vfio modules
 // RISCV:	not written yet
 
+// EXPORTed
 int famez_ISR_setup(struct pci_dev *);
 void famez_ISR_teardown(struct pci_dev *);
 
@@ -135,31 +159,6 @@ extern int famez_misc_deregister(const struct file_operations *);
 #define STREQ(s1, s2) (!strcmp(s1, s2))
 #define STREQ_N(s1, s2, lll) (!strncmp(s1, s2, lll))
 #define STARTS(s1, s2) (!strncmp(s1, s2, strlen(s2)))
-
-// https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
-// A lookup table to take advantage of misc_register putting its argument
-// into file->private at open().  Fill in the blanks for each config and go.
-// This technique relies on the desired field being a pointer AND the first
-// field, so that "container_of(..., anchor)" is a pointer to a pointer.
-// I modified the article's solution to treat it as a container pointer and
-// just grab whatever field I want, it doesn't even have to be the first one.
-// If I put the "primary key" structure as the first field, then I wouldn't
-// even need container_of as the address is synonymous with both.
-
-struct miscdev2config {
-	struct miscdevice miscdev;	// full structure, not a ptr
-	struct famez_config *config;	// what I want to recover
-};
-
-static inline struct famez_config *extract_config(struct file *file)
-{
-	struct miscdevice *encapsulated_miscdev = file->private_data;
-	struct miscdev2config  *lookup = container_of(
-		encapsulated_miscdev,	// the pointer to the member
-		struct miscdev2config,	// the type of the container struct
-		miscdev);		// the name of the member in the struct
-	return lookup->config;
-}
 
 //-------------------------------------------------------------------------
 // Debug assistance

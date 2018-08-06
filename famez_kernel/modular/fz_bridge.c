@@ -70,7 +70,7 @@ static int bridge_open(struct inode *inode, struct file *file)
 			goto alldone;
 		}
 		mutex_init(&(buffers->wbuf_mutex));
-		config->writer_support = buffers;
+		config->outgoing = buffers;
 	} else {
 		pr_warn(FZBRSP "Sorry, just exclusive open() for now\n");
 		ret = -EBUSY;
@@ -114,7 +114,7 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 static int bridge_release(struct inode *inode, struct file *file)
 {
 	struct famez_config *config = extract_config(file);
-	struct bridge_buffers *buffers = config->writer_support;
+	struct bridge_buffers *buffers = config->outgoing;
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
@@ -125,7 +125,7 @@ static int bridge_release(struct inode *inode, struct file *file)
 	BUG_ON(nr_users);
 	kfree(buffers->wbuf);
 	kfree(buffers);
-	config->writer_support = NULL;
+	config->outgoing = NULL;
 	return 0;
 }
 
@@ -142,38 +142,37 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
 {
 	struct famez_config *config = extract_config(file);
-	struct famez_mailslot *legible_slot;
+	struct famez_mailslot *sender;
 	char sender_id_str[8];
 	int ret;
 
-	// A successful return holds a lock in another module requiring
-	// a call to famez_release_legible_slot().
-	legible_slot = famez_await_legible_slot(file, config);
-	if (IS_ERR(legible_slot))
-		return PTR_ERR(legible_slot);
-	PR_V2(FZSP "wait finished, %llu bytes to read\n", legible_slot->msglen);
-	if (buflen < legible_slot->msglen + SENDER_ID_LEN) {
+	// A successful return needs cleanup via famez_release_incoming().
+	sender = famez_await_incoming(config, file->f_flags & O_NONBLOCK);
+	if (IS_ERR(sender))
+		return PTR_ERR(sender);
+	PR_V2(FZSP "wait finished, %llu bytes to read\n", sender->msglen);
+	if (buflen < sender->msglen + SENDER_ID_LEN) {
 		ret = -E2BIG;
 		goto read_complete;
 	}
 
-	// First emit the sender ID.
-	sprintf(sender_id_str, SENDER_ID_FMT, config->legible_slot->peer_id);
+	// Two parts to the payload: first is the sender ID and a colon.
+	sprintf(sender_id_str, SENDER_ID_FMT, sender->peer_id);
 	if ((ret = copy_to_user(buf, sender_id_str, SENDER_ID_LEN))) {
 		if (ret > 0) ret= -EFAULT;	// partial transfer
 		goto read_complete;
 	}
 
-	// Now the message body proper, after the colon of the previous message.
-	ret = copy_to_user(buf + SENDER_ID_LEN,
-		legible_slot->msg, legible_slot->msglen);
-	ret = !ret ? legible_slot->msglen + SENDER_ID_LEN :
+	// The message body follows the colon of the previous snippet.
+	ret = copy_to_user(buf + SENDER_ID_LEN, sender->msg, sender->msglen);
+	ret = !ret ? sender->msglen + SENDER_ID_LEN :
 		(ret > 0 ? -EFAULT : ret);
+	// Now it's either the length of the full responose or -ESOMETHING
 	if (ret > 0)
 		*ppos = 0;
 
 read_complete:	// Whether I used it or not, let everything go
-	famez_release_legible_slot(config);
+	famez_release_incoming(config);
 	return ret;
 }
 
@@ -185,7 +184,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 			    size_t buflen, loff_t *ppos)
 {
 	struct famez_config *config = extract_config(file);
-	struct bridge_buffers *buffers = config->writer_support;
+	struct bridge_buffers *buffers = config->outgoing;
 	ssize_t successlen = buflen;
 	char *msgbody;
 	int ret, restarts;

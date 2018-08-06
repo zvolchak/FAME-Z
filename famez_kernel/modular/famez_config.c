@@ -23,6 +23,25 @@
 #include "famez.h"
 
 //-------------------------------------------------------------------------
+// Slot 0 is the globals data, so disallow its use.  The last slot
+// (nSlots - 1) is the for the server.
+
+struct famez_mailslot __iomem *calculate_mailslot(
+	struct famez_config *config,
+	unsigned slotnum)
+{
+	struct famez_mailslot __iomem *slot;
+
+	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
+		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
+		return NULL;
+	}
+	slot = (void *)(
+		(uint64_t)config->globals + slotnum * config->globals->slotsize);
+	return slot;
+}
+
+//-------------------------------------------------------------------------
 
 static void unmapBARs(struct pci_dev *pdev)
 {
@@ -89,9 +108,10 @@ void famez_destroy_config(struct famez_config *config)
 
 	if (config->IRQ_private) kfree(config->IRQ_private);
 	config->IRQ_private = NULL;
-	// Probably memory leakage if this ever executes.
-	if (config->writer_support) kfree(config->writer_support);
-	config->writer_support = NULL;
+	// Probably other memory leakage if this ever executes.
+	if (config->outgoing)
+		kfree(config->outgoing);
+	config->outgoing = NULL;
 
 	kfree(config);
 }
@@ -114,8 +134,8 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 	config->pdev = pdev;			// Reverse pointers never hurt.
 
 	// Simple fields.
-	init_waitqueue_head(&(config->legible_slot_wqh));
-	spin_lock_init(&(config->legible_slot_lock));
+	init_waitqueue_head(&(config->incoming_slot_wqh));
+	spin_lock_init(&(config->incoming_slot_lock));
 
 	// Real work.
 	if ((ret = mapBARs(pdev)))
@@ -143,8 +163,8 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 	// All the needed parameters are set to finish this off.
 
 	// My slot and message pointers.
-	config->my_slot = (void *)(
-		(uint64_t)config->globals + config->my_id * config->globals->slotsize);
+	if (!(config->my_slot = calculate_mailslot(config, config->my_id)))
+		goto err_kfree;
 	memset(config->my_slot, 0, config->globals->slotsize);
 	snprintf(config->my_slot->nodename,
 		 sizeof(config->my_slot->nodename) - 1,

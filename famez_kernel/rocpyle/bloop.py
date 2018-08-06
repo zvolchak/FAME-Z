@@ -9,8 +9,14 @@ print('FAST mode:', fast)
 
 from pdb import set_trace
 
-target = int(sys.argv[1])
-mult = int(sys.argv[2])
+if len(sys.argv) < 3:
+    raise SystemExit('usage: bloop.py target mulitiplier devfile')
+
+try:
+    target = int(sys.argv[1])
+    mult = int(sys.argv[2])
+except ValueError as e:
+    raise SystemExit('Those first two arguments should be integers')
 dev = sys.argv[3]
 
 assert 1 <= target <= 32, 'target out of range'

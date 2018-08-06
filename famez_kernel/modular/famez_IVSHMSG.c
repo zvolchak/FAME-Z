@@ -7,27 +7,6 @@
 #include "famez.h"
 
 //-------------------------------------------------------------------------
-// Convenience routine needed by ISR handler, which will vary by architecture.
-// Respect the "knowledge domain" of this source module.
-// Slot 0 is the globals data, don't play in there.  The last slot
-// (nSlots - 1) is the for the server.  This code gets [1, nSlots-2].
-
-struct famez_mailslot __iomem *calculate_mailslot(
-	struct famez_config *config,
-	unsigned slotnum)
-{
-	struct famez_mailslot __iomem *slot;
-
-	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
-		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
-		return NULL;
-	}
-	slot = (void *)(
-		(uint64_t)config->globals + slotnum * config->globals->slotsize);
-	return slot;
-}
-
-//-------------------------------------------------------------------------
 // Return positive (bytecount) on success, negative on error, never 0.
 // The synchronous rate seems to be determined mostly by the sleep 
 // duration. I tried a 3x timeout whose success varied from 2 minutes to
@@ -108,34 +87,34 @@ EXPORT_SYMBOL(famez_sendmail);
 // ret, so the caller doesn't need to understand the config structure to
 // look it up.  Intermix locking with that in msix_all().
 
-struct famez_mailslot *famez_await_legible_slot(struct file *file,
-					   struct famez_config *config)
+struct famez_mailslot *famez_await_incoming(struct famez_config *config,
+					    int nonblocking)
 {
 	int ret = 0;
 
-	if (config->legible_slot)
-		return config->legible_slot;
-	if (file->f_flags & O_NONBLOCK)
+	if (config->incoming_slot)
+		return config->incoming_slot;
+	if (nonblocking)
 		return ERR_PTR(-EAGAIN);
 	PR_V2("%s() waiting...\n", __FUNCTION__);
 
 	// wait_event_xxx checks the the condition BEFORE waiting but
 	// does modify the run state.  Does that side effect matter?
 	// FIXME: wait_event_interruptible_locked?
-	if ((ret = wait_event_interruptible(config->legible_slot_wqh, 
-					    config->legible_slot)))
+	if ((ret = wait_event_interruptible(config->incoming_slot_wqh, 
+					    config->incoming_slot)))
 		return ERR_PTR(ret);
-	return config->legible_slot;
+	return config->incoming_slot;
 }
-EXPORT_SYMBOL(famez_await_legible_slot);
+EXPORT_SYMBOL(famez_await_incoming);
 
 //-------------------------------------------------------------------------
 
-void famez_release_legible_slot(struct famez_config *config)
+void famez_release_incoming(struct famez_config *config)
 {
-	spin_lock(&config->legible_slot_lock);
-	config->legible_slot->msglen = 0;	// In the slot of the remote sender
-	config->legible_slot = NULL;		// Seen by local MSIX handler
-	spin_unlock(&config->legible_slot_lock);
+	spin_lock(&config->incoming_slot_lock);
+	config->incoming_slot->msglen = 0;	// The slot of the sender.
+	config->incoming_slot = NULL;		// The local MSI-X handler.
+	spin_unlock(&config->incoming_slot_lock);
 }
-EXPORT_SYMBOL(famez_release_legible_slot);
+EXPORT_SYMBOL(famez_release_incoming);

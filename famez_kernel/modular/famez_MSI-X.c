@@ -7,16 +7,16 @@
 
 //-------------------------------------------------------------------------
 // FIXME: can a spurious interrupt get me here "too fast" so that I'm
-// overrunning the legible slot during a tight loop client?
+// overrunning the incoming slot during a tight loop client?
 
 static irqreturn_t all_msix(int vector, void *data) {
 	struct famez_config *config = data;
 	struct msix_entry *msix_entries = config->IRQ_private;
 	int slotnum, stomped = 0;
-	uint16_t sender_id = 0;	// see pci.h for msix_entry
-	struct famez_mailslot __iomem *sender_slot;
+	uint16_t incoming_id = 0;	// see pci.h for msix_entry
+	struct famez_mailslot __iomem *incoming_slot;
 
-	spin_lock(&(config->legible_slot_lock));
+	spin_lock(&(config->incoming_slot_lock));
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
@@ -26,43 +26,42 @@ static irqreturn_t all_msix(int vector, void *data) {
 			break;
 	}
 	if (slotnum >= config->globals->nSlots) {
-		spin_unlock(&(config->legible_slot_lock));
+		spin_unlock(&(config->incoming_slot_lock));
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
-	sender_id = msix_entries[slotnum].entry;
+	incoming_id = msix_entries[slotnum].entry;
 
 	// All returns from here are IRQ_HANDLED
 
-	if (!(sender_slot = calculate_mailslot(config, sender_id))) {
-		spin_unlock(&(config->legible_slot_lock));
-		pr_err(FZ "Could not match peer %u\n", sender_id);
+	if (!(incoming_slot = calculate_mailslot(config, incoming_id))) {
+		spin_unlock(&(config->incoming_slot_lock));
+		pr_err(FZ "Could not match peer %u\n", incoming_id);
 		return IRQ_HANDLED;
 	}
 
 	// This may do weird things with the spinlock held...
 	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
-		vector, sender_id, sender_slot->msg);
-
-	// sender_slot->peer_id = sender_id;	// FIXME WHY IS THIS NEEDED?
+		vector, incoming_id, incoming_slot->msg);
 
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
-	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4)) {
+	if (incoming_slot->msglen == 4 &&
+	    STREQ_N(incoming_slot->msg, "ping", 4)) {
 		// Needs to be okay with interrupt context.  Signal completion.
-		spin_unlock(&(config->legible_slot_lock));
-		sender_slot->msglen = 0;	// msg received
-		famez_sendmail(sender_id, "pong", 4, config);
+		spin_unlock(&(config->incoming_slot_lock));
+		incoming_slot->msglen = 0;	// msg received
+		famez_sendmail(incoming_id, "pong", 4, config);
 		return IRQ_HANDLED;
 	}
-	if (config->legible_slot)	// print outside the spinlock
-		stomped = config->legible_slot->peer_id;
-	config->legible_slot = sender_slot;
-	spin_unlock(&(config->legible_slot_lock));
+	if (config->incoming_slot)	// print outside the spinlock
+		stomped = config->incoming_slot->peer_id;
+	config->incoming_slot = incoming_slot;
+	spin_unlock(&(config->incoming_slot_lock));
 
-	wake_up(&(config->legible_slot_wqh));
+	wake_up(&(config->incoming_slot_wqh));
 	if (stomped)
-		pr_warn(FZ "%s() stomped legible slot for reader %d\n",
+		pr_warn(FZ "%s() stomped incoming slot for reader %d\n",
 			__FUNCTION__, config->my_id);
 	return IRQ_HANDLED;
 }
