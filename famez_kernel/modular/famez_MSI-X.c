@@ -49,8 +49,9 @@ static irqreturn_t all_msix(int vector, void *data) {
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
 	if (sender_slot->msglen == 4 && STREQ_N(sender_slot->msg, "ping", 4)) {
-		// Needs to be okay with interrupt context.
+		// Needs to be okay with interrupt context.  Signal completion.
 		spin_unlock(&(config->legible_slot_lock));
+		sender_slot->msglen = 0;	// msg received
 		famez_sendmail(sender_id, "pong", 4, config);
 		return IRQ_HANDLED;
 	}
