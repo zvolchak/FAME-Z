@@ -32,10 +32,10 @@ struct famez_mailslot __iomem *calculate_mailslot(
 // The synchronous rate seems to be determined mostly by the sleep 
 // duration. I tried a 3x timeout whose success varied from 2 minutes to
 // three hours before it popped. 4x was better, lasted until I did a
-// compile, so...
+// compile, so...use a slightly adaptive timeout to reach the LOOP_MAX.
 
-#define PRIOR_RESP_WAIT (5 * HZ)	// 5x
-#define DELAY_MS	10		// or about 100 writes/second
+#define PRIOR_RESP_WAIT		(5 * HZ)	// 5x
+#define DELAY_MS_LOOP_MAX	10		// or about 100 writes/second
 
 static unsigned long longest = PRIOR_RESP_WAIT/2;
 
@@ -48,7 +48,8 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		struct { uint16_t vector, peer; };
 		uint32_t Doorbell;
 	} ringer;
-	unsigned long now = 0, hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
+	unsigned long now = 0, this_delay,
+		 hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
 
 	// Might NOT be printable C string.
 	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
@@ -63,12 +64,15 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// Pseudo-"HW ready": wait until my_slot has pushed a previous write
 	// through. In truth it's the previous responder clearing my msglen.
 	// The macro makes many references to its parameters, so...
+	this_delay = 1;
 	while (config->my_slot->msglen && time_before(now, hw_timeout)) {
 		if (in_interrupt())
-			mdelay(DELAY_MS); // udelay(25k) leads to compiler error
+			mdelay(this_delay); // (25k) leads to compiler error
 		else
-		 	msleep(DELAY_MS);
-	       now = get_jiffies_64();
+		 	msleep(this_delay);
+		if (this_delay < DELAY_MS_LOOP_MAX)
+			this_delay += 2;
+		now = get_jiffies_64();
 	}
 	if ((hw_timeout -= now) > longest) {
 		// pr_warn(FZ "%s() biggest TO goes from %lu to %lu\n",
