@@ -190,9 +190,9 @@ class FAMEZ_MailBox(object):
         # The previous responder needs to clear the msglen to indicate it
         # has pulled the message out of the sender's mailbox.
         index = sender_id * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
-        stop = NOW() + 1.2
+        stop = NOW() + 1.0
         while NOW() < stop and struct.unpack('Q', self.mm[index:index+8])[0]:
-            print('psuedo-HW not ready to send')
+            print('pseudo-HW not ready to send')
             SLEEP(0.1)
 
         self.mm[index:index + 8] = struct.pack('Q', msglen)
