@@ -336,7 +336,8 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
-        args.logmsg('IVSHMEM listening on %s' % args.socketpath)
+        args.logmsg('FAME-Z server (IVSHMSG id=%d) listening on %s' %
+            (args.nSlots - 1, args.socketpath))
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 

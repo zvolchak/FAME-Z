@@ -43,12 +43,14 @@ def parse_cmdline(cmdline_args):
     )
     parser.add_argument('--nSlots', '-n', metavar='<integer>',
         help='Number of actor slots; max peer count is two fewer',
-        default=4
+        type=int,
+        default=8
     )
-    parser.add_argument('--recycle', '-r',
-        help='On client death do not advise peers; reuse eventfds on respawn',
-        action='store_true',
-        default=False
+    parser.add_argument('--norecycle',
+        dest='recycle',     # By default, DO recycle FDs, do not...
+        help='Use QEMU legacy mechanism of new FDs on respawn; known to crash surviving sessions',
+        action='store_false',
+        default=True
     )
     parser.add_argument('--silent', '-s',
         help='Do NOT participate in EventFDs/mailbox as another peer',
@@ -64,18 +66,15 @@ def parse_cmdline(cmdline_args):
         default=0,
         action='count'
     )
-
-    # Positional arguments
-    parser.add_argument('SID', metavar='<SubnetID>',
+    parser.add_argument('--SID', metavar='<SubnetID>',
         help='Subnet ID overseen by this server',
         type=int,
-        nargs=1,
+        default=27
     )
 
     # Generate the object and postprocess some of the fields.
     args = parser.parse_args(cmdline_args)
-    args.SID = args.SID[0]          # nargs parser returns a list
-    args.nSlots = int(args.nSlots)
+    assert 0 < args.SID < 65536, 'SID out of range'
     assert not '/' in args.mailbox, 'mailbox cannot have slashes'
     assert not os.path.exists(args.socketpath), 'Remove %s' % args.socketpath
 
