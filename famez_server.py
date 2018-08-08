@@ -64,9 +64,17 @@ def parse_cmdline(cmdline_args):
         default=0,
         action='count'
     )
-    args = parser.parse_args(cmdline_args)
 
-    # Idiot checking.
+    # Positional arguments
+    parser.add_argument('SID', metavar='<SubnetID>',
+        help='Subnet ID overseen by this server',
+        type=int,
+        nargs=1,
+    )
+
+    # Generate the object and postprocess some of the fields.
+    args = parser.parse_args(cmdline_args)
+    args.SID = args.SID[0]          # nargs parser returns a list
     args.nSlots = int(args.nSlots)
     assert not '/' in args.mailbox, 'mailbox cannot have slashes'
     assert not os.path.exists(args.socketpath), 'Remove %s' % args.socketpath

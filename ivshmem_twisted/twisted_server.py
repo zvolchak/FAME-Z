@@ -73,6 +73,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.logerr = self.args.logerr
             self.__class__.my_id = self.args.nSlots - 1  # Cuz that's the rule
             self.__class__.mailbox = self.args.mailbox
+            self.__class__.SID = self.args.SID
 
             # Usually create eventfds for receiving messages in IVSHMSG and
             # set up a callback.  This early arming is not a race condition
@@ -119,6 +120,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             peer.logerr('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
             return
+        peer.CID = int('%02d' * 4 % ((peer.id,) * 4))
         server_peer_list = peer.peer_list
 
         # Server line 175: create specified number of eventfds.  These are
@@ -259,6 +261,28 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         if msg == 'ping':
             selph.mailbox.fill(selph.my_id, 'PONG')
             peer.vectors[selph.my_id].incr()
+            return
+
+        elems = msg.split(':')
+        if len(elems) == 1:
+            return
+
+        if elems[0] == 'LinkRFC':
+            if not elems[1].startswith('TTCuS='):
+                selph.logmsg('%d: LinkRFC missing TTCuS' % peer.id)
+                return
+            try:
+                uS = int(elems[1].split('=')[1])
+            except Exception as e:
+                uS = 999999
+            if uS > 1000:  # 1 ms, about the cycle time of this server
+                selph.logmsg('Delay == %duS, dropping request' % uS)
+                return
+            selph.mailbox.fill(
+                selph.my_id,
+                'CtrlWrite:SID=%d,CID=%d' % (selph.SID, selph.CID))
+            peer.vectors[selph.my_id].incr()
+            return
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven
@@ -277,6 +301,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         'silent':       False,      # Does participate in eventfds/mailbox
         'socketpath':   '/tmp/ivshmem_socket',
         'verbose':      0,
+        'SID':          42,
     }
 
     def __init__(self, args=None):
