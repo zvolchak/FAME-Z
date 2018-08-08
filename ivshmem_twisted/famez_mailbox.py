@@ -192,8 +192,9 @@ class FAMEZ_MailBox(object):
         index = sender_id * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSGLEN_off
         stop = NOW() + 1.0
         while NOW() < stop and struct.unpack('Q', self.mm[index:index+8])[0]:
-            print('pseudo-HW not ready to send')
             SLEEP(0.1)
+        if NOW() >= stop:
+            print('pseudo-HW not ready to receive wait limit: stomping')
 
         self.mm[index:index + 8] = struct.pack('Q', msglen)
         index = sender_id * self.MAILBOX_SLOTSIZE + self.MAILSLOT_MSG_off
