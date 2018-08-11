@@ -58,6 +58,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     logerr = None
     peer_list = []     # Map peer IDs to list of eventfds
     recycled = {}
+    nClients = None
     my_id = None
     nEvents = None
 
@@ -73,6 +74,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
+            self.__class__.nClients = self.args.nClients
             self.__class__.my_id = self.args.nClients + 1   # I am the server
             self.__class__.nEvents = self.args.nClients + 2
             self.__class__.mailbox = self.args.mailbox
@@ -341,8 +343,8 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
-        args.logmsg('FAME-Z server (IVSHMSG id=%d) listening on %s' %
-            (server_id, args.socketpath))
+        args.logmsg('FAME-Z server (id=%d) listening for up to %d clients on %s' %
+            (server_id, args.nClients, args.socketpath))
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 

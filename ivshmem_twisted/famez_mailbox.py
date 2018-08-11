@@ -5,8 +5,8 @@
 # is a shared common area split into "slots".   slot 0 is a global read-only
 # area populated by the server, then "nClients" worth of slots, and a final
 # entry "nClients + 1" is the server mailslot.  This is contiguous because it
-# it aligns with how QEMU expects delivery of peer info, including the FAME-Z 
-# server (which is an extension beyond stock QEMU IVSHMSG protocol).  
+# it aligns with how QEMU expects delivery of peer info, including the FAME-Z
+# server (which is an extension beyond stock QEMU IVSHMSG protocol).
 # Right now a mailslot is 512 bytes: 128 bytes of metadata (currently about
 # 96 used), then 384 of message buffer.
 # Go for the max slots in the file to hardwire libvirt domain XML file size.
@@ -66,7 +66,7 @@ class FAMEZ_MailBox(object):
         self.mm = mmap.mmap(self.fd, 0)
 
         # Empty it.  Simple code that's never too demanding on size (now 32k)
-        data = b'\0' * (self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE)
+        data = b'\0' * self.filesize
         self.mm[0:len(data)] = data
 
         # Fill in the globals.  Must match the C struct in famez.ko.
@@ -77,7 +77,7 @@ class FAMEZ_MailBox(object):
         # Set the peer_id for each slot as a C integer.  While python client
         # can discern a sender, the famez.ko driver needs an assist.
 
-        for slot in range(1, self.nClients + 2):
+        for slot in range(1, self.nEvents):
             index = slot * self.MAILBOX_SLOTSIZE + self.MS_PEER_ID_off
             packed_peer = struct.pack('Q', slot)   # uint64_t
             # print('------- index = %d, size =  = %d' %
@@ -98,6 +98,7 @@ class FAMEZ_MailBox(object):
 
         assert (self.MS_MSG_off + self.MS_MAX_MSGLEN
             == self.MAILBOX_SLOTSIZE), 'Fix this NOW'
+        self.filesize = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
 
         if isinstance(pathORfd, int):
             assert client_id > 0 and nodename is not None, 'Bad call, ump!'
@@ -114,7 +115,6 @@ class FAMEZ_MailBox(object):
         assert 1 <= nClients <= self.MAILBOX_MAX_SLOTS - 2, \
             'Bad nClients (valid: 2 - %d)' % (self.MAILBOX_MAX_SLOTS - 2)
 
-        size = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
         gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
         for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
             try:
@@ -129,14 +129,14 @@ class FAMEZ_MailBox(object):
         try:
             if not os.path.isfile(path):
                 fd = os.open(path, os.O_RDWR | os.O_CREAT, mode=0o666)
-                os.posix_fallocate(fd, 0, size)
+                os.posix_fallocate(fd, 0, self.filesize)
                 os.fchown(fd, -1, gr_gid)
             else:   # Re-condition and re-use
                 lstat = os.lstat(path)
                 assert STAT.S_ISREG(lstat.st_mode), 'not a regular file'
-                assert lstat.st_size >= size, \
+                assert lstat.st_size >= self.filesize, \
                     'existing size (%d) is < required (%d)' % (
-                        lstat.st_size, size)
+                        lstat.st_size, self.filesize)
                 if lstat.st_gid != gr_gid and gr_gid > 0:
                     print('Changing %s to group %s' % (path, gr_name))
                     os.chown(path, -1, gr_gid)
@@ -150,12 +150,11 @@ class FAMEZ_MailBox(object):
         os.umask(oldumask)
 
         # Probably very handy to keep around.
-        self.nClients = nClients
         self.path = path                        # Final absolute path
         self.fd = fd
-
-        # Finally do "my" stuff
+        self.nClients = nClients
         self.server_id = nClients + 1           # New rule
+        self.nEvents = nClients + 2             # FIXME: add these to globals
         self.nodename = 'Z-Server'
         self._populate()
 
