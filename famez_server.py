@@ -41,10 +41,10 @@ def parse_cmdline(cmdline_args):
         help='Name of mailbox that exists in POSIX shared memory',
         default='famez_mailbox'
     )
-    parser.add_argument('--nSlots', '-n', metavar='<integer>',
-        help='Number of actor slots; max peer count is two fewer',
+    parser.add_argument('--nClients', '-n', metavar='<integer>',
+        help='Server up to this number of clients (limit=62)',
         type=int,
-        default=8
+        default=2
     )
     parser.add_argument('--norecycle',
         dest='recycle',     # By default, DO recycle FDs, do not...
@@ -66,15 +66,17 @@ def parse_cmdline(cmdline_args):
         default=0,
         action='count'
     )
-    parser.add_argument('--SID', metavar='<SubnetID>',
-        help='Subnet ID overseen by this server',
-        type=int,
-        default=27
+    parser.add_argument('--smart',
+        help='Perform rudimentary fabric management for VMs',
+        action='store_true',
+        default=False
     )
 
     # Generate the object and postprocess some of the fields.
     args = parser.parse_args(cmdline_args)
-    assert 0 < args.SID < 65536, 'SID out of range'
+    assert 1 <= args.nClients <= 62, 'nClients is out of range 1 - 62'
+    assert not (args.silent and args.smart), \
+        'Silent/smart are mutually exclusive'
     assert not '/' in args.mailbox, 'mailbox cannot have slashes'
     assert not os.path.exists(args.socketpath), 'Remove %s' % args.socketpath
 

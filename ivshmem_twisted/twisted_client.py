@@ -69,7 +69,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self.mailbox = None
         self._latest_fd = None
         self.id2nodename = None
-        self.nSlots = 0
+        self.nClients = 0               # Actual peers, not including server
+        self.nEvents = 0                # Contiguous list for IVSHMSG protocol
         # The state machine major decisions about the semantics of blocks of
         # data have one predicate.   While technically unecessary, firstpass
         # guards against server errors.
@@ -82,7 +83,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def get_nodenames(self):
         self.id2nodename = OrderedDict()
         for peer_id in sorted(self.fd_list):   # integer keys()
-            nodename, _ = self.mailbox.empty(peer_id, clear=False)
+            nodename, _ = self.mailbox.retrieve(peer_id, clear=False)
             self.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
@@ -91,7 +92,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self.get_nodenames()
         indices = tuple()       # Default return is nothing
         try:
-            indices = (int(instr), )
+            tmp = (int(instr), )
+            if 1 <= tmp[0] <= self.server_id:
+                indices = tmp
         except TypeError as e:
             return indices
         except ValueError as e:
@@ -130,10 +133,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     self.peer_list[D][S].incr()
                 except KeyError as e:
                     print('No such peer id', str(e))
+                    continue
                 except Exception as e:
                     print('place_and_go(%s, "%s", %s) failed: %s' %
                         (D, msg, S, str(e)))
-                    pass    # Soldier on!
+                    return
 
     def fileDescriptorReceived(self, latest_fd):
         assert self._latest_fd is None, 'Latest fd has not been consumed'
@@ -170,7 +174,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             # beyond the intial three.
             self.mailbox = FAMEZ_MailBox(
                 mailbox_fd, client_id=self.my_id, nodename=self.nodename)
-            self.nSlots = self.mailbox.nSlots
+            self.nClients = self.mailbox.nClients
+            self.server_id = self.nClients + 1
+            # One for each client, one for the server, and a dummy that
+            # keeps indexing straight for the actual QEMU participants.
+            self.nEvents = self.nClients + 2
             return
 
         # Now into the stream of <peer id><eventfd> pairs.  Unless it's
@@ -192,10 +200,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     pass
             return
 
-        # Get a stream of batched integers, batch length == nSlots.
-        # One batch for each existing peer, then the server (see
+        # Get a stream of batched integers, max batch length == nEvents
+        # (the dummy slot 0, nClients, and the server).  There will be
+        # one batch for each existing peer, then the server (see
         # the "voodoo" comment in twisted_server.py).  In general the
-        # batch lengths could be different for each peer, but in famez
+        # batch lengths could be different for each peer, but in FAME-Z
         # they're all the same.  Just shove all fds in, including mine.
 
         # Am I starting the last batch (eventfds for me that need notifiers?)
@@ -206,9 +215,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # Just save the eventfd now, generate objects later.
         try:
             tmp = len(self.fd_list[this])
-            assert tmp <= self.nSlots, 'fd list is too long'
-            if tmp == self.nSlots:      # Beginning of client reconnect
-                assert this != self.my_id, 'Updating MY eventfds????'
+            assert tmp <= self.server_id, 'fd list is too long'
+            if tmp == self.nEvents:      # Beginning of client reconnect
+                assert this != self.my_id, 'Updating MY eventfds??? off-by-one'
                 raise KeyError('Forced update')
             self.fd_list[this].append(latest_fd)   # order matters
         except KeyError as e:
@@ -223,7 +232,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # vector lists are the same length.  My vectors come last during
         # first pass.  During a new client join it's only their info.
         if ((self.firstpass and this != self.my_id) or
-            (len(self.fd_list[this]) < self.nSlots)):
+            (len(self.fd_list[this]) < self.nEvents)):
+            if self.args.verbose:
+                print('This %d waiting for more fds, nClients == %d...\n' %
+                    (this, self.nClients))
             return
 
         # First convert all fds to event notifier objects for both signalling
@@ -275,7 +287,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if peer is None:
             selph.logmsg('Disappeering act %d' % peer_id)
             return
-        nodename, msg = selph.mailbox.empty(peer_id)
+        nodename, msg = selph.mailbox.retrieve(peer_id)
 
         try:
             print('%10s (%2d) -> "%s" (len %d)' % (
@@ -320,7 +332,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 return True
 
             if cmd in ('d', 'dump'):
-                print('Peer list keys (%d max):' % (self.nSlots - 1))
+                print('Peer list keys (%d max):' % (self.nClients + 1))
                 print('\t%s' % sorted(self.peer_list.keys()))
 
                 print('\nActor event fds:')
