@@ -173,12 +173,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             # globals because the IVSHMSG protocol doesn't allow values
             # beyond the intial three.
             self.mailbox = FAMEZ_MailBox(
-                mailbox_fd, client_id=self.my_id, nodename=self.nodename)
-            self.nClients = self.mailbox.nClients
-            self.server_id = self.nClients + 1
-            # One for each client, one for the server, and a dummy that
-            # keeps indexing straight for the actual QEMU participants.
-            self.nEvents = self.nClients + 2
+                fd=mailbox_fd, client_id=self.my_id, nodename=self.nodename)
+            self.nClients = self.mailbox.nClients   # legibility
+            self.nEvents = self.mailbox.nEvents
+            self.server_id = self.mailbox.server_id
             return
 
         # Now into the stream of <peer id><eventfd> pairs.  Unless it's
@@ -327,11 +325,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 assert len(elems) >= 2, 'Missing dest and/or src'
                 dest = elems.pop(0)
                 src = elems.pop(0)
-                msg = ' '.join(elems)       # Empty list -> empty string
+                msg = ' '.join(elems)   # Empty list -> empty string
                 self.place_and_go(dest, msg, src)
                 return True
 
-            if cmd in ('d', 'dump'):
+            if cmd in ('d', 'dump'):    # Include the server
                 print('Peer list keys (%d max):' % (self.nClients + 1))
                 print('\t%s' % sorted(self.peer_list.keys()))
 

@@ -34,6 +34,8 @@ class FAMEZ_MailBox(object):
     G_SLOTSIZE_off = 0        # in the space of mailslot index 0
     G_MSG_OFFSET_off = 8
     G_NCLIENTS_off = 16
+    G_NEVENTS_off = 24
+    G_SERVER_ID_off = 32
 
     # Metadata (front of famez_mailslot_t) is char[32] plus a few uint64_t.
     # The actual message space starts after that, 32-byte aligned, which
@@ -45,12 +47,14 @@ class FAMEZ_MailBox(object):
 
     # Datum 2: 1 long
     MS_MSGLEN_off = MS_NODENAME_SIZE
-    MS_PEER_ID_off = MS_MSGLEN_off + 8
 
     # Datum 3: 1 long
+    MS_PEER_ID_off = MS_MSGLEN_off + 8
+
+    # Datum 4: 1 long
     MS_LAST_RESPONDER_off = MS_PEER_ID_off + 8
 
-    # 10 longs of padding and finally...
+    # 9 longs of padding == 12 longs after char[32] and finally...
 
     MS_MSG_off = 128
     MS_MAX_MSGLEN = 384
@@ -62,22 +66,23 @@ class FAMEZ_MailBox(object):
     # First 32 bytes of any slot are NUL-terminated host name (a C string).
 
 
-    def _populate(self):
+    def _initialize_mailbox(self, args):
         self.mm = mmap.mmap(self.fd, 0)
 
         # Empty it.  Simple code that's never too demanding on size (now 32k)
         data = b'\0' * self.filesize
         self.mm[0:len(data)] = data
 
-        # Fill in the globals.  Must match the C struct in famez.ko.
-        data = struct.pack('QQQ',
-            self.MAILBOX_SLOTSIZE, self.MS_MSG_off, self.nClients)
+        # Fill in the globals; used by famez.ko and the C struct famez_globals.
+        data = struct.pack('QQQQQ',                         # unsigned long long
+            self.MAILBOX_SLOTSIZE, self.MS_MSG_off,         # constants
+            args.nClients, args.nEvents, args.server_id)    # runtime
         self.mm[0:len(data)] = data
 
         # Set the peer_id for each slot as a C integer.  While python client
         # can discern a sender, the famez.ko driver needs an assist.
 
-        for slot in range(1, self.nEvents):
+        for slot in range(1, args.nEvents):
             index = slot * self.MAILBOX_SLOTSIZE + self.MS_PEER_ID_off
             packed_peer = struct.pack('Q', slot)   # uint64_t
             # print('------- index = %d, size =  = %d' %
@@ -85,36 +90,38 @@ class FAMEZ_MailBox(object):
             self.mm[index:index + len(packed_peer)] = packed_peer
 
         # My "hostname", zero-padded
-        data = self.nodename.encode()
-        index = self.server_id * self.MAILBOX_SLOTSIZE
+        data = 'Z-server'.encode()
+        index = args.server_id * self.MAILBOX_SLOTSIZE
         self.mm[index:index + len(data)] = data
+
+        # Shortcut rutime values in self.
+        self.nClients = args.nClients
+        self.nEvents = args.nEvents
+        self.server_id = args.server_id
+        self.my_id = self.server_id         # Not sure if it's used...
 
     #----------------------------------------------------------------------
     # Polymorphic.  Someday I'll learn about metaclasses.
 
-    def __init__(self, pathORfd, nClients=None, client_id=-1, nodename=None):
-        '''Server: Starts with string and slot count from command line.
-           Client: starts with an fd and id.'''
+    def __init__(self, args=None, fd=-1, client_id=-1, nodename=None):
+        '''Server: args with command line stuff from command line.
+           Client: starts with an fd and id read from AF_UNIX socket.'''
 
         assert (self.MS_MSG_off + self.MS_MAX_MSGLEN
             == self.MAILBOX_SLOTSIZE), 'Fix this NOW'
         self.filesize = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
 
-        if isinstance(pathORfd, int):
-            assert client_id > 0 and nodename is not None, 'Bad call, ump!'
-            self.fd = pathORfd
+        if args is None:
+            assert fd > 0 and client_id > 0 and isinstance(nodename, str), \
+                'Bad call, ump!'
+            self.fd = fd
             self.my_id = client_id
             self.nodename = nodename
             self._init_client_mailslot()
             return
-        assert isinstance(pathORfd, str), 'Need a path OR open fd'
-        assert client_id == -1, 'Cannot assign client id to server'
-        path = pathORfd     # Match previously written code
+        assert fd == -1 and client_id == -1, 'Cannot assign ids to server'
 
-        # Add two more slots for the globals and the server.
-        assert 1 <= nClients <= self.MAILBOX_MAX_SLOTS - 2, \
-            'Bad nClients (valid: 2 - %d)' % (self.MAILBOX_MAX_SLOTS - 2)
-
+        path = args.mailbox     # Match previously written code
         gr_gid = -1     # Makes no change.  Try Debian, CentOS, other
         for gr_name in ('libvirt-qemu', 'libvirt', 'libvirtd'):
             try:
@@ -149,14 +156,9 @@ class FAMEZ_MailBox(object):
 
         os.umask(oldumask)
 
-        # Probably very handy to keep around.
         self.path = path                        # Final absolute path
         self.fd = fd
-        self.nClients = nClients
-        self.server_id = nClients + 1           # New rule
-        self.nEvents = nClients + 2             # FIXME: add these to globals
-        self.nodename = 'Z-Server'
-        self._populate()
+        self._initialize_mailbox(args)
 
     #----------------------------------------------------------------------
     # Dig the mail and node name out of the slot for peer_id (1:1 mapping).
@@ -239,17 +241,8 @@ class FAMEZ_MailBox(object):
         buf = os.fstat(self.fd)
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
         self.mm = mmap.mmap(self.fd, 0)
-        self.nClients = struct.unpack(
-            'Q',
-            self.mm[self.G_NCLIENTS_off:self.G_NCLIENTS_off + 8]
-        )[0]
-        self.server_id = self.nClients + 1      # immediately after all clients
+        self.nClients, self.nEvents, self.server_id = struct.unpack('QQQ',
+            self.mm[self.G_NCLIENTS_off:self.G_NCLIENTS_off + 24])
 
         # mailbox slot starts with nodename
         self.clear_my_mailslot(nodenamebytes=self.nodename.encode())
-
-###########################################################################
-
-
-if __name__ == '__main__':
-    mbox = FAMEZ_MailBox('/tmp/junk', 4)

@@ -320,8 +320,9 @@ class FactoryIVSHMSGServer(TIPServerFactory):
 
         # Mailbox may be sized above the requested number of clients to
         # satisfy QEMU IVSHMEM restrictions.
-        args.mailbox = FAMEZ_MailBox(args.mailbox, nClients=args.nClients)
-        server_id = args.nClients + 1
+        args.server_id = args.nClients + 1
+        args.nEvents = args.nClients + 2
+        args.mailbox = FAMEZ_MailBox(args=args)  # replace string with object
 
         self.args = args
         if args.foreground:
@@ -344,7 +345,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             wantPID=True)
         E.listen(self)
         args.logmsg('FAME-Z server (id=%d) listening for up to %d clients on %s' %
-            (server_id, args.nClients, args.socketpath))
+            (args.server_id, args.nClients, args.socketpath))
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 
