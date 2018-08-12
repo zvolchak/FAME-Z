@@ -30,11 +30,13 @@ try:
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from famez_mailbox import FAMEZ_MailBox
+    from famez_switch import switch_handler
     from commander import Commander
 except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .famez_mailbox import FAMEZ_MailBox
+    from .famez_switch import switch_handler
     from .commander import Commander
 
 # Don't use peer ID 0, certain docs imply it's reserved.  Put the clients
@@ -247,46 +249,24 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         peer_id = vectorobj.num
         print('Received ER from peer %d' % peer_id, file=sys.stderr)
         nodename, msg = selph.mailbox.retrieve(peer_id)
-        selph.logmsg('"%s" (%d) -> "%s"' % (nodename, peer_id, msg))
+        # selph.logmsg('"%s" (%d) -> "%s"' % (nodename, peer_id, msg))
 
         # Find the peer in the list.  FIXME: convert to dict{} like client.
         for peer in selph.peer_list:
-            if peer.id == vectorobj.num:
+            if peer.id == peer_id:
                 break
         else:
-            selph.logmsg('Disappeering act by %d' % vectorobj.num)
+            selph.logmsg('Disappeering act by %d' % peer_id)
             return
 
-        # Someday pass and parse the message (like the discover stuff).
-        # For now just do the shortcut.
+        # Try the big shortcut.
         if msg == 'ping':
-            print('Sending PONG to %d from %d' %
-                (peer.id, selph.my_id),
-                file=sys.stderr)
+            selph.logmsg('PONG to %d' % peer.id, file=sys.stderr)
             selph.mailbox.fill(selph.my_id, 'PONG')
             peer.vectors[selph.my_id].incr()
             return
 
-        elems = msg.split(':')
-        if len(elems) == 1:
-            return
-
-        if elems[0] == 'LinkRFC':
-            if not elems[1].startswith('TTCuS='):
-                selph.logmsg('%d: LinkRFC missing TTCuS' % peer.id)
-                return
-            try:
-                uS = int(elems[1].split('=')[1])
-            except Exception as e:
-                uS = 999999
-            if uS > 1000:  # 1 ms, about the cycle time of this server
-                selph.logmsg('Delay == %duS, dropping request' % uS)
-                return
-            selph.mailbox.fill(
-                selph.my_id,
-                'CtrlWrite:SID=%d,CID=%d' % (selph.SID, selph.CID))
-            peer.vectors[selph.my_id].incr()
-            return
+        switch_handler(selph, nodename, msg)
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven
