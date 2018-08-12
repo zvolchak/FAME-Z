@@ -105,12 +105,12 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// Tell the server I'm here.
 	snprintf(imalive, sizeof(imalive) - 1,
 		"Client %d is ready", config->my_id);
-	ret = famez_sendmail(config->server_id,
+	ret = famez_sendmail(config->globals->server_id,
 		imalive, strlen(imalive), config);
 	if (ret > 0)
 		ret = ret == strlen(imalive) ? 0 : -EIO;
-
-	return ret;
+	if (!ret)
+		return ret;
 
 err_MSIX_teardown:
 	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));

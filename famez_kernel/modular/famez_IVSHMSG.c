@@ -33,7 +33,7 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 	// Might NOT be printable C string.
 	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
 
-	if (peer_id < 1 || peer_id > config->server_id)
+	if (peer_id < 1 || peer_id > config->globals->server_id)
 		return -EBADSLT;
 	if (msglen >= config->max_msglen)
 		return -E2BIG;

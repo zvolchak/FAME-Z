@@ -210,12 +210,12 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		ret = -EBADMSG;
 		goto unlock_return;
 	}
-	*msgbody = '\0';	// chomp ':', now two complete strings
+	*msgbody = '\0';	// chomp ':', now two NUL-terminated sections
 	msgbody++;
 	buflen -= (uint64_t)msgbody - (uint64_t)buffers->wbuf;
 
 	if (STREQ(buffers->wbuf, "server"))
-		peer_id = config->server_id;
+		peer_id = config->globals->server_id;
 	else {
 		if ((ret = kstrtou16(buffers->wbuf, 10, &peer_id)))
 			goto unlock_return;	// -ERANGE, usually

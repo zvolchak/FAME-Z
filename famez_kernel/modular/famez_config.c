@@ -23,8 +23,8 @@
 #include "famez.h"
 
 //-------------------------------------------------------------------------
-// Slot 0 is the globals data, so disallow its use.  The last slot
-// (nSlots - 1) is the for the server.
+// Slot 0 is the globals data, so disallow its use.  Server id currently
+// follows last client but in general could be discontiguous.
 
 struct famez_mailslot __iomem *calculate_mailslot(
 	struct famez_config *config,
@@ -32,8 +32,9 @@ struct famez_mailslot __iomem *calculate_mailslot(
 {
 	struct famez_mailslot __iomem *slot;
 
-	if (slotnum < 1 || slotnum >= config->globals->nSlots) {
-		pr_err(FZ ": mailslot %u is out of range\n", slotnum);
+	if ((slotnum < 1 || slotnum > config->globals->nClients) &&
+	     slotnum != config->globals->server_id) {
+		pr_err(FZ "mailslot %u is out of range\n", slotnum);
 		return NULL;
 	}
 	slot = (void *)(
@@ -158,7 +159,6 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 	config->max_msglen = config->globals->slotsize -
 			     config->globals->msg_offset;
 	config->my_id = config->regs->IVPosition;
-	config->server_id = config->globals->nSlots - 1;  // that's the rule
 
 	// All the needed parameters are set to finish this off.
 
@@ -170,10 +170,10 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 		 sizeof(config->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, config->pdev->devfn >> 3);
 
-	PR_V1(FZSP "mailslot size=%llu, message offset=%llu, server=%d\n",
+	PR_V1(FZSP "mailslot size=%llu, message offset=%llu, server=%llu\n",
 		config->globals->slotsize,
 		config->globals->msg_offset,
-		config->server_id);
+		config->globals->server_id);
 
 	return config;
 

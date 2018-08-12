@@ -21,11 +21,11 @@ static irqreturn_t all_msix(int vector, void *data) {
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
 	// FIXME: preload a lookup table if I ever care about speed.
-	for (slotnum = 1; slotnum < config->globals->nSlots; slotnum++) {
+	for (slotnum = 1; slotnum < config->globals->nEvents; slotnum++) {
 		if (vector == msix_entries[slotnum].vector)
 			break;
 	}
-	if (slotnum >= config->globals->nSlots) {
+	if (slotnum >= config->globals->nEvents) {
 		spin_unlock(&(config->incoming_slot_lock));
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
@@ -67,7 +67,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 }
 
 //-------------------------------------------------------------------------
-// As there are only nSlots-2 actual clients (because mailslot 0 is globals
+// As there are only nClients actual clients (because mailslot 0 is globals
 // and server @ nslots-1) I SHOULDN'T actually activate those two IRQs.
 
 int famez_ISR_setup(struct pci_dev *pdev)
@@ -88,12 +88,12 @@ int famez_ISR_setup(struct pci_dev *pdev)
 	}
 
 	// Remember, don't need a vector for slot 0
-	if (config->globals->nSlots > nvectors) {
+	if (config->globals->nEvents > nvectors) {
 		pr_err(FZ "need %llu MSI-X vectors, only %d available\n",
-			config->globals->nSlots, nvectors);
+			config->globals->nEvents, nvectors);
 		return -ENOSPC;
 	}
-	nvectors = config->globals->nSlots;		// legibility
+	nvectors = config->globals->nEvents;		// legibility
 
 	ret = -ENOMEM;
 	if (!(msix_entries = kzalloc(
@@ -182,7 +182,7 @@ void famez_ISR_teardown(struct pci_dev *pdev)
 	if (!msix_entries)	// Been there, done that
 		return;
 
-	for (i = 0; i < config->globals->nSlots; i++)
+	for (i = 0; i < config->globals->nClients + 2; i++)
 		free_irq(msix_entries[i].vector, config);
 	pci_free_irq_vectors(pdev);
 	kfree(msix_entries);

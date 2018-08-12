@@ -33,11 +33,11 @@ struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
 // There are always a power-of-two number of mailbox slots, indexed by IVSHMSG
 // client ID.  Slot 0 is reserved for global data cuz it's easy to find :-)
 // Besides, ID 0 doesn't seem to work in the QEMU doorbell mechanism.  The
-// last slot (with ID == nSlots - 1) is for the Python server.  The remaining
-// slots are for client IDs 1 through (nSlots - 2).
+// last slot (with ID == nClients + 1) is for the Python server.  The remaining
+// slots are for client IDs 1 through nClients.
 
 struct famez_globals {			// BAR 2: Start of IVSHMEM
-	uint64_t slotsize, msg_offset, nSlots;
+	uint64_t slotsize, msg_offset, nClients, nEvents, server_id;
 };
 
 // Use only uint64_t and keep the msg[] on a 32-byte alignment for this:
@@ -47,8 +47,8 @@ struct __attribute__ ((packed)) famez_mailslot {
 	uint64_t msglen,		// off 32:
 		 peer_id,		// off 40: Convenience; set by server
 		 last_responder,	// off 48: To assist stale stompage
-		 pad;			// off 56
-	char msg[];			// off 64: globals->msg_offset
+		 pad[9];		// off 56
+	char msg[];			// off 128: globals->msg_offset
 };
 
 // The primary configuration/context data.
@@ -58,7 +58,7 @@ struct famez_config {
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_msglen;
-	uint16_t my_id, server_id;			// match ringer.peer 
+	uint16_t my_id;					// match ringer field
 	struct ivshmem_registers __iomem *regs;		// BAR0
 	struct famez_globals __iomem *globals;		// BAR2
 	struct famez_mailslot *my_slot;			// indexed by my_id
