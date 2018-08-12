@@ -3,5 +3,6 @@
 *.swp
 
 junk*
+nohup.out
 
 __pycache__

@@ -247,9 +247,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         peer_id = vectorobj.num
-        print('Received ER from peer %d' % peer_id, file=sys.stderr)
         nodename, msg = selph.mailbox.retrieve(peer_id)
-        # selph.logmsg('"%s" (%d) -> "%s"' % (nodename, peer_id, msg))
+        print('%s -> "%s"' % (nodename, msg), file=sys.stderr)
+        selph.logmsg('"%s" (%d) -> "%s"' % (nodename, peer_id, msg))
 
         # Find the peer in the list.  FIXME: convert to dict{} like client.
         for peer in selph.peer_list:

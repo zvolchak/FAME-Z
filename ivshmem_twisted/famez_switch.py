@@ -2,31 +2,73 @@
 
 # Message has already been retrieved
 
+import os
+import sys
+
 from pdb import set_trace
 
-def _switch_link(selph, elems):
-    if not elems[0].startswith('ttcus='):
-        selph.logmsg('%d: Link RFC missing TTCuS' % selph.id)
-        return False
+###########################################################################
+
+LINK =  'link'
+
+
+def _unprocessed(*args, **kwargs):
+    selph.logmsg('Dummy dummy dummy')
+    return False
+
+
+def chelsea(prefix, suffix):
+    entry = '_%s_%s' % (prefix, suffix)
+    # print('Looking for %s()' % entry, end='', file=sys.stderr)
     try:
-        uS = int(elems[1].split('=')[1])
-    except Exception as e:
-        uS = 999999
-    if uS > 1000:  # 1 ms, about the cycle time of this server
-        selph.logmsg('Delay == %duS, dropping request' % uS)
-    else:
-        selph.mailbox.fill(
-            selph.my_id,
-            'CtrlWrite:SID=%d,CID=%d' % (selph.SID, selph.CID))
-        selph.vectors[selph.my_id].incr()
-    return True
+        tmp = globals()[entry]
+        # print(' found it', file=sys.stderr)
+        return tmp
+    except KeyError as e:
+        # print(' NOPE', file=sys.stderr)
+        return _unprocessed
 
 ###########################################################################
 
 
-def _no_sub(selph, nodename, msg):
-    selph.logmsg('Message was unprocessed')
-    return False
+def CSV2dict(oneCSVstr):
+    kv = {}
+    elems = oneCSVstr.strip().split(',')
+    for e in elems:
+        KeV = e.strip().split('=')
+        if len(KeV) != 2:
+            continue
+        kv[KeV[0].strip()] = KeV[1].strip()
+    return kv
+
+###########################################################################
+
+
+def _send_LinkACK(selph, submsg, nack=False):
+    hdr = 'Link:NACK:' if nack else 'Link:ACK'
+    selph.mailbox.fill(selph.my_id, '%s:%s' % (hdr, submsg))
+    selph.vectors[selph.my_id].incr()
+
+###########################################################################
+# Gen-Z 1.0 p xxxxx
+
+
+def _link_rfc(selph, subelems):
+    kv = CSV2dict(subelems[0])
+    try:
+        uS = int(kv['ttcus'])
+    except KeyError as e:
+        selph.logmsg('%d: Link RFC missing TTCuS' % selph.id)
+        return False
+    except (TypeError, ValueError) as e:
+        uS = 999999
+    if uS > 1000:  # 1 ms, about the cycle time of this server
+        selph.logmsg('Delay == %duS, dropping request' % uS)
+        return False
+    selph.mailbox.fill(selph.my_id,
+        'CtrlWrite:SID=%d,CID=%d' % (selph.SID, selph.CID))
+    selph.vectors[selph.my_id].incr()
+    return True
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
@@ -34,10 +76,14 @@ def _no_sub(selph, nodename, msg):
 
 def switch_handler(selph, nodename, msg):
     '''Return True if successfully parsed and processed.'''
-
-    elems = msg.lower.split(':')
-    subhandler = globals().get('_switch_' + elems[0], _no_sub)
-    return subhandler(selph, elems[1:])
+    elems = msg.lower().split(':')
+    try:
+        cmd = elems.pop(0)
+        subcmd = elems.pop(0)
+        return chelsea(cmd, subcmd)(selph, elems)
+    except Exception as e:
+        pass
+    return False
 
 ###########################################################################
 
