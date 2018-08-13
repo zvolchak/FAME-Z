@@ -247,9 +247,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def ERcallback(vectorobj):
         selph = vectorobj.cbdata
         peer_id = vectorobj.num
-        nodename, msg = selph.mailbox.retrieve(peer_id)
-        print('%s -> "%s"' % (nodename, msg), file=sys.stderr)
-        selph.logmsg('"%s" (%d) -> "%s"' % (nodename, peer_id, msg))
+        peername, msg = selph.mailbox.retrieve(peer_id)
+        print('%d:%s -> "%s"' % (peer_id, peername, msg), file=sys.stderr)
+        # selph.logmsg('"%s" (%d) -> "%s"' % (peername, peer_id, msg))
 
         # Find the peer in the list.  FIXME: convert to dict{} like client.
         for peer in selph.peer_list:
@@ -266,7 +266,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             peer.vectors[selph.my_id].incr()
             return
 
-        switch_handler(selph, nodename, msg)
+        switch_handler(selph, msg, peer)
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven

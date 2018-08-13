@@ -42,18 +42,25 @@ def CSV2dict(oneCSVstr):
     return kv
 
 ###########################################################################
+# Not clear if this can be refactored for more general use and moved.
 
 
-def _send_LinkACK(selph, submsg, nack=False):
-    hdr = 'Link:NACK:' if nack else 'Link:ACK'
-    selph.mailbox.fill(selph.my_id, '%s:%s' % (hdr, submsg))
-    selph.vectors[selph.my_id].incr()
+def _send_response(peer, selph, response):
+    selph.mailbox.fill(selph.my_id, response)
+    peer.vectors[selph.my_id].incr()
+    return True     # FIXME: is there anything to detect?
+
+###########################################################################
+
+
+def _send_LinkACK(peer, selph, submsg, nack=False):
+    return _send_response(peer, selph, 'Link:NACK:' if nack else 'Link:ACK')
 
 ###########################################################################
 # Gen-Z 1.0 p xxxxx
 
 
-def _link_rfc(selph, subelems):
+def _link_rfc(selph, subelems, peer):
     kv = CSV2dict(subelems[0])
     try:
         uS = int(kv['ttcus'])
@@ -65,22 +72,20 @@ def _link_rfc(selph, subelems):
     if uS > 1000:  # 1 ms, about the cycle time of this server
         selph.logmsg('Delay == %duS, dropping request' % uS)
         return False
-    selph.mailbox.fill(selph.my_id,
-        'CtrlWrite:SID=%d,CID=%d' % (selph.SID, selph.CID))
-    selph.vectors[selph.my_id].incr()
-    return True
+    return _send_response(peer, selph,
+        'CtrlWrite:SID=%d,CID=%d' % (peer.SID, peer.CID))
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
 
 
-def switch_handler(selph, nodename, msg):
+def switch_handler(selph, msgtoselph, peer):
     '''Return True if successfully parsed and processed.'''
-    elems = msg.lower().split(':')
+    elems = msgtoselph.lower().split(':')
     try:
         cmd = elems.pop(0)
         subcmd = elems.pop(0)
-        return chelsea(cmd, subcmd)(selph, elems)
+        return chelsea(cmd, subcmd)(selph, elems, peer)
     except Exception as e:
         pass
     return False
