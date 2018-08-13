@@ -61,40 +61,51 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     peer_list = []     # Map peer IDs to list of eventfds
     recycled = {}
     nClients = None
-    my_id = None
+    server_id = None
     nEvents = None
 
     # Non-standard addition to IVSHMEM server role: this server can be
     # interrupted and messaged to particpate in client activity.
-    my_notifiers = None
+    server_notifiers = []   # Looped even if empty
 
     def __init__(self, factory):
-        # First do class-level initialization of singletons.
-        # FIXME make a small class for the sake of clarity.
+        # Class-level initialization of server singletons.
         if self.args is None:
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
+            # FIXME: this could be its own object
             self.__class__.args = factory.args          # Seldom-used
             self.__class__.logmsg = self.args.logmsg    # Often-used
             self.__class__.logerr = self.args.logerr
             self.__class__.nClients = self.args.nClients
-            self.__class__.my_id = self.args.nClients + 1   # I am the server
+            self.__class__.server_id = self.args.nClients + 1   # This is me!
             self.__class__.nEvents = self.args.nClients + 2
             self.__class__.mailbox = self.args.mailbox
-            self.__class__.SID = 27
+            self.__class__.defaultSID = 27
+            if self.args.smart:
+                self.__class__.server_SID = self.defaultSID
+                self.__class__.server_CID = self.server_id * 100
+            else:
+                self.__class__.server_SID = 0
+                self.__class__.server_CID = 0
 
             # Usually create eventfds for receiving messages in IVSHMSG and
             # set up a callback.  This early arming is not a race condition
             # as the peer for which this is destined has not yet been told
             # of the fds it would use to trigger here.  The server slot comes
             # after the nClients.
-            if not self.args.silent and self.my_notifiers is None:
-                self.__class__.my_notifiers = ivshmem_event_notifier_list(
+            if not self.args.silent and not self.server_notifiers:
+                self.__class__.server_notifiers = ivshmem_event_notifier_list(
                     self.nEvents)
-                for i, this_notifier in enumerate(self.my_notifiers):
-                    this_notifier.num = i
-                    tmp = EventfdReader(this_notifier, self.ERcallback, self)
+                # self is really just a way to get to the server singletons.
+                # The actual client doing the sending needs to be fished out
+                # via its "num" vector.
+                for i, N in enumerate(self.server_notifiers):
+                    N.num = i
+                    tmp = EventfdReader(N, self.ServerCallback, self)
+                    # if i:   # Technically it blocks mailslot 0, the globals
                     tmp.start()
-        self.create_new_peer_id()   # Check if it worked after connection is up
+        # After all, this object is for a peer connection, not "me" the server.
+        self.create_new_peer_id()
 
     @property
     def nodename(self):
@@ -125,7 +136,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             peer.logmsg('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
             return
-        peer.CID = peer.id * 100
         server_peer_list = peer.peer_list
 
         # Server line 175: create specified number of eventfds.  These are
@@ -163,14 +173,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     other_peer_vector.wfd)
 
         # Non-standard voodoo extension to previous advertisment: advertise
-        # me (this server) to the new peer.  Consider it one more grouping
-        # in the previous batch.
-        if peer.my_notifiers:    # Exists only in non-silent mode
-            for server_vector in peer.my_notifiers:
-                ivshmem_send_one_msg(
-                    peer.transport.socket,
-                    peer.my_id,
-                    server_vector.wfd)
+        # this server to the new peer.  To QEMU it just looks like one more
+        # grouping in the previous batch.  Exists only in non-silent mode.
+        for server_vector in peer.server_notifiers:
+            ivshmem_send_one_msg(
+                peer.transport.socket,
+                peer.server_id,
+                server_vector.wfd)
 
         # Server line 205: advertise the new peer to itself, ie, send the
         # eventfds it needs for receiving messages.  This final batch
@@ -211,19 +220,22 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         except Exception as e:
             self.logmsg('Closing peer transports failed: %s' % str(e))
 
-    def create_new_peer_id(self):
-        '''Determine the lowest unused client ID and set self.id.'''
+    def create_new_peer_id(peer):
+        '''Determine the lowest unused client ID and set peer.id.'''
         # Does not occur often, don't sweat the performance.
-        if len(self.peer_list) >= self.nClients:
-            self.id = -1    # sentinel
-            return
-        current_ids = frozenset((p.id for p in self.peer_list))
+
+        if len(peer.peer_list) >= peer.nClients:
+            peer.id = -1    # sentinel
+            return  # Until a Link RFC is executed
+        peer.SID = 0    # Until a Link RFC is executed
+        peer.CID = 0
+        current_ids = frozenset((p.id for p in peer.peer_list))
         if not current_ids:
-            self.id = 1
+            peer.id = 1
             return
-        max_ids = frozenset((range(self.nClients + 2))) - \
-                  frozenset((IVSHMEM_UNUSED_ID, self.my_id ))
-        self.id = sorted(max_ids - current_ids)[0]
+        max_ids = frozenset((range(peer.nClients + 2))) - \
+                  frozenset((IVSHMEM_UNUSED_ID, peer.server_id ))
+        peer.id = sorted(max_ids - current_ids)[0]
 
     def send_initial_info(peer, ok=True):   # keep the convention self=="peer"
         # Protocol version without fd.
@@ -243,30 +255,36 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # FIXME does send_one message belong in mailbox.py?
         ivshmem_send_one_msg(thesocket, -1, peer.mailbox.fd)
 
+    # Running in the context of the server, this will retrieve
+    # the sender object.
     @staticmethod
-    def ERcallback(vectorobj):
-        selph = vectorobj.cbdata
+    def ServerCallback(vectorobj):
+        classvars = vectorobj.cbdata
         peer_id = vectorobj.num
-        peername, msg = selph.mailbox.retrieve(peer_id)
-        print('%d:%s -> "%s"' % (peer_id, peername, msg), file=sys.stderr)
-        # selph.logmsg('"%s" (%d) -> "%s"' % (peername, peer_id, msg))
+        sendername, msg = classvars.mailbox.retrieve(peer_id)
+        print('%d:%s -> "%s"' % (peer_id, sendername, msg),
+            file=sys.stderr)
+        # classvars.logmsg('"%s" (%d) -> "%s"' % (sendername, peer_id, msg))
 
-        # Find the peer in the list.  FIXME: convert to dict{} like client.
-        for peer in selph.peer_list:
+        # Find the peer in the list, just to insure this isn't spurious.
+        # FIXME: convert to dict{} like client.
+        for peer in classvars.peer_list:
             if peer.id == peer_id:
                 break
         else:
-            selph.logmsg('Disappeering act by %d' % peer_id)
+            classvars.logmsg('Disappeering act by %d' % peer_id)
             return
 
         # Try the big shortcut.
         if msg == 'ping':
-            selph.logmsg('PONG to %d' % peer.id, file=sys.stderr)
-            selph.mailbox.fill(selph.my_id, 'PONG')
-            peer.vectors[selph.my_id].incr()
+            classvars.logmsg('PONG to %d' % peer_id, file=sys.stderr)
+            # Could use "peer.mailbox" as once again it's a class distinction
+            # but this reads better.
+            peer.mailbox.fill(classvars.server_id, 'PONG')
+            peer.vectors[classvars.server_id].incr()
             return
 
-        switch_handler(selph, msg, peer)
+        switch_handler(peer, msg)
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven

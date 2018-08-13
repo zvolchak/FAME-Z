@@ -62,6 +62,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def __init__(self, cmdlineargs):
         self.args = cmdlineargs
         self.my_id = None       # Until initial info; state machine key
+        self.SID = 0
+        self.CID = 0
         self._nodename = None   # Generate it for myself, retrieve for peers
         self.server_id = None
         self.fd_list = OrderedDict()    # Sent to me
@@ -232,8 +234,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if ((self.firstpass and this != self.my_id) or
             (len(self.fd_list[this]) < self.nEvents)):
             if self.args.verbose:
-                print('This %d waiting for more fds, nClients == %d...\n' %
-                    (this, self.nClients))
+                print('This (%d) waiting for more fds...\n' % this)
             return
 
         # First convert all fds to event notifier objects for both signalling
@@ -247,9 +248,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         # Now set up waiters on my incoming stuff.
         if self.firstpass and this == self.my_id:
-            for i, this_notifier in enumerate(self.peer_list[self.my_id]):
-                this_notifier.num = i
-                tmp = EventfdReader(this_notifier, self.ERcallback, self)
+            for i, N in enumerate(self.peer_list[self.my_id]):
+                N.num = i
+                tmp = EventfdReader(N, self.ClientCallback, self)
                 tmp.start()
 
         # NOW I'm almost done.
@@ -278,7 +279,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         TIreactor.stop()
 
     @staticmethod
-    def ERcallback(vectorobj):
+    def ClientCallback(vectorobj):
         selph = vectorobj.cbdata
         peer_id = vectorobj.num
         peer = selph.peer_list.get(peer_id, None)
@@ -287,17 +288,20 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             return
         nodename, msg = selph.mailbox.retrieve(peer_id)
 
-        try:
-            print('%10s (%2d) -> "%s" (len %d)' % (
-                nodename, vectorobj.num, msg, len(msg)))
-        except Exception as e:      # VM can overrun this
-            pass
+        if selph.args.verbose or msg.lower() == 'pong':
+            try:
+                print('%10s (%2d) -> "%s" (len %d)' % (
+                    nodename, vectorobj.num, msg, len(msg)))
+            except Exception as e:      # VM can overrun this
+                pass
         if msg == 'ping':
             try:
                 selph.mailbox.fill(selph.my_id, 'pong')
                 selph.peer_list[peer_id][selph.my_id].incr()
             except Exception as e:
                 print('pong bombed:', str(e))
+
+        #
 
     #----------------------------------------------------------------------
     # Command line parsing.  I'm just trying to get it to work.
@@ -340,6 +344,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print('\nClient node/host names:')
                 for key in sorted(self.id2nodename.keys()):
                     print('\t%2d %s' % (key, self.id2nodename[key]))
+
+                print('\nSID:CID = %d:%d' % (self.SID, self.CID))
 
                 return True
 
