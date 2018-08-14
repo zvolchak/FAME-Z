@@ -13,6 +13,7 @@
 
 import socket
 import struct
+import sys
 
 ###########################################################################
 
@@ -29,8 +30,11 @@ def ivshmem_send_one_msg(thesocket, data, fd=None):
         cmsg = [    # Message array of one.
             (socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack('i', fd))
         ]
-    ret = thesocket.sendmsg(bdata_iovec, cmsg)
-    assert ret == 8, 'sendmsg could not write 8 bytes'
+    try:
+        ret = thesocket.sendmsg(bdata_iovec, cmsg)
+    except Exception as e:
+        ret = -1
+    return ret == 8
 
 
 def ivshmem_recv_one_msg(thesocket):

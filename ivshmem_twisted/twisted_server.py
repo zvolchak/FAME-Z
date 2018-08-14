@@ -31,14 +31,14 @@ try:
     from famez_mailbox import FAMEZ_MailBox
     from famez_switch import switch_handler
     from invariants import ServerInvariant
-    from ivshmem_eventfd import ivshmem_event_notifier_list
+    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
     from .famez_switch import switch_handler
     from .invariants import ServerInvariant
-    from .ivshmem_eventfd import ivshmem_event_notifier_list
+    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
 
 # Don't use peer ID 0, certain docs imply it's reserved.  Put the clients
@@ -64,6 +64,28 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         if self.SI is None:
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
+            SI = self.SI
+
+            # Non-standard addition to IVSHMEM server role: this server can be
+            # interrupted and messaged to particpate in client activity.
+            # It will get looped even if it's empty (silent mode).
+            SI.notifiers = []
+
+            # Usually create eventfds for receiving messages in IVSHMSG and
+            # set up a callback.  This early arming is not a race condition
+            # as the peer for which this is destined has not yet been told
+            # of the fds it would use to trigger here.
+
+            if not factory.cmdlineargs.silent:
+                SI.notifiers = ivshmem_event_notifier_list(SI.nEvents)
+                # The actual client doing the sending needs to be fished out
+                # via its "num" vector.
+                for i, N in enumerate(SI.notifiers):
+                    N.num = i
+                    tmp = EventfdReader(N, self.ServerCallback, SI)
+                    if i:   # Technically it blocks mailslot 0, the globals
+                        tmp.start()
+
         self.create_new_peer_id()
 
     @property
@@ -76,7 +98,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     def dataReceived(self, data):
         ''' TNSH :-) '''
-        self.logmsg('dataReceived, quite unexpectedly')
+        self.SI.logmsg('dataReceived, quite unexpectedly')
         raise NotImplementedError(self)
 
     # Use variables that resemble the QEMU "ivshmem-server.c":  peer == self.
@@ -110,7 +132,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 return
 
         # Server line 183: send version, peer id, shm fd
-        peer.send_initial_info()
+        if not peer.send_initial_info():
+            peer.SI.logmsg('Send initial info failed')
+            return
+
 
         # Server line 189: advertise the new peer to others.  Note that
         # this new peer has not yet been added to the list; this loop is
@@ -134,7 +159,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Non-standard voodoo extension to previous advertisment: advertise
         # this server to the new peer.  To QEMU it just looks like one more
         # grouping in the previous batch.  Exists only in non-silent mode.
-        for server_vector in peer.server_notifiers:
+        for server_vector in peer.SI.notifiers:
             ivshmem_send_one_msg(
                 peer.transport.socket,
                 peer.SI.server_id,
@@ -162,7 +187,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         self.SI.logmsg('%s disconnect from peer id %d' % (txt, self.id))
         if self in self.SI.peer_list:     # Only if everything was completed
             self.SI.peer_list.remove(self)
-        if self.args.recycle:
+        if self.SI.args.recycle:
             self.SI.recycled[self.id] = self
             return
 
@@ -174,7 +199,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 vector.cleanup()
 
             # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
-            self.SI.mailbox.clear_my_mailslot(override_id=self.id)
+            self.SI.mailbox.clear_mailslot(self.id)
 
         except Exception as e:
             self.SI.logmsg('Closing peer transports failed: %s' % str(e))
@@ -199,20 +224,33 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def send_initial_info(peer, ok=True):   # keep the convention self=="peer"
         # Protocol version without fd.
         thesocket = peer.transport.socket
-        if not ok:  # Violate the version check and bomb the client.
-            ivshmem_send_one_msg(thesocket, -1)
-            peer.transport.loseConnection()
-            peer.id = -1
-            return
-        ivshmem_send_one_msg(thesocket, peer.SERVER_IVSHMEM_PROTOCOL_VERSION)
+        try:
+            if not ok:  # Violate the version check and bomb the client.
+                print('Early termination', file=sys.stderr)
+                ivshmem_send_one_msg(thesocket, -1)
+                peer.transport.loseConnection()
+                peer.id = -1
+                return
+            print('Sending proto version', file=sys.stderr)
+            if not ivshmem_send_one_msg(thesocket,
+                peer.SERVER_IVSHMEM_PROTOCOL_VERSION):
+                print('This is screwed', file=sys.stderr)
+                return False
 
-        # The client's id, without an fd.
-        ivshmem_send_one_msg(thesocket, peer.id)
+            # The client's id, without an fd.
+            print('Sending client ID', file=sys.stderr)
+            ivshmem_send_one_msg(thesocket, peer.id)
 
-        # -1 for data with the fd of the ivshmem file.  Using this protocol
-        # a valid fd is required.
-        # FIXME does send_one message belong in mailbox.py?
-        ivshmem_send_one_msg(thesocket, -1, peer.mailbox.fd)
+            # -1 for data with the fd of the ivshmem file.  Using this protocol
+            # a valid fd is required.
+            # FIXME does send_one message belong in mailbox.py?
+            print('Sending mailbox fd', file=sys.stderr)
+            ivshmem_send_one_msg(thesocket, -1, peer.SI.mailbox.fd)
+            print('initial done', file=sys.stderr)
+            return True
+        except Exception as e:
+            print(str(e), file=sys.stderr)
+        return False
 
     # Running in the context of the server, this will retrieve
     # the sender object.
@@ -239,7 +277,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             SI.logmsg('PONG to %d' % sender_id, file=sys.stderr)
             # Could use "peer.mailbox" as once again it's a class distinction
             # but this reads better.
-            peer.mailbox.fill(SI.server_id, 'PONG')
+            peer.SI.mailbox.fill(SI.server_id, 'pong')
             peer.vectors[SI.server_id].incr()
             return
 

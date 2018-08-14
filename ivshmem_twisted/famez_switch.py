@@ -14,8 +14,11 @@ from pdb import set_trace
 
 
 def _unprocessed(client, *args, **kwargs):
-    if client.args.verbose:
-        client.logmsg('Dummy dummy dummy', args, kwargs)
+    return False
+    cmdlineargs = getattr(client, 'args', client.SI.args)
+    SI = getattr(client, 'SI', False)
+    if cmdlineargs.verbose and SI:
+        SI.logmsg('NOOP', args, kwargs)
     return False
 
 
@@ -49,42 +52,42 @@ def CSV2dict(oneCSVstr):
 # Might belong in famez_mailbox
 
 
-def _send_response(client, response, from_id):
-    client.mailbox.fill(from_id, response)
-    client.vectors[from_id].incr()
+def _send_response(mailbox, vectors, response, from_id):
+    mailbox.fill(from_id, response)
+    vectors[from_id].incr()
     return True     # FIXME: is there anything to detect?
 
 
 def client_responds(peer, response):
-    return _send_response(peer, response, peer.id)
+    return _send_response(peer.mailbox, peer.xyzzy, response, peer.id)
 
 
 def server_responds(peer, response):
-    return _send_response(peer, response, peer.server_id)
+    return _send_response(peer.SI.mailbox, peer.vectors, response, peer.SI.server_id)
 
 ###########################################################################
 # Gen-Z 1.0 "11.6 Link RFC"
 
 
 def _link_rfc(client, subelements):
-    if not client.args.smart:
-        client.logmsg('This switch is not a manager')
+    if not client.SI.args.smart:
+        client.SI.logmsg('This switch is not a manager')
         return False
     kv = CSV2dict(subelements[0])
     try:
         uS = int(kv['ttcus'])
     except KeyError as e:
-        client.logmsg('%d: Link RFC missing TTCuS' % client.id)
+        client.SI.logmsg('%d: Link RFC missing TTCuS' % client.id)
         return False
     except (TypeError, ValueError) as e:
         uS = 999999
     if uS > 1000:  # 1 ms, about the cycle time of this server
-        client.logmsg('Delay == %duS, dropping request' % uS)
+        client.SI.logmsg('Delay == %duS, dropping request' % uS)
         return False
-    client.SID = client.defaultSID
+    client.SID = client.SI.defaultSID
     client.CID = client.id * 100
-    return server_responds(client,
-        'CtrlWrite:0:SID=%d,CID=%d' % (client.SID, client.CID))
+    response = 'CtrlWrite Space=0,SID=%d,CID=%d' % (client.SID, client.CID)
+    return server_responds(client, response)
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL"
@@ -92,18 +95,20 @@ def _link_rfc(client, subelements):
 
 
 def send_LinkACK(client, details, fromServer=True, nack=False):
-    from_id = client.server_id if fromServer else client.id
+    from_id = client.SI.server_id if fromServer else client.id
     if nack:
-        response = 'Link:Ctl:NAK'
+        response = 'Link Ctl NAK'
     else:
-        response = 'Link:Ctl:ACK:%s' % details
-    return _send_response(client, response, from_id)
+        response = 'Link Ctl ACK %s' % details
+    if fromServer:
+        return server_responds(client, response)
+    return cient_responds(client, response)
 
 
 def _link_ctl_peer_attribute(client, subelements):
     '''Subelements should be empty but won't be checked.'''
     details = 'C-Class=Switch,SID0=%d,CID0=%d' % (
-        client.server_SID, client.server_CID)
+        client.SI.server_SID0, client.SI.server_CID0)
     return send_LinkACK(client, details)
 
 ###########################################################################
@@ -112,7 +117,7 @@ def _link_ctl_peer_attribute(client, subelements):
 
 def switch_handler(client, request):
     '''Return True if successfully parsed and processed.'''
-    elements = request.lower().split(':')
+    elements = request.lower().split()
     try:
         handler, subelements = chelsea(elements)
         return handler(client, subelements)

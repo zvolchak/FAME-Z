@@ -98,7 +98,6 @@ class FAMEZ_MailBox(object):
         self.nClients = args.nClients
         self.nEvents = args.nEvents
         self.server_id = args.server_id
-        self.my_id = self.server_id         # Not sure if it's used...
 
     #----------------------------------------------------------------------
     # Polymorphic.  Someday I'll learn about metaclasses.
@@ -115,9 +114,8 @@ class FAMEZ_MailBox(object):
             assert fd > 0 and client_id > 0 and isinstance(nodename, str), \
                 'Bad call, ump!'
             self.fd = fd
-            self.my_id = client_id
             self.nodename = nodename
-            self._init_client_mailslot()
+            self._init_client_mailslot(client_id)
             return
         assert fd == -1 and client_id == -1, 'Cannot assign ids to server'
 
@@ -223,8 +221,7 @@ class FAMEZ_MailBox(object):
     # when a peer dies.  This is mostly for QEMU crashes so the nodename
     # is not reused when a QEMU restarts, before loading famez.ko.
 
-    def clear_my_mailslot(self, nodenamebytes=None, override_id=None):
-        id = override_id if override_id else self.my_id
+    def clear_mailslot(self, id, nodenamebytes=None):
         assert 1 <= id <= self.server_id, 'slot is bad: %d' % id
         index = id * self.MAILBOX_SLOTSIZE
         zeros = b'\0' * self.MS_NODENAME_SIZE
@@ -237,7 +234,7 @@ class FAMEZ_MailBox(object):
     # Called only by client.  mmap() the file, set hostname.  Many of the
     # parameters must be retrieved from the globals area of the mailbox.
 
-    def _init_client_mailslot(self):
+    def _init_client_mailslot(self, id):
         buf = os.fstat(self.fd)
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
         self.mm = mmap.mmap(self.fd, 0)
@@ -245,4 +242,4 @@ class FAMEZ_MailBox(object):
             self.mm[self.G_NCLIENTS_off:self.G_NCLIENTS_off + 24])
 
         # mailbox slot starts with nodename
-        self.clear_my_mailslot(nodenamebytes=self.nodename.encode())
+        self.clear_mailslot(id, nodenamebytes=self.nodename.encode())

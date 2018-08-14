@@ -68,22 +68,27 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     SI = None
 
     def __init__(self, cmdlineargs):
-        if SI is None:
-            self.__class__.SI = ServerInvariant()
+        try:                    # twisted causes blindness
+            if self.SI is None:
+                self.__class__.SI = ServerInvariant()
+                self.SI.args = cmdlineargs
+                self.SI.mailbox = None
 
-        self.args = cmdlineargs
-        self.id = None       # Until initial info; state machine key
-        self.SID0 = 0
-        self.CID0 = 0
-        self._nodename = None   # Generate it for myself, retrieve for peers
-        self.fd_list = OrderedDict()    # Sent to me
-        self.peer_list = OrderedDict()  # Calculated at end
-        self._latest_fd = None
-        self.id2nodename = None
-        # The state machine major decisions about the semantics of blocks of
-        # data have one predicate.   While technically unecessary, firstpass
-        # guards against server errors.
-        self.firstpass = True
+            self.id = None       # Until initial info; state machine key
+            self.SID0 = 0
+            self.CID0 = 0
+            self._nodename = None   # Generate it for myself, retrieve for peers
+            self.fd_list = OrderedDict()    # Sent to me
+            self.peer2events = OrderedDict()  # Calculated at end
+            self._latest_fd = None
+            self.id2nodename = None
+            # The state machine major decisions about the semantics of blocks of
+            # data have one predicate.   While technically unecessary, firstpass
+            # guards against server errors.
+            self.firstpass = True
+        except Exception as e:
+            print('__init__() failed: %s' % str(e))
+            # ...and any number of attribute references will fail soon
 
     @property   # For Commander prompt
     def nodename(self):
@@ -92,7 +97,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def get_nodenames(self):
         self.id2nodename = OrderedDict()
         for peer_id in sorted(self.fd_list):   # integer keys()
-            nodename, _ = self.mailbox.retrieve(peer_id, clear=False)
+            nodename, _ = self.SI.mailbox.retrieve(peer_id, clear=False)
             self.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
@@ -128,18 +133,18 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             src_indices = (self.id,)
         else:
             src_indices = self.parse_target(src)
-        if self.args.verbose > 1:
+        if self.SI.args.verbose > 1:
             print('P&G dest %s=%s src %s=%s' %
                       (dest, dest_indices, src, src_indices))
         assert src_indices, 'missing or unknown source(s)'
         assert dest_indices, 'missing or unknown destination(s)'
         for S in src_indices:
-            self.mailbox.fill(S, msg)
+            self.SI.mailbox.fill(S, msg)
             for D in dest_indices:
-                if self.args.verbose > 1:
+                if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
-                    self.peer_list[D][S].incr()
+                    self.peer2events[D][S].incr()
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue
@@ -159,48 +164,54 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self._latest_fd = None
         return tmp
 
+    def retrieve_initial_info(self, data):
+        # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
+        # and then a -1 with the FD of the IVSHMEM file which is
+        # delivered before this.
+        assert len(data) == 24, 'Initial data needs three quadwords'
+        assert self.SI.mailbox is None, 'mailbox already set'
+
+        # Enough idiot checks.
+        mailbox_fd = self.latest_fd
+        version, self.id, minusone = struct.unpack('qqq', data)
+        assert version == self.CLIENT_IVSHMEM_PROTOCOL_VERSION, \
+            'Unxpected protocol version %d' % version
+        assert minusone == -1, \
+            'Expected -1 with mailbox fd, got %d' % minuseone
+        assert 1 <= self.id, 'My ID is bad: %d' % self.id
+        self._nodename = 'z%02d' % self.id
+        print('This ID = %2d (%s)' % (self.id, self.nodename))
+
+        # Initialize my mailbox slot.  Get other parameters from the
+        # globals because the IVSHMSG protocol doesn't allow values
+        # beyond the intial three.  The constructor does some work
+        # then returns a handle to class methods.
+        self.SI.mailbox = FAMEZ_MailBox(
+            fd=mailbox_fd, client_id=self.id, nodename=self.nodename)
+        self.SI.nClients = self.SI.mailbox.nClients
+        self.SI.nEvents = self.SI.mailbox.nEvents
+        self.SI.server_id = self.SI.mailbox.server_id
+        return
+
+    # Called multiple times so keep state info about previous calls.
     def dataReceived(self, data):
-        if self.id is None and self.firstpass:      # Initial info
-            # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
-            # and then a -1 with the FD of the IVSHMEM file which is
-            # delivered before this.
-            assert len(data) == 24, 'Initial data needs three quadwords'
-            assert self.mailbox is None, 'mailbox already set'
-
-            # Enough idiot checks.
-            mailbox_fd = self.latest_fd
-            version, self.id, minusone = struct.unpack('qqq', data)
-            assert version == self.CLIENT_IVSHMEM_PROTOCOL_VERSION, \
-                'Unxpected protocol version %d' % version
-            assert minusone == -1, \
-                'Expected -1 with mailbox fd, got %d' % minuseone
-            assert 1 <= self.id, 'My ID is bad: %d' % self.id
-            self._nodename = 'z%02d' % self.id
-            print('This ID = %2d (%s)' % (self.id, self.nodename))
-
-            # Initialize my mailbox slot.  Get other parameters from the
-            # globals because the IVSHMSG protocol doesn't allow values
-            # beyond the intial three.
-            self.mailbox = FAMEZ_MailBox(
-                fd=mailbox_fd, client_id=self.id, nodename=self.nodename)
-            self.SI.nClients = self.mailbox.nClients
-            self.SI.nEvents = self.mailbox.nEvents
-            self.SI.server_id = self.mailbox.server_id
-            return
+        if self.id is None and self.firstpass:
+            self.retrieve_initial_info(data)
+            return      # But I'll be right back :-)
 
         # Now into the stream of <peer id><eventfd> pairs.  Unless it's
         # a single <peer id> which is a disconnect notification.
         latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
         this = struct.unpack('q', data)[0]
-        if self.args.verbose > 1:
+        if self.SI.args.verbose > 1:
             print('Just got index %s, fd %s' % (this, latest_fd))
         assert this >= 0, 'Latest data is negative number'
 
         if latest_fd is None:   # "this" is a disconnect notification
             print('%s (%d) has left the building' %
                 (self.id2nodename[this], this))
-            for collection in (self.peer_list, self.id2nodename, self.fd_list):
+            for collection in (self.peer2events, self.id2nodename, self.fd_list):
                 try:
                     del collection[this]
                 except Exception as e:
@@ -230,7 +241,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except KeyError as e:
             self.fd_list[this] = [latest_fd, ]
 
-        if self.args.verbose > 1:
+        if self.SI.args.verbose > 1:
             print('fd list is now %s' % str(self.fd_list.keys()))
             for id, eventfds in self.fd_list.items():
                 print(id, eventfds)
@@ -240,48 +251,48 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # first pass.  During a new client join it's only their info.
         if ((self.firstpass and this != self.id) or
             (len(self.fd_list[this]) < self.SI.nEvents)):
-            if self.args.verbose > 1:
+            if self.SI.args.verbose > 1:
                 print('This (%d) waiting for more fds...\n' % this)
             return
 
         # First convert all fds to event notifier objects for both signalling
         # to other peers and waiting on signals to me.
-        if self.args.verbose:
+        if self.SI.args.verbose:
             print('--------- Finish housekeeping')
         for id in self.fd_list:     # For triggering message pickup
-            if id not in self.peer_list:
-                self.peer_list[id] = ivshmem_event_notifier_list(
+            if id not in self.peer2events:
+                self.peer2events[id] = ivshmem_event_notifier_list(
                     self.fd_list[id])
 
         # Now set up waiters on my incoming stuff.
         if self.firstpass and this == self.id:
-            for i, N in enumerate(self.peer_list[self.id]):
+            for i, N in enumerate(self.peer2events[self.id]):
                 N.num = i
                 tmp = EventfdReader(N, self.ClientCallback, self)
                 tmp.start()
 
         # NOW I'm almost done.
         self.get_nodenames()
-        if self.args.verbose:
+        if self.SI.args.verbose:
             print('Setup for peer id %d is finished' % this)
         if self.firstpass:
-            if self.args.verbose:
+            if self.SI.args.verbose:
                 print('Announcing myself to server ID', self.SI.server_id)
             self.place_and_go('server', 'Ready player %s' % self.nodename)
 
         self.firstpass = False
 
     def connectionMade(self):
-        if self.args.verbose:
+        if self.SI.args.verbose:
             print('Connection made on fd', self.transport.fileno())
 
     def connectionLost(self, reason):
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
             print('Dirty disconnect')
-        elif self.args.verbose:
+        elif self.SI.args.verbose:
             print('Clean disconnect')
-        if self.mailbox:
-            self.mailbox.clear_my_mailslot()     # In particular, nodename
+        if hasattr(self, 'mailbox') and self.SI.mailbox:
+            self.SI.mailbox.clear_mailslot(self.id)  # In particular, nodename
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
@@ -289,15 +300,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def ClientCallback(vectorobj):
         selph = vectorobj.cbdata
         sender_id = vectorobj.num
-        peer = selph.peer_list.get(sender_id, None)
-        if peer is None:
+        try:
+            peer_event_list = selph.peer2events[sender_id]
+        except KeyError as e:
             print('Disappeering act %d' % sender_id)
             return
-        nodename, msg = selph.mailbox.retrieve(peer.id)
+        nodename, msg = selph.SI.mailbox.retrieve(sender_id)
 
         trace = '%10s (%2d) -> "%s" (len %d)' % (
             nodename, vectorobj.num, msg, len(msg))
-        if selph.args.verbose or msg.lower() == 'pong':
+        if selph.SI.args.verbose or msg == 'pong':
             try:
                 print(trace)
             except Exception as e:      # VM can overrun this
@@ -305,17 +317,18 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         if msg == 'ping':
             try:
-                selph.mailbox.fill(selph.id, 'pong')
-                selph.peer_list[sender_id][selph.id].incr()
+                selph.SI.mailbox.fill(selph.id, 'pong')
+                peer_event_list[selph.id].incr()
             except Exception as e:
                 print('pong bombed:', str(e))
 
-        elements = msg.strip().split(':')
+        elements = msg.strip().split()
+
         if elements[0] == 'CtrlWrite':
-            if elements[1] == '0':
-                kv = CSV2dict(elements[2])
-                selph.SID = int(kv['SID'])
-                selph.CID = int(kv['CID'])
+            kv = CSV2dict(elements[1])
+            if int(kv['Space']) == 0:
+                selph.SID0 = int(kv['SID'])
+                selph.CID0 = int(kv['CID'])
             return
 
         if elements[0].lower() == 'link':
@@ -323,7 +336,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             tmp = elements[1].lower()
             if tmp == 'ctl' and elements[2].lower() == 'peer-attribute':
                 details = 'C-Class=Bridge,SID0=%d,CID0=%d' % (
-                    selph.SID, selph.CID)
+                    selph.SID0, selph.CID0)
                 print(details)
                 return send_LinkACK(selph, details, fromServer=False)
 
@@ -358,9 +371,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 return True
 
             if cmd in ('d', 'dump'):    # Include the server
-                if self.args.verbose:
+                if self.SI.args.verbose > 1:
                     print('Peer list keys (%d max):' % (self.SI.nClients + 1))
-                    print('\t%s' % sorted(self.peer_list.keys()))
+                    print('\t%s' % sorted(self.peer2events.keys()))
 
                     print('\nActor event fds:')
                     for key in sorted(self.fd_list.keys()):
@@ -371,7 +384,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 for key in sorted(self.id2nodename.keys()):
                     print('\t%2d %s' % (key, self.id2nodename[key]))
 
-                print('\nMy SID:CID = %d:%d' % (self.SID, self.CID))
+                print('\nMy SID0:CID0 = %d:%d' % (self.SID0, self.CID0))
 
                 return True
 
@@ -398,8 +411,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 return True
 
             if cmd in ('l', 'link'):
-                assert len(elems) == 1, 'Missing directive'
-                msg = 'Link:%s' % elems[0]
+                assert len(elems) >= 1, 'Missing directive'
+                msg = 'Link %s' % ' '.join(elems)
                 self.place_and_go('server', msg)
                 return True
 
