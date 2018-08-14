@@ -75,6 +75,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 self.SI.mailbox = None
 
             self.id = None       # Until initial info; state machine key
+            self.linkattrs = { 'State': 'up'}
+            self.peerattrs = {}
             self.SID0 = 0
             self.CID0 = 0
             self._nodename = None   # Generate it for myself, retrieve for peers
@@ -329,16 +331,23 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             if int(kv['Space']) == 0:
                 selph.SID0 = int(kv['SID'])
                 selph.CID0 = int(kv['CID'])
+                selph.linkattrs['State'] = 'configured'
             return
 
         if elements[0].lower() == 'link':
             print(trace)
-            tmp = elements[1].lower()
-            if tmp == 'ctl' and elements[2].lower() == 'peer-attribute':
+            sublink = elements[1].lower()
+            opcode = elements[2].lower()
+            if sublink == 'ctl' and opcode == 'peer-attribute':
                 details = 'C-Class=Bridge,SID0=%d,CID0=%d' % (
                     selph.SID0, selph.CID0)
                 print(details)
-                return send_LinkACK(selph, details, fromServer=False)
+                send_LinkACK(selph, details, fromServer=False)
+                return
+
+            if sublink == 'ctl' and opcode == 'ack':
+                selph.peerattrs = CSV2dict(elements[3])
+                return
 
     #----------------------------------------------------------------------
     # Command line parsing.  I'm just trying to get it to work.
@@ -385,6 +394,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     print('\t%2d %s' % (key, self.id2nodename[key]))
 
                 print('\nMy SID0:CID0 = %d:%d' % (self.SID0, self.CID0))
+                print('Link attributes:\n', self.linkattrs)
+                print('Peer attributes:\n', self.peerattrs)
 
                 return True
 
