@@ -27,17 +27,19 @@ from twisted.internet.protocol import ServerFactory as TIPServerFactory
 from twisted.internet.protocol import Protocol as TIPProtocol
 
 try:
-    from ivshmem_sendrecv import ivshmem_send_one_msg
-    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
     from famez_switch import switch_handler
-    from commander import Commander
+    from invariants import ServerInvariant
+    from ivshmem_eventfd import ivshmem_event_notifier_list
+    from ivshmem_sendrecv import ivshmem_send_one_msg
 except ImportError as e:
-    from .ivshmem_sendrecv import ivshmem_send_one_msg
-    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
     from .famez_switch import switch_handler
-    from .commander import Commander
+    from .invariants import ServerInvariant
+    from .ivshmem_eventfd import ivshmem_event_notifier_list
+    from .ivshmem_sendrecv import ivshmem_send_one_msg
 
 # Don't use peer ID 0, certain docs imply it's reserved.  Put the clients
 # from 1 - nClients, and the server goes at nClients + 1.
@@ -55,56 +57,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
-    args = None        # Invariant across instances
-    logmsg = None
-    logerr = None
-    peer_list = []     # Map peer IDs to list of eventfds
-    recycled = {}
-    nClients = None
-    server_id = None
-    nEvents = None
-
-    # Non-standard addition to IVSHMEM server role: this server can be
-    # interrupted and messaged to particpate in client activity.
-    server_notifiers = []   # Looped even if empty
+    SI = None
 
     def __init__(self, factory):
-        # Class-level initialization of server singletons.
-        if self.args is None:
+        '''"self" is a new client connection, not "me" the server.'''
+        if self.SI is None:
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
-            # FIXME: this could be its own object
-            self.__class__.args = factory.args          # Seldom-used
-            self.__class__.logmsg = self.args.logmsg    # Often-used
-            self.__class__.logerr = self.args.logerr
-            self.__class__.nClients = self.args.nClients
-            self.__class__.server_id = self.args.nClients + 1   # This is me!
-            self.__class__.nEvents = self.args.nClients + 2
-            self.__class__.mailbox = self.args.mailbox
-            self.__class__.defaultSID = 27
-            if self.args.smart:
-                self.__class__.server_SID = self.defaultSID
-                self.__class__.server_CID = self.server_id * 100
-            else:
-                self.__class__.server_SID = 0
-                self.__class__.server_CID = 0
-
-            # Usually create eventfds for receiving messages in IVSHMSG and
-            # set up a callback.  This early arming is not a race condition
-            # as the peer for which this is destined has not yet been told
-            # of the fds it would use to trigger here.  The server slot comes
-            # after the nClients.
-            if not self.args.silent and not self.server_notifiers:
-                self.__class__.server_notifiers = ivshmem_event_notifier_list(
-                    self.nEvents)
-                # self is really just a way to get to the server singletons.
-                # The actual client doing the sending needs to be fished out
-                # via its "num" vector.
-                for i, N in enumerate(self.server_notifiers):
-                    N.num = i
-                    tmp = EventfdReader(N, self.ServerCallback, self)
-                    # if i:   # Technically it blocks mailslot 0, the globals
-                    tmp.start()
-        # After all, this object is for a peer connection, not "me" the server.
+            self.__class__.SI = ServerInvariant(factory.cmdlineargs)
         self.create_new_peer_id()
 
     @property
@@ -124,19 +83,19 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # If errors occur early enough, send a bad revision to the client so it
     # terminates the connection.
     def connectionMade(peer):
-        recycled = peer.recycled.get(peer.id, None)
+        recycled = peer.SI.recycled.get(peer.id, None)
         if recycled:
-            del peer.recycled[recycled.id]
+            del peer.SI.recycled[recycled.id]
         msg = 'new socket %d == peer id %d %s' % (
               peer.transport.fileno(), peer.id,
               'recycled' if recycled else ''
         )
-        peer.logmsg(msg)
+        peer.SI.logmsg(msg)
         if peer.id == -1:           # set from __init__
-            peer.logmsg('Max clients reached')
+            peer.SI.logmsg('Max clients reached')
             peer.send_initial_info(False)   # client complains but with grace
             return
-        server_peer_list = peer.peer_list
+        server_peer_list = peer.SI.peer_list
 
         # Server line 175: create specified number of eventfds.  These are
         # shared with all other clients who use them to signal each other.
@@ -144,9 +103,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             peer.vectors = recycled.vectors
         else:
             try:
-                peer.vectors = ivshmem_event_notifier_list(peer.nEvents)
+                peer.vectors = ivshmem_event_notifier_list(peer.SI.nEvents)
             except Exception as e:
-                peer.logmsg('Event notifiers failed: %s' % str(e))
+                peer.SI.logmsg('Event notifiers failed: %s' % str(e))
                 peer.send_initial_info(False)
                 return
 
@@ -178,7 +137,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         for server_vector in peer.server_notifiers:
             ivshmem_send_one_msg(
                 peer.transport.socket,
-                peer.server_id,
+                peer.SI.server_id,
                 server_vector.wfd)
 
         # Server line 205: advertise the new peer to itself, ie, send the
@@ -200,41 +159,41 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             txt = 'Dirty'
         else:
             txt = 'Clean'
-        self.logmsg('%s disconnect from peer id %d' % (txt, self.id))
-        if self in self.peer_list:     # Only if everything was completed
-            self.peer_list.remove(self)
+        self.SI.logmsg('%s disconnect from peer id %d' % (txt, self.id))
+        if self in self.SI.peer_list:     # Only if everything was completed
+            self.SI.peer_list.remove(self)
         if self.args.recycle:
-            self.recycled[self.id] = self
+            self.SI.recycled[self.id] = self
             return
 
         try:
-            for other_peer in self.peer_list:
+            for other_peer in self.SI.peer_list:
                 ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
             for vector in self.vectors:
                 vector.cleanup()
 
             # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
-            self.mailbox.clear_my_mailslot(override_id=self.id)
+            self.SI.mailbox.clear_my_mailslot(override_id=self.id)
 
         except Exception as e:
-            self.logmsg('Closing peer transports failed: %s' % str(e))
+            self.SI.logmsg('Closing peer transports failed: %s' % str(e))
 
     def create_new_peer_id(peer):
         '''Determine the lowest unused client ID and set peer.id.'''
         # Does not occur often, don't sweat the performance.
 
-        if len(peer.peer_list) >= peer.nClients:
+        if len(peer.SI.peer_list) >= peer.SI.nClients:
             peer.id = -1    # sentinel
             return  # Until a Link RFC is executed
-        peer.SID = 0    # Until a Link RFC is executed
-        peer.CID = 0
-        current_ids = frozenset((p.id for p in peer.peer_list))
+        peer.SID0 = 0    # Until a CtrlWrite is received
+        peer.CID0 = 0
+        current_ids = frozenset((p.id for p in peer.SI.peer_list))
         if not current_ids:
             peer.id = 1
             return
-        max_ids = frozenset((range(peer.nClients + 2))) - \
-                  frozenset((IVSHMEM_UNUSED_ID, peer.server_id ))
+        max_ids = frozenset((range(peer.SI.nClients + 2))) - \
+                  frozenset((IVSHMEM_UNUSED_ID, peer.SI.server_id ))
         peer.id = sorted(max_ids - current_ids)[0]
 
     def send_initial_info(peer, ok=True):   # keep the convention self=="peer"
@@ -259,29 +218,29 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # the sender object.
     @staticmethod
     def ServerCallback(vectorobj):
-        classvars = vectorobj.cbdata
-        peer_id = vectorobj.num
-        sendername, msg = classvars.mailbox.retrieve(peer_id)
-        print('%d:%s -> "%s"' % (peer_id, sendername, msg),
+        SI = vectorobj.cbdata
+        sender_id = vectorobj.num
+        sendername, msg = SI.mailbox.retrieve(sender_id)
+        print('%d:%s -> "%s"' % (sender_id, sendername, msg),
             file=sys.stderr)
-        # classvars.logmsg('"%s" (%d) -> "%s"' % (sendername, peer_id, msg))
+        # SI.logmsg('"%s" (%d) -> "%s"' % (sendername, sender_id, msg))
 
         # Find the peer in the list, just to insure this isn't spurious.
         # FIXME: convert to dict{} like client.
-        for peer in classvars.peer_list:
-            if peer.id == peer_id:
+        for peer in SI.peer_list:
+            if peer.id == sender_id:
                 break
         else:
-            classvars.logmsg('Disappeering act by %d' % peer_id)
+            SI.logmsg('Disappeering act by %d' % sender_id)
             return
 
         # Try the big shortcut.
         if msg == 'ping':
-            classvars.logmsg('PONG to %d' % peer_id, file=sys.stderr)
+            SI.logmsg('PONG to %d' % sender_id, file=sys.stderr)
             # Could use "peer.mailbox" as once again it's a class distinction
             # but this reads better.
-            peer.mailbox.fill(classvars.server_id, 'PONG')
-            peer.vectors[classvars.server_id].incr()
+            peer.mailbox.fill(SI.server_id, 'PONG')
+            peer.vectors[SI.server_id].incr()
             return
 
         switch_handler(peer, msg)
@@ -322,7 +281,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         args.nEvents = args.nClients + 2
         args.mailbox = FAMEZ_MailBox(args=args)  # replace string with object
 
-        self.args = args
+        self.cmdlineargs = args
         if args.foreground:
             TPlog.startLogging(sys.stdout, setStdout=False)
         else:

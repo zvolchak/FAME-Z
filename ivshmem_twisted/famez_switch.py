@@ -46,21 +46,21 @@ def CSV2dict(oneCSVstr):
     return kv
 
 ###########################################################################
-# Not clear if this can be refactored for more general use and moved.
+# Might belong in famez_mailbox
 
 
-def _send_response(client, response):
-    client.mailbox.fill(client.server_id, response)
-    client.vectors[client.server_id].incr()
+def _send_response(client, response, from_id):
+    client.mailbox.fill(from_id, response)
+    client.vectors[from_id].incr()
     return True     # FIXME: is there anything to detect?
 
-###########################################################################
-# Gen-Z 1.0 ""
+
+def client_responds(peer, response):
+    return _send_response(peer, response, peer.id)
 
 
-def _send_LinkACK(client, details, nack=False):
-    response = 'Link:NAK:' if nack else 'Link:ACK'
-    return _send_response(client, '%s:%s' % (response, details))
+def server_responds(peer, response):
+    return _send_response(peer, response, peer.server_id)
 
 ###########################################################################
 # Gen-Z 1.0 "11.6 Link RFC"
@@ -83,18 +83,28 @@ def _link_rfc(client, subelements):
         return False
     client.SID = client.defaultSID
     client.CID = client.id * 100
-    return _send_response(client,
-        'CtrlWrite:SID=%d,CID=%d' % (client.SID, client.CID))
+    return server_responds(client,
+        'CtrlWrite:0:SID=%d,CID=%d' % (client.SID, client.CID))
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL"
+# send_LinkACK is also used from other modules.
+
+
+def send_LinkACK(client, details, fromServer=True, nack=False):
+    from_id = client.server_id if fromServer else client.id
+    if nack:
+        response = 'Link:Ctl:NAK'
+    else:
+        response = 'Link:Ctl:ACK:%s' % details
+    return _send_response(client, response, from_id)
 
 
 def _link_ctl_peer_attribute(client, subelements):
     '''Subelements should be empty but won't be checked.'''
     details = 'C-Class=Switch,SID0=%d,CID0=%d' % (
         client.server_SID, client.server_CID)
-    return _send_LinkACK(client, details)
+    return send_LinkACK(client, details)
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
@@ -103,7 +113,6 @@ def _link_ctl_peer_attribute(client, subelements):
 def switch_handler(client, request):
     '''Return True if successfully parsed and processed.'''
     elements = request.lower().split(':')
-    print('Switching on %s' % elements, file=sys.stderr)
     try:
         handler, subelements = chelsea(elements)
         return handler(client, subelements)
