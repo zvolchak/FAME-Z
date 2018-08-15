@@ -124,10 +124,12 @@ struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
 //.........................................................................
 // famez_IVSHMSG.c - the actual messaging IO.
 
+#define FAMEZ_SID_CID_IS_PEER_ID	-42	// interpret cid as peer_id
+
 // EXPORTed
 extern struct famez_mailslot *famez_await_incoming(struct famez_config *, int);
 extern void famez_release_incoming(struct famez_config *);
-extern int famez_create_outgoing(uint32_t, char *, size_t, struct famez_config *);
+extern int famez_create_outgoing(int, int, char *, size_t, struct famez_config *);
 
 //.........................................................................
 // famez_???.c - handle interrupts from other FAME-Z peers (input). By arch:

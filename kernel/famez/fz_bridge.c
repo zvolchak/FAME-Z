@@ -40,9 +40,9 @@ MODULE_DESCRIPTION("Base subsystem for FAME-Z project.");
 
 // module parameters are global
 
-int fzbridge_verbose = 0;
-module_param(fzbridge_verbose, uint, 0644);
-MODULE_PARM_DESC(fzbridge_verbose, "increase amount of printk info (0)");
+int verbose = 0;
+module_param(verbose, uint, 0644);
+MODULE_PARM_DESC(verbose, "increase amount of printk info (0)");
 
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
@@ -187,8 +187,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	struct bridge_buffers *buffers = config->outgoing;
 	ssize_t successlen = buflen;
 	char *bufbody;
-	int ret, restarts;
-	uint16_t peer_id;
+	int ret, restarts, SID, CID;
 
 	if (buflen >= config->max_buflen - 1) {		// Paranoia on term NUL
 		PR_V1("buflen of %lu is too big\n", buflen);
@@ -214,11 +213,23 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	bufbody++;
 	buflen -= (uint64_t)bufbody - (uint64_t)buffers->wbuf;
 
-	if (STREQ(buffers->wbuf, "server"))
-		peer_id = config->globals->server_id;
+	// SID and CID from varying input, including "expert use" of a peer id.
+
+	SID = FAMEZ_SID_CID_IS_PEER_ID;
+	if (STREQ(buffers->wbuf, "server") || STREQ(buffers->wbuf, "switch"))
+		CID = config->globals->server_id;
 	else {
-		if ((ret = kstrtou16(buffers->wbuf, 10, &peer_id)))
-			goto unlock_return;	// -ERANGE, usually
+		char *dot = strchr(buffers->wbuf, '.');	// Want SID.CID
+
+		if (dot) {
+			if ((ret = kstrtoint(buffers->wbuf, 0, &SID)))
+				goto unlock_return;
+			if ((ret = kstrtoint(dot, 0, &CID)))
+				goto unlock_return;
+		} else {	// Direct use of an IVSHMSG peer id
+			if ((ret = kstrtoint(buffers->wbuf, 0, &CID)))
+				goto unlock_return;
+		}
 	}
 
 	// Length or -ERRNO.  If length matched, then all is well, but
@@ -228,9 +239,9 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 
 	restarts = 0;
 restart:
-	ret = famez_create_outgoing(peer_id, bufbody, buflen, config);
+	ret = famez_create_outgoing(SID, CID, bufbody, buflen, config);
 	if (ret == -ERESTARTSYS) {	// spurious timeout
-		if (++restarts < 2)
+		if (restarts++ < 2)
 			goto restart;
 		ret = -ETIMEDOUT;
 	} else if (ret == buflen)
@@ -280,7 +291,7 @@ int __init fzbridge_init(void)
 
 	pr_info("-------------------------------------------------------");
 	pr_info(FZBR FZBRIDGE_VERSION "; parms:\n");
-	pr_info(FZSP "fzbridge_verbose = %d\n", fzbridge_verbose);
+	pr_info(FZSP "verbose = %d\n", verbose);
 
 	_nbindings = 0;
 	if ((ret = famez_misc_register("bridge", &bridge_fops)) < 0)

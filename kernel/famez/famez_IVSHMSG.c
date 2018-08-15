@@ -18,20 +18,30 @@
 
 static unsigned long longest = PRIOR_RESP_WAIT/2;
 
-int famez_create_outgoing(uint32_t peer_id, char *buf, size_t buflen,
+int famez_create_outgoing(int SID, int CID, char *buf, size_t buflen,
 			  struct famez_config *config)
 {
+	uint32_t peer_id;
+	unsigned long now = 0, this_delay,
+		 hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
+
 	// The IVSHMEM "vector" will map to an MSI-X "entry" value.  "vector"
 	// is the lower 16 bits and the combo must be assigned atomically.
 	union __attribute__ ((packed)) {
 		struct { uint16_t vector, peer; };
 		uint32_t Doorbell;
 	} ringer;
-	unsigned long now = 0, this_delay,
-		 hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
+
+	peer_id = CID / 100;
 
 	// Might NOT be printable C string.
-	PR_V1("%s(%lu bytes) to %d\n", __FUNCTION__, buflen, peer_id);
+	PR_V1("%s(%lu bytes) to %d:%d -> %d\n",
+		__FUNCTION__, buflen, SID, CID, peer_id);
+
+	// FIXME: integrate with Link RFC results
+	if (SID != 27 && SID != FAMEZ_SID_CID_IS_PEER_ID)
+		return -ENETUNREACH;
+
 
 	if (peer_id < 1 || peer_id > config->globals->server_id)
 		return -EBADSLT;

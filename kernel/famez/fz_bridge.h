@@ -32,9 +32,9 @@ struct bridge_buffers {
 #endif
 
 #ifdef FZBRIDGE_DEBUG
-#define PR_V1(a...)	{ if (fzbridge_verbose) pr_info(FZBR a); }
-#define PR_V2(a...)	{ if (fzbridge_verbose > 1) pr_info(FZBR a); }
-#define PR_V3(a...)	{ if (fzbridge_verbose > 2) pr_info(FZBR a); }
+#define PR_V1(a...)	{ if (verbose) pr_info(FZBR a); }
+#define PR_V2(a...)	{ if (verbose > 1) pr_info(FZBR a); }
+#define PR_V3(a...)	{ if (verbose > 2) pr_info(FZBR a); }
 #else
 #define PR_V1(a...)
 #define PR_V2(a...)
@@ -42,9 +42,9 @@ struct bridge_buffers {
 #endif
 
 #define _F_		__FUNCTION__
-#define PR_ENTER(a...)	{ if (fzbridge_verbose) { \
+#define PR_ENTER(a...)	{ if (verbose) { \
 				pr_info(FZBR "enter %s: ", _F_); pr_cont(a); }}
-#define PR_EXIT(a...)	{ if (fzbridge_verbose) { \
+#define PR_EXIT(a...)	{ if (verbose) { \
 				pr_info(FZBR "exit %s: ", _F_); pr_cont(a); }}
 
 #endif

@@ -51,7 +51,8 @@ static irqreturn_t all_msix(int vector, void *data) {
 		// Needs to be okay with interrupt context.  Signal completion.
 		spin_unlock(&(config->incoming_slot_lock));
 		incoming_slot->buflen = 0;	// buf received
-		famez_create_outgoing(incoming_id, "pong", 4, config);
+		famez_create_outgoing(FAMEZ_SID_CID_IS_PEER_ID, incoming_id,
+			"pong", 4, config);
 		return IRQ_HANDLED;
 	}
 	if (config->incoming_slot)	// print outside the spinlock

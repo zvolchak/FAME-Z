@@ -105,7 +105,9 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// Tell the server I'm here.
 	snprintf(imalive, sizeof(imalive) - 1,
 		"Client %d is ready", config->my_id);
-	ret = famez_create_outgoing(config->globals->server_id,
+	ret = famez_create_outgoing(
+		FAMEZ_SID_CID_IS_PEER_ID,
+		config->globals->server_id,
 		imalive, strlen(imalive), config);
 	if (ret > 0)
 		ret = ret == strlen(imalive) ? 0 : -EIO;
