@@ -37,18 +37,18 @@ struct ivshmem_msi_x_table_pba {	// BAR 1: Not mapped, not used.  YET.
 // slots are for client IDs 1 through nClients.
 
 struct famez_globals {			// BAR 2: Start of IVSHMEM
-	uint64_t slotsize, msg_offset, nClients, nEvents, server_id;
+	uint64_t slotsize, buf_offset, nClients, nEvents, server_id;
 };
 
-// Use only uint64_t and keep the msg[] on a 32-byte alignment for this:
+// Use only uint64_t and keep the buf[] on a 32-byte alignment for this:
 // od -Ad -w32 -c -tx8 /dev/shm/famez_mailbox
 struct __attribute__ ((packed)) famez_mailslot {
 	char nodename[32];		// off  0: of the owning client
-	uint64_t msglen,		// off 32:
+	uint64_t buflen,		// off 32:
 		 peer_id,		// off 40: Convenience; set by server
 		 last_responder,	// off 48: To assist stale stompage
 		 pad[9];		// off 56
-	char msg[];			// off 128: globals->msg_offset
+	char buf[];			// off 128 == globals->buf_offset
 };
 
 // The primary configuration/context data.
@@ -57,7 +57,7 @@ struct famez_config {
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	void *teardown_lookup;				// Convenience backpointer
-	uint64_t max_msglen;
+	uint64_t max_buflen;
 	uint16_t my_id;					// match ringer field
 	struct ivshmem_registers __iomem *regs;		// BAR0
 	struct famez_globals __iomem *globals;		// BAR2
@@ -106,7 +106,7 @@ static inline struct famez_config *extract_config(struct file *file)
 //-------------------------------------------------------------------------
 // famez_pci_base.c - insmod/rmmod handling with pci_register probe()/remove()
 
-extern int famez_verbose;				// insmod parameter
+extern int verbose;				// insmod parameter
 extern struct list_head famez_active_list;
 extern struct semaphore famez_active_sema;
 
@@ -127,7 +127,7 @@ struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
 // EXPORTed
 extern struct famez_mailslot *famez_await_incoming(struct famez_config *, int);
 extern void famez_release_incoming(struct famez_config *);
-extern int famez_sendmail(uint32_t, char *, size_t, struct famez_config *);
+extern int famez_create_outgoing(uint32_t, char *, size_t, struct famez_config *);
 
 //.........................................................................
 // famez_???.c - handle interrupts from other FAME-Z peers (input). By arch:
@@ -164,9 +164,9 @@ extern int famez_misc_deregister(const struct file_operations *);
 // Debug assistance
 
 #ifdef FAMEZ_DEBUG
-#define PR_V1(a...)	{ if (famez_verbose) pr_info(FZ a); }
-#define PR_V2(a...)	{ if (famez_verbose > 1) pr_info(FZ a); }
-#define PR_V3(a...)	{ if (famez_verbose > 2) pr_info(FZ a); }
+#define PR_V1(a...)	{ if (verbose) pr_info(FZ a); }
+#define PR_V2(a...)	{ if (verbose > 1) pr_info(FZ a); }
+#define PR_V3(a...)	{ if (verbose > 2) pr_info(FZ a); }
 #else
 #define PR_V1(a...)
 #define PR_V2(a...)
@@ -174,9 +174,9 @@ extern int famez_misc_deregister(const struct file_operations *);
 #endif
 
 #define _F_		__FUNCTION__
-#define PR_ENTER(a...)	{ if (famez_verbose) { \
+#define PR_ENTER(a...)	{ if (verbose) { \
 				pr_info(FZ "enter %s: ", _F_); pr_cont(a); }}
-#define PR_EXIT(a...)	{ if (famez_verbose) { \
+#define PR_EXIT(a...)	{ if (verbose) { \
 				pr_info(FZ "exit %s: ", _F_); pr_cont(a); }}
 
 #define PR_SLEEPMS(_txt, _ms) { pr_info(FZ " " _txt); msleep(_ms); }

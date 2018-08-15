@@ -42,16 +42,16 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// This may do weird things with the spinlock held...
 	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
-		vector, incoming_id, incoming_slot->msg);
+		vector, incoming_id, incoming_slot->buf);
 
 	// Easy loopback test as proof of life.  Handle it all right here
 	// right now, don't let driver layers even see it.
-	if (incoming_slot->msglen == 4 &&
-	    STREQ_N(incoming_slot->msg, "ping", 4)) {
+	if (incoming_slot->buflen == 4 &&
+	    STREQ_N(incoming_slot->buf, "ping", 4)) {
 		// Needs to be okay with interrupt context.  Signal completion.
 		spin_unlock(&(config->incoming_slot_lock));
-		incoming_slot->msglen = 0;	// msg received
-		famez_sendmail(incoming_id, "pong", 4, config);
+		incoming_slot->buflen = 0;	// buf received
+		famez_create_outgoing(incoming_id, "pong", 4, config);
 		return IRQ_HANDLED;
 	}
 	if (config->incoming_slot)	// print outside the spinlock

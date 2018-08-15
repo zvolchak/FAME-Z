@@ -18,8 +18,8 @@
 
 static unsigned long longest = PRIOR_RESP_WAIT/2;
 
-int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
-		   struct famez_config *config)
+int famez_create_outgoing(uint32_t peer_id, char *buf, size_t buflen,
+			  struct famez_config *config)
 {
 	// The IVSHMEM "vector" will map to an MSI-X "entry" value.  "vector"
 	// is the lower 16 bits and the combo must be assigned atomically.
@@ -31,20 +31,20 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 		 hw_timeout = get_jiffies_64() + PRIOR_RESP_WAIT;
 
 	// Might NOT be printable C string.
-	PR_V1("sendmail(%lu bytes) to %d\n", msglen, peer_id);
+	PR_V1("%s(%lu bytes) to %d\n", __FUNCTION__, buflen, peer_id);
 
 	if (peer_id < 1 || peer_id > config->globals->server_id)
 		return -EBADSLT;
-	if (msglen >= config->max_msglen)
+	if (buflen >= config->max_buflen)
 		return -E2BIG;
-	if (!msglen)
+	if (!buflen)
 		return -ENODATA; // FIXME: is there value to a "silent kick"?
 
 	// Pseudo-"HW ready": wait until my_slot has pushed a previous write
-	// through. In truth it's the previous responder clearing my msglen.
+	// through. In truth it's the previous responder clearing my buflen.
 	// The macro makes many references to its parameters, so...
 	this_delay = 1;
-	while (config->my_slot->msglen && time_before(now, hw_timeout)) {
+	while (config->my_slot->buflen && time_before(now, hw_timeout)) {
 		if (in_interrupt())
 			mdelay(this_delay); // (25k) leads to compiler error
 		else
@@ -61,26 +61,26 @@ int famez_sendmail(uint32_t peer_id, char *msg, size_t msglen,
 
 	// FIXME: add stompcounter tracker, return -EXXXX. To start with, just
 	// emit an error on first occurrence and see what falls out.
-	if (config->my_slot->msglen) {
+	if (config->my_slot->buflen) {
 		pr_err("%s() would stomp previous message to %llu\n",
 			__FUNCTION__, config->my_slot->last_responder);
 		return -ERESTARTSYS;
 	}
-	// Keep nodename and msg pointer; update msglen and msg contents.
-	// msglen is the handshake out to the world that I'm busy.
-	config->my_slot->msglen = msglen;
-	config->my_slot->msg[msglen] = '\0';	// ASCII strings paranoia
+	// Keep nodename and buf pointer; update buflen and buf contents.
+	// buflen is the handshake out to the world that I'm busy.
+	config->my_slot->buflen = buflen;
+	config->my_slot->buf[buflen] = '\0';	// ASCII strings paranoia
 	config->my_slot->last_responder = peer_id;
-	memcpy(config->my_slot->msg, msg, msglen);
+	memcpy(config->my_slot->buf, buf, buflen);
 
 	// Choose the correct vector set from all sent to me via the peer.
 	// Trigger the vector corresponding to me with the vector.
 	ringer.peer = peer_id;
 	ringer.vector = config->my_id;
 	config->regs->Doorbell = ringer.Doorbell;
-	return msglen;
+	return buflen;
 }
-EXPORT_SYMBOL(famez_sendmail);
+EXPORT_SYMBOL(famez_create_outgoing);
 
 //-------------------------------------------------------------------------
 // Return a pointer to the data structure or ERRPTR, rather than an integer
@@ -113,7 +113,7 @@ EXPORT_SYMBOL(famez_await_incoming);
 void famez_release_incoming(struct famez_config *config)
 {
 	spin_lock(&config->incoming_slot_lock);
-	config->incoming_slot->msglen = 0;	// The slot of the sender.
+	config->incoming_slot->buflen = 0;	// The slot of the sender.
 	config->incoming_slot = NULL;		// The local MSI-X handler.
 	spin_unlock(&config->incoming_slot_lock);
 }

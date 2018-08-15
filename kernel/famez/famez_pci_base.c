@@ -27,9 +27,9 @@ MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
 
 // module parameters are global
 
-int famez_verbose = 0;
-module_param(famez_verbose, uint, 0644);
-MODULE_PARM_DESC(famez_verbose, "increase amount of printk info (0)");
+int verbose = 0;
+module_param(verbose, uint, 0644);
+MODULE_PARM_DESC(verbose, "increase amount of printk info (0)");
 
 // Multiple bridge "devices" accepted by famez_probe().  It might be that PCI
 // core does everything I need but I can't shake the feeling I want this for
@@ -105,7 +105,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// Tell the server I'm here.
 	snprintf(imalive, sizeof(imalive) - 1,
 		"Client %d is ready", config->my_id);
-	ret = famez_sendmail(config->globals->server_id,
+	ret = famez_create_outgoing(config->globals->server_id,
 		imalive, strlen(imalive), config);
 	if (ret > 0)
 		ret = ret == strlen(imalive) ? 0 : -EIO;
@@ -171,7 +171,7 @@ int __init famez_init(void)
 
 	pr_info("-------------------------------------------------------");
 	pr_info(FZ FAMEZ_VERSION "; parms:\n");
-	pr_info(FZSP "famez_verbose = %d\n", famez_verbose);
+	pr_info(FZSP "verbose = %d\n", verbose);
 
 	if ((ret = pci_register_driver(&famez_pci_driver)))
 		pr_err(FZ "pci_register_driver() = %d\n", ret);

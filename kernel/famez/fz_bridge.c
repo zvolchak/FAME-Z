@@ -64,7 +64,7 @@ static int bridge_open(struct inode *inode, struct file *file)
 			ret = -ENOMEM;
 			goto alldone;
 		}
-		if (!(buffers->wbuf = kzalloc(config->max_msglen, GFP_KERNEL))) {
+		if (!(buffers->wbuf = kzalloc(config->max_buflen, GFP_KERNEL))) {
 			kfree(buffers);
 			ret = -ENOMEM;
 			goto alldone;
@@ -150,8 +150,8 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 	sender = famez_await_incoming(config, file->f_flags & O_NONBLOCK);
 	if (IS_ERR(sender))
 		return PTR_ERR(sender);
-	PR_V2(FZSP "wait finished, %llu bytes to read\n", sender->msglen);
-	if (buflen < sender->msglen + SENDER_ID_LEN) {
+	PR_V2(FZSP "wait finished, %llu bytes to read\n", sender->buflen);
+	if (buflen < sender->buflen + SENDER_ID_LEN) {
 		ret = -E2BIG;
 		goto read_complete;
 	}
@@ -164,8 +164,8 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 	}
 
 	// The message body follows the colon of the previous snippet.
-	ret = copy_to_user(buf + SENDER_ID_LEN, sender->msg, sender->msglen);
-	ret = !ret ? sender->msglen + SENDER_ID_LEN :
+	ret = copy_to_user(buf + SENDER_ID_LEN, sender->buf, sender->buflen);
+	ret = !ret ? sender->buflen + SENDER_ID_LEN :
 		(ret > 0 ? -EFAULT : ret);
 	// Now it's either the length of the full responose or -ESOMETHING
 	if (ret > 0)
@@ -186,12 +186,12 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	struct famez_config *config = extract_config(file);
 	struct bridge_buffers *buffers = config->outgoing;
 	ssize_t successlen = buflen;
-	char *msgbody;
+	char *bufbody;
 	int ret, restarts;
 	uint16_t peer_id;
 
-	if (buflen >= config->max_msglen - 1) {		// Paranoia on term NUL
-		PR_V1("msglen of %lu is too big\n", buflen);
+	if (buflen >= config->max_buflen - 1) {		// Paranoia on term NUL
+		PR_V1("buflen of %lu is too big\n", buflen);
 		return -E2BIG;
 	}
 	mutex_lock(&buffers->wbuf_mutex);	// Multiuse of *file
@@ -205,14 +205,14 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 
 	// Split body into two pieces around the first colon: a proper string
 	// and whatever the real payload is (string or binary).
-	if (!(msgbody = strchr(buffers->wbuf, ':'))) {
+	if (!(bufbody = strchr(buffers->wbuf, ':'))) {
 		pr_err(FZBR "no colon in \"%s\"\n", buffers->wbuf);
 		ret = -EBADMSG;
 		goto unlock_return;
 	}
-	*msgbody = '\0';	// chomp ':', now two NUL-terminated sections
-	msgbody++;
-	buflen -= (uint64_t)msgbody - (uint64_t)buffers->wbuf;
+	*bufbody = '\0';	// chomp ':', now two NUL-terminated sections
+	bufbody++;
+	buflen -= (uint64_t)bufbody - (uint64_t)buffers->wbuf;
 
 	if (STREQ(buffers->wbuf, "server"))
 		peer_id = config->globals->server_id;
@@ -228,7 +228,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 
 	restarts = 0;
 restart:
-	ret = famez_sendmail(peer_id, msgbody, buflen, config);
+	ret = famez_create_outgoing(peer_id, bufbody, buflen, config);
 	if (ret == -ERESTARTSYS) {	// spurious timeout
 		if (++restarts < 2)
 			goto restart;
@@ -254,7 +254,7 @@ static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 	poll_wait(file, &bridge_reader_wait, wait);
 		ret |= POLLIN | POLLRDNORM;
 	// FIXME encapsulate this better, it's really the purview of sendstring
-	if (!config->my_slot->msglen)
+	if (!config->my_slot->buflen)
 		ret |= POLLOUT | POLLWRNORM;
 	return ret;
 }

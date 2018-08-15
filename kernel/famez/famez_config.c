@@ -148,16 +148,16 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 	// globals is handcrafted in Python, make sure it's all kosher.
 	// If these fail, go back and add tests to Python, not here.
 	ret = -EINVAL;
-	if (offsetof(struct famez_mailslot, msg) != config->globals->msg_offset) {
+	if (offsetof(struct famez_mailslot, buf) != config->globals->buf_offset) {
 		pr_err(FZ "MSG_OFFSET global != C offset in here\n");
 		goto err_kfree;
 	}
-	if (config->globals->slotsize <= config->globals->msg_offset) {
+	if (config->globals->slotsize <= config->globals->buf_offset) {
 		pr_err(FZ "MSG_OFFSET global is > SLOTSIZE global\n");
 		goto err_kfree;
 	}
-	config->max_msglen = config->globals->slotsize -
-			     config->globals->msg_offset;
+	config->max_buflen = config->globals->slotsize -
+			     config->globals->buf_offset;
 	config->my_id = config->regs->IVPosition;
 
 	// All the needed parameters are set to finish this off.
@@ -170,9 +170,9 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 		 sizeof(config->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, config->pdev->devfn >> 3);
 
-	PR_V1(FZSP "mailslot size=%llu, message offset=%llu, server=%llu\n",
+	PR_V1(FZSP "mailslot size=%llu, buf offset=%llu, server=%llu\n",
 		config->globals->slotsize,
-		config->globals->msg_offset,
+		config->globals->buf_offset,
 		config->globals->server_id);
 
 	return config;

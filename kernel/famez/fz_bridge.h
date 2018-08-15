@@ -44,7 +44,7 @@ struct bridge_buffers {
 #define _F_		__FUNCTION__
 #define PR_ENTER(a...)	{ if (fzbridge_verbose) { \
 				pr_info(FZBR "enter %s: ", _F_); pr_cont(a); }}
-#define PR_EXIT(a...)	{ if (famez_verbose) { \
+#define PR_EXIT(a...)	{ if (fzbridge_verbose) { \
 				pr_info(FZBR "exit %s: ", _F_); pr_cont(a); }}
 
 #endif
