@@ -30,14 +30,14 @@ try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
     from famez_switch import switch_handler
-    from invariants import ServerInvariant
+    from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
     from .famez_switch import switch_handler
-    from .invariants import ServerInvariant
+    from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
 

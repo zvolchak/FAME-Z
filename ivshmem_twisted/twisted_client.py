@@ -31,14 +31,14 @@ try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
     from famez_switch import CSV2dict, send_LinkACK
-    from invariants import ServerInvariant
+    from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
     from .famez_switch import CSV2dict, send_LinkACK
-    from .invariants import ServerInvariant
+    from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
 ###########################################################################

@@ -1,6 +1,7 @@
 ###########################################################################
 # Cleaner than class variables, allows code reuse, and also leverages
-# support "downstream" for interrupt handling.
+# support "downstream" for interrupt handling.  A collection file for
+# things under active development before they find better homes.
 
 ###########################################################################
 
