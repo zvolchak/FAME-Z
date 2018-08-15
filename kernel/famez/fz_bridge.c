@@ -223,9 +223,10 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 		char *dot = strchr(buffers->wbuf, '.');	// Want SID.CID
 
 		if (dot) {
+			*dot = '\0';
 			if ((ret = kstrtoint(buffers->wbuf, 0, &SID)))
 				goto unlock_return;
-			if ((ret = kstrtoint(dot, 0, &CID)))
+			if ((ret = kstrtoint(dot + 1, 0, &CID)))
 				goto unlock_return;
 		} else {	// Direct use of an IVSHMSG peer id
 			if ((ret = kstrtoint(buffers->wbuf, 0, &CID)))
