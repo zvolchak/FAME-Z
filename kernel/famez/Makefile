@@ -24,14 +24,16 @@ famez_bridge-objs := fz_bridge.o
 
 RUNNING_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH_CPU 2>/dev/null)
 
-all:	versioncheck
+all:	modules
+
+modules:	versioncheck
 ifeq "$(RUNNING_ARCH)" "amd64"
 	make $(CFLAGS) -C $(KERNELDIR) M=$(PWD) ARCH=x86 modules
 else
 	make $(CFLAGS) -C $(KERNELDIR) M=$(PWD) modules
 endif
 
-modules_install:	all
+modules_install:	modules
 	INSTALL_MOD_DIR=genz/famez sudo -E make V=1 -C $(KERNELDIR) M=$(PWD) modules_install
 	sudo -E depmod -a
 

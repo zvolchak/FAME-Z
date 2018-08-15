@@ -32,7 +32,7 @@ int famez_create_outgoing(int SID, int CID, char *buf, size_t buflen,
 		uint32_t Doorbell;
 	} ringer;
 
-	peer_id = CID / 100;
+	peer_id = SID == FAMEZ_SID_CID_IS_PEER_ID ? CID : CID / 100;
 
 	// Might NOT be printable C string.
 	PR_V1("%s(%lu bytes) to %d:%d -> %d\n",
@@ -41,7 +41,6 @@ int famez_create_outgoing(int SID, int CID, char *buf, size_t buflen,
 	// FIXME: integrate with Link RFC results
 	if (SID != 27 && SID != FAMEZ_SID_CID_IS_PEER_ID)
 		return -ENETUNREACH;
-
 
 	if (peer_id < 1 || peer_id > config->globals->server_id)
 		return -EBADSLT;

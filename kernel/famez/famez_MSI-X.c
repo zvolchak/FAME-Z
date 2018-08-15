@@ -40,7 +40,11 @@ static irqreturn_t all_msix(int vector, void *data) {
 		return IRQ_HANDLED;
 	}
 
-	// This may do weird things with the spinlock held...
+	// These are all fixed values now, but someday...
+	incoming_slot->peer_SID = FAMEZ_SID_DEFAULT;
+	incoming_slot->peer_CID = incoming_id * 100;
+
+	// This may do weird things with the spinlock held.
 	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
 		vector, incoming_id, incoming_slot->buf);
 

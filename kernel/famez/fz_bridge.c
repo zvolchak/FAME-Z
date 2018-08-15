@@ -135,37 +135,38 @@ static int bridge_release(struct inode *inode, struct file *file)
 // can sleep and returns the number of bytes that could NOT be copied or
 // -ERRNO.  Require both copies to work all the way.  
 
-#define SENDER_ID_FMT	"%02llu:"	// These must agree
-#define SENDER_ID_LEN	3
-
 static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
 {
 	struct famez_config *config = extract_config(file);
 	struct famez_mailslot *sender;
-	char sender_id_str[8];
-	int ret;
+	int ret, n;
+	// SID is 28 bits or 10 decimal digits; CID is 16 bits or 5 digits
+	// so make the buffer big enough.
+	char sidcidstr[32];
 
 	// A successful return needs cleanup via famez_release_incoming().
 	sender = famez_await_incoming(config, file->f_flags & O_NONBLOCK);
 	if (IS_ERR(sender))
 		return PTR_ERR(sender);
 	PR_V2(FZSP "wait finished, %llu bytes to read\n", sender->buflen);
-	if (buflen < sender->buflen + SENDER_ID_LEN) {
+
+	// Two parts to the response: first is the sender "SID.CID:"
+	n = snprintf(sidcidstr, sizeof(sidcidstr) - 1,
+		"%llu.%llu:", sender->peer_SID, sender->peer_CID);
+
+	if (n >= sizeof(sidcidstr) || buflen < sender->buflen + n - 1) {
 		ret = -E2BIG;
 		goto read_complete;
 	}
-
-	// Two parts to the payload: first is the sender ID and a colon.
-	sprintf(sender_id_str, SENDER_ID_FMT, sender->peer_id);
-	if ((ret = copy_to_user(buf, sender_id_str, SENDER_ID_LEN))) {
+	if ((ret = copy_to_user(buf, sidcidstr, n))) {
 		if (ret > 0) ret= -EFAULT;	// partial transfer
 		goto read_complete;
 	}
 
 	// The message body follows the colon of the previous snippet.
-	ret = copy_to_user(buf + SENDER_ID_LEN, sender->buf, sender->buflen);
-	ret = !ret ? sender->buflen + SENDER_ID_LEN :
+	ret = copy_to_user(buf + (uint64_t)n, sender->buf, sender->buflen);
+	ret = !ret ? sender->buflen + n :
 		(ret > 0 ? -EFAULT : ret);
 	// Now it's either the length of the full responose or -ESOMETHING
 	if (ret > 0)

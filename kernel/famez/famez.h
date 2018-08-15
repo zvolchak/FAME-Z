@@ -47,7 +47,9 @@ struct __attribute__ ((packed)) famez_mailslot {
 	uint64_t buflen,		// off 32:
 		 peer_id,		// off 40: Convenience; set by server
 		 last_responder,	// off 48: To assist stale stompage
-		 pad[9];		// off 56
+		 peer_SID,		// off 56: Calculated in MSI-X...
+		 peer_CID,		// off 64: ...from last_responder
+		 pad[7];		// off 72
 	char buf[];			// off 128 == globals->buf_offset
 };
 
@@ -124,6 +126,7 @@ struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
 //.........................................................................
 // famez_IVSHMSG.c - the actual messaging IO.
 
+#define FAMEZ_SID_DEFAULT		27	// see twisted_server.py
 #define FAMEZ_SID_CID_IS_PEER_ID	-42	// interpret cid as peer_id
 
 // EXPORTed
