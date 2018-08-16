@@ -29,7 +29,7 @@ class FAMEZ_MailBox(object):
 
     # QEMU rules: file size (product of first two) must be a power of two.
     MAILBOX_SLOTSIZE = 512
-    MAILBOX_MAX_SLOTS = 64    # Dummy + server leaves 62 actual clients
+    MAILBOX_MAX_SLOTS = 32    # Dummy + server leaves 30 actual clients
 
     G_SLOTSIZE_off = 0        # in the space of mailslot index 0
     G_MSG_OFFSET_off = 8
@@ -167,23 +167,24 @@ class FAMEZ_MailBox(object):
     # Dig the mail and node name out of the slot for peer_id (1:1 mapping).
     # It's not so much (passively) receivng mail as it is actively getting.
 
-    def retrieve(self, peer_id, asbytes=False, clear=True):
+    @classmethod
+    def retrieve(cls, peer_id, asbytes=False, clear=True):
         '''Return the nodename and message.'''
-        assert 1 <= peer_id <= self.server_id, \
-            'Slotnum is out of domain 1 - %d' % (self.server_id)
-        index = peer_id * self.MAILBOX_SLOTSIZE     # start of nodename
-        nodename, msglen = struct.unpack('32sQ', self.mm[index:index + 40])
+        assert 1 <= peer_id <= cls.server_id, \
+            'Slotnum is out of domain 1 - %d' % (cls.server_id)
+        index = peer_id * cls.MAILBOX_SLOTSIZE     # start of nodename
+        nodename, msglen = struct.unpack('32sQ', cls.mm[index:index + 40])
         nodename = nodename.split(b'\0', 1)[0].decode()
-        index += self.MS_MSG_off
+        index += cls.MS_MSG_off
         fmt = '%ds' % msglen
-        msg = struct.unpack(fmt, self.mm[index:index + msglen])
+        msg = struct.unpack(fmt, cls.mm[index:index + msglen])
 
         # The message is copied so mark the mailslot length zero as handshake
         # to the requester that its mailbox has been emptied.
 
         if clear:
-            index = peer_id * self.MAILBOX_SLOTSIZE + self.MS_MSGLEN_off
-            self.mm[index:index + 8] = struct.pack('Q', 0)
+            index = peer_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSGLEN_off
+            cls.mm[index:index + 8] = struct.pack('Q', 0)
 
         # Clean up the message copyout, which is a single element tuple
         # that has a NUL at msglen.
@@ -196,7 +197,7 @@ class FAMEZ_MailBox(object):
     #----------------------------------------------------------------------
     # Post a message to the indicated mailbox slot but don't kick the
     # EventFD.  First, this routine doesn't know about them and second,
-    # keeping it a separate operation facilitates spoofing in the client.
+    # keeping it a separate operation facilitates sender spoofing.
 
     @classmethod
     def fill(cls, sender_id, msg):

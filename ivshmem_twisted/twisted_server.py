@@ -71,7 +71,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
             # It will get looped even if it's empty (silent mode).
-            SI.notifiers = []
+            SI.EN_list = []
 
             # Usually create eventfds for receiving messages in IVSHMSG and
             # set up a callback.  This early arming is not a race condition
@@ -79,12 +79,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # of the fds it would use to trigger here.
 
             if not factory.cmdlineargs.silent:
-                SI.notifiers = ivshmem_event_notifier_list(SI.nEvents)
+                SI.EN_list = ivshmem_event_notifier_list(SI.nEvents)
                 # The actual client doing the sending needs to be fished out
                 # via its "num" vector.
-                for i, N in enumerate(SI.notifiers):
-                    N.num = i
-                    tmp = EventfdReader(N, self.ServerCallback, SI)
+                for i, EN in enumerate(SI.EN_list):
+                    EN.num = i
+                    tmp = EventfdReader(EN, self.ServerCallback, SI)
                     if i:   # Technically it blocks mailslot 0, the globals
                         tmp.start()
 
@@ -124,10 +124,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Server line 175: create specified number of eventfds.  These are
         # shared with all other clients who use them to signal each other.
         if recycled:
-            peer.vectors = recycled.vectors
+            peer.EN_list = recycled.EN_list
         else:
             try:
-                peer.vectors = ivshmem_event_notifier_list(peer.SI.nEvents)
+                peer.EN_list = ivshmem_event_notifier_list(peer.SI.nEvents)
             except Exception as e:
                 peer.SI.logmsg('Event notifiers failed: %s' % str(e))
                 peer.send_initial_info(False)
@@ -144,38 +144,39 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # NOT traversed for the first peer to connect.
         if not recycled:
             for other_peer in server_peer_list:
-                for peer_vector in peer.vectors:
+                for peer_EN in peer.EN_list:
                     ivshmem_send_one_msg(
                         other_peer.transport.socket,
                         peer.id,
-                        peer_vector.wfd)
+                        peer_EN.wfd)
 
         # Server line 197: advertise the other peers to the new one.
+        # Remember "this" new peer proxy has not been added to the list yet.
         for other_peer in server_peer_list:
-            for other_peer_vector in other_peer.vectors:
+            for other_peer_EN in other_peer.EN_list:
                 ivshmem_send_one_msg(
                     peer.transport.socket,
                     other_peer.id,
-                    other_peer_vector.wfd)
+                    other_peer_EN.wfd)
 
         # Non-standard voodoo extension to previous advertisment: advertise
         # this server to the new peer.  To QEMU it just looks like one more
         # grouping in the previous batch.  Exists only in non-silent mode.
-        for server_vector in peer.SI.notifiers:
+        for server_EN in peer.SI.EN_list:
             ivshmem_send_one_msg(
                 peer.transport.socket,
                 peer.SI.server_id,
-                server_vector.wfd)
+                server_EN.wfd)
 
         # Server line 205: advertise the new peer to itself, ie, send the
         # eventfds it needs for receiving messages.  This final batch
         # where the embedded peer.id matches the initial_info id is the
         # sentinel that communications are finished.
-        for peer_vector in peer.vectors:
+        for peer_EN in peer.EN_list:
             ivshmem_send_one_msg(
                 peer.transport.socket,
                 peer.id,
-                peer_vector.get_fd())   # Must be a good story here...
+                peer_EN.get_fd())   # Must be a good story here...
 
         # Oh yeah
         server_peer_list.append(peer)
@@ -197,8 +198,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             for other_peer in self.SI.peer_list:
                 ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
-            for vector in self.vectors:
-                vector.cleanup()
+            for EN in self.EN_list:
+                EN.cleanup()
 
             # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
             self.SI.mailbox.clear_mailslot(self.id)
@@ -249,13 +250,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             print(str(e), file=sys.stderr)
         return False
 
-    # Running in the context of the server, this will retrieve
-    # the sender object.
+    # Retrieve the proxy object for the server connection and craft a response.
     @staticmethod
     def ServerCallback(vectorobj):
         SI = vectorobj.cbdata
         sender_id = vectorobj.num
-        sendername, msg = SI.mailbox.retrieve(sender_id)
+        from_id = SI.server_id
+        sendername, msg = FAMEZ_MailBox.retrieve(sender_id)
         print('%d:%s -> "%s"' % (sender_id, sendername, msg),
             file=sys.stderr)
         # SI.logmsg('"%s" (%d) -> "%s"' % (sendername, sender_id, msg))
@@ -268,14 +269,17 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             SI.logmsg('Disappeering act by %d' % sender_id)
             return
+        sender_EN = peer.EN_list[from_id]
 
         # Try the big shortcut.
         if msg == 'ping':
             SI.logmsg('PONG to %d' % sender_id)
-            peer.SI.mailbox.fill(SI.server_id, 'pong')
-            peer.vectors[SI.server_id].incr()
+            FAMEZ_MailBox.fill(from_id, 'pong')
+            sender_EN.incr()
             return
 
+        # I now have from_id (to fill a mailslot) and sender_EN (to kick it).
+        # FIXME get rid of "isClient" field.
         switch_handler(peer, msg)
 
 ###########################################################################

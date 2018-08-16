@@ -63,11 +63,10 @@ def CSV2dict(oneCSVstr):
 def _send_CS_response(peer, response):
     if peer.SI.isClient:    # None exist right now
         from_id = peer.id
-        # mailbox = peer.mailbox
+        # self.id2EN_list[dest][src]
         vectors = peer.xyzzy
     else:
         from_id = peer.SI.server_id
-        # mailbox = peer.SI.mailbox
         vectors = peer.vectors
     FAMEZ_MailBox.fill(from_id, response)
     vectors[from_id].incr()
