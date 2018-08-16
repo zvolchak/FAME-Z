@@ -280,9 +280,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if self.SI.args.verbose:
             print('Setup for peer id %d is finished' % this)
         if self.firstpass:
+            msg = 'Ready player %s' % self.nodename
             if self.SI.args.verbose:
-                print('Announcing myself to server ID', self.SI.server_id)
-            self.place_and_go('server', 'Ready player %s' % self.nodename)
+                print(msg)
+            # self.place_and_go('server', msg)
 
         self.firstpass = False
 
@@ -293,7 +294,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def connectionLost(self, reason):
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
             print('Dirty disconnect')
-        elif self.SI.args.verbose:
+        else:
             print('Clean disconnect')
         if hasattr(self, 'mailbox') and self.SI.mailbox:
             self.SI.mailbox.clear_mailslot(self.id)  # In particular, nodename

@@ -9,6 +9,11 @@ import sys
 from pdb import set_trace
 from pprint import pprint
 
+try:
+    from famez_mailbox import FAMEZ_MailBox
+except ImportError as e:
+    from .famez_mailbox import FAMEZ_MailBox
+
 ###########################################################################
 # Create a subroutine name out of the elements passed in.  Return
 # the remainder.  Start with the least-specific construct.
@@ -58,13 +63,13 @@ def CSV2dict(oneCSVstr):
 def _send_CS_response(peer, response):
     if peer.SI.isClient:    # None exist right now
         from_id = peer.id
-        mailbox = peer.mailbox
+        # mailbox = peer.mailbox
         vectors = peer.xyzzy
     else:
         from_id = peer.SI.server_id
-        mailbox = peer.SI.mailbox
+        # mailbox = peer.SI.mailbox
         vectors = peer.vectors
-    mailbox.fill(from_id, response)
+    FAMEZ_MailBox.fill(from_id, response)
     vectors[from_id].incr()
     return True     # FIXME: is there anything to detect?
 

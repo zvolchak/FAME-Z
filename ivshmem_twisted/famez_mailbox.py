@@ -59,6 +59,11 @@ class FAMEZ_MailBox(object):
     MS_MSG_off = 128
     MS_MAX_MSGLEN = 384
 
+    mm = None       # Then I can access fill() from the class
+    nClients = None
+    nEvents = None
+    server_id = None
+
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
     # Each slot (1 through nClients) has a peer_id.
@@ -67,7 +72,7 @@ class FAMEZ_MailBox(object):
 
 
     def _initialize_mailbox(self, args):
-        self.mm = mmap.mmap(self.fd, 0)
+        self.__class__.mm = mmap.mmap(self.fd, 0)       # Only done once
 
         # Empty it.  Simple code that's never too demanding on size (now 32k)
         data = b'\0' * self.filesize
@@ -95,9 +100,9 @@ class FAMEZ_MailBox(object):
         self.mm[index:index + len(data)] = data
 
         # Shortcut rutime values in self.
-        self.nClients = args.nClients
-        self.nEvents = args.nEvents
-        self.server_id = args.server_id
+        self.__class__.nClients = args.nClients
+        self.__class__.nEvents = args.nEvents
+        self.__class__.server_id = args.server_id
 
     #----------------------------------------------------------------------
     # Polymorphic.  Someday I'll learn about metaclasses.
@@ -193,28 +198,29 @@ class FAMEZ_MailBox(object):
     # EventFD.  First, this routine doesn't know about them and second,
     # keeping it a separate operation facilitates spoofing in the client.
 
-    def fill(self, sender_id, msg):
-        assert 1 <= sender_id <= self.server_id, \
-            'Peer ID is out of domain 1 - %d' % (self.server_id)
+    @classmethod
+    def fill(cls, sender_id, msg):
+        assert 1 <= sender_id <= cls.server_id, \
+            'Peer ID is out of domain 1 - %d' % (cls.server_id)
         if isinstance(msg, str):
             msg = msg.encode()
         assert isinstance(msg, bytes), 'msg must be string or bytes'
         msglen = len(msg)   # It's bytes now
-        assert msglen < self.MS_MAX_MSGLEN, 'Message too long'
+        assert msglen < cls.MS_MAX_MSGLEN, 'Message too long'
 
         # The previous responder needs to clear the msglen to indicate it
         # has pulled the message out of the sender's mailbox.
-        index = sender_id * self.MAILBOX_SLOTSIZE + self.MS_MSGLEN_off
+        index = sender_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSGLEN_off
         stop = NOW() + 1.05
-        while NOW() < stop and struct.unpack('Q', self.mm[index:index+8])[0]:
+        while NOW() < stop and struct.unpack('Q', cls.mm[index:index+8])[0]:
             sleep(0.1)
         if NOW() >= stop:
             print('pseudo-HW not ready to receive timeout: now stomping')
 
-        self.mm[index:index + 8] = struct.pack('Q', msglen)
-        index = sender_id * self.MAILBOX_SLOTSIZE + self.MS_MSG_off
-        self.mm[index:index + msglen] = msg
-        self.mm[index + msglen] = 0     # NUL-terminate the message.
+        cls.mm[index:index + 8] = struct.pack('Q', msglen)
+        index = sender_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSG_off
+        cls.mm[index:index + msglen] = msg
+        cls.mm[index + msglen] = 0     # NUL-terminate the message.
 
     #----------------------------------------------------------------------
     # Called by Python client on graceful shutdowns, and always by server
@@ -237,9 +243,13 @@ class FAMEZ_MailBox(object):
     def _init_client_mailslot(self, id):
         buf = os.fstat(self.fd)
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
-        self.mm = mmap.mmap(self.fd, 0)
-        self.nClients, self.nEvents, self.server_id = struct.unpack('QQQ',
-            self.mm[self.G_NCLIENTS_off:self.G_NCLIENTS_off + 24])
+        if self.mm is None:
+            self.__class__.mm = mmap.mmap(self.fd, 0)
+            (self.__class__.nClients,
+             self.__class__.nEvents,
+             self.__class__.server_id) = struct.unpack(
+                'QQQ',
+                self.mm[self.G_NCLIENTS_off:self.G_NCLIENTS_off + 24])
 
         # mailbox slot starts with nodename
         self.clear_mailslot(id, nodenamebytes=self.nodename.encode())
