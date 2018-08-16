@@ -65,6 +65,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
             SI = self.SI
+            SI.C_Class = 'Switch'
+            SI.isClient = False     # Guides some shared routines
 
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
@@ -231,22 +233,17 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 peer.transport.loseConnection()
                 peer.id = -1
                 return
-            print('Sending proto version', file=sys.stderr)
             if not ivshmem_send_one_msg(thesocket,
                 peer.SERVER_IVSHMEM_PROTOCOL_VERSION):
                 print('This is screwed', file=sys.stderr)
                 return False
 
             # The client's id, without an fd.
-            print('Sending client ID', file=sys.stderr)
             ivshmem_send_one_msg(thesocket, peer.id)
 
             # -1 for data with the fd of the ivshmem file.  Using this protocol
             # a valid fd is required.
-            # FIXME does send_one message belong in mailbox.py?
-            print('Sending mailbox fd', file=sys.stderr)
             ivshmem_send_one_msg(thesocket, -1, peer.SI.mailbox.fd)
-            print('initial done', file=sys.stderr)
             return True
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -274,9 +271,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         # Try the big shortcut.
         if msg == 'ping':
-            SI.logmsg('PONG to %d' % sender_id, file=sys.stderr)
-            # Could use "peer.mailbox" as once again it's a class distinction
-            # but this reads better.
+            SI.logmsg('PONG to %d' % sender_id)
             peer.SI.mailbox.fill(SI.server_id, 'pong')
             peer.vectors[SI.server_id].incr()
             return

@@ -73,6 +73,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 self.__class__.SI = ServerInvariant()
                 self.SI.args = cmdlineargs
                 self.SI.mailbox = None
+                self.SI.isClient = True   # Guides shared routines
+                self.SI.C_Class = 'Debugger'
 
             self.id = None       # Until initial info; state machine key
             self.linkattrs = { 'State': 'up'}
@@ -114,7 +116,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except TypeError as e:
             return indices
         except ValueError as e:
-            if instr.lower() == 'server':
+            if instr.lower() in ('server', 'switch'):
                 return (self.SI.server_id,)
             elif instr.lower() == 'all':
                 return sorted(self.id2nodename.keys())
@@ -311,11 +313,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         trace = '%10s (%2d) -> "%s" (len %d)' % (
             nodename, vectorobj.num, msg, len(msg))
-        if selph.SI.args.verbose or msg == 'pong':
-            try:
-                print(trace)
-            except Exception as e:      # VM can overrun this
-                pass
+        try:
+            print(trace)
+        except Exception as e:      # VM can overrun this
+            pass
 
         if msg == 'ping':
             try:
@@ -323,10 +324,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 peer_event_list[selph.id].incr()
             except Exception as e:
                 print('pong bombed:', str(e))
+            return
 
         elements = msg.strip().split()
 
-        if elements[0] == 'CtrlWrite':
+        if elements[0] == 'CtrlWrite':  # observe caps
             kv = CSV2dict(elements[1])
             if int(kv['Space']) == 0:
                 selph.SID0 = int(kv['SID'])
@@ -334,18 +336,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 selph.linkattrs['State'] = 'configured'
             return
 
-        if elements[0].lower() == 'link':
-            print(trace)
-            sublink = elements[1].lower()
-            opcode = elements[2].lower()
-            if sublink == 'ctl' and opcode == 'peer-attribute':
+        if elements[0] == 'Link' and elements[1] == 'CTL':
+            opcode = elements[2]
+            if opcode == 'Peer-Attribute':
                 details = 'C-Class=Bridge,SID0=%d,CID0=%d' % (
                     selph.SID0, selph.CID0)
                 print(details)
                 send_LinkACK(selph, details, fromServer=False)
                 return
 
-            if sublink == 'ctl' and opcode == 'ack':
+            if opcode == 'ACK':
                 selph.peerattrs = CSV2dict(elements[3])
                 return
 
@@ -421,7 +421,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     print('Peer ID = %2d (%s)' % (id, nodename))
                 return True
 
-            if cmd in ('l', 'link'):
+            if cmd in ('l', 'link', 'L', 'Link'):
                 assert len(elems) >= 1, 'Missing directive'
                 msg = 'Link %s' % ' '.join(elems)
                 self.place_and_go('server', msg)

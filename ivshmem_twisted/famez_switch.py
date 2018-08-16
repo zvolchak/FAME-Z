@@ -1,12 +1,13 @@
 #!/usr/bin/python3
 
-# Running in the "context" of famez_server.  Message has already been
-# retrieved and needs parsing and a response generated.
+# Common routines for both server (switch) and clients which drill down
+# on messages retrieved by parsing and generating a response.
 
 import os
 import sys
 
 from pdb import set_trace
+from pprint import pprint
 
 ###########################################################################
 # Create a subroutine name out of the elements passed in.  Return
@@ -42,41 +43,54 @@ def CSV2dict(oneCSVstr):
     kv = {}
     elems = oneCSVstr.strip().split(',')
     for e in elems:
-        KeV = e.strip().split('=')
-        if len(KeV) != 2:
+        try:
+            KeV = e.strip().split('=')
+            kv[KeV[0].strip()] = KeV[1].strip()
+        except Exception as e:
             continue
-        kv[KeV[0].strip()] = KeV[1].strip()
     return kv
 
 ###########################################################################
 # Might belong in famez_mailbox
+# FIXME: make mailbox.fill() a class method and import the class to reach it.
 
 
-def _send_response(mailbox, vectors, response, from_id):
+def _send_CS_response(peer, response):
+    if peer.SI.isClient:    # None exist right now
+        from_id = peer.id
+        mailbox = peer.mailbox
+        vectors = peer.xyzzy
+    else:
+        from_id = peer.SI.server_id
+        mailbox = peer.SI.mailbox
+        vectors = peer.vectors
     mailbox.fill(from_id, response)
     vectors[from_id].incr()
     return True     # FIXME: is there anything to detect?
 
+###########################################################################
+# Also called from other modules.
 
-def client_responds(peer, response):
-    return _send_response(peer.mailbox, peer.xyzzy, response, peer.id)
 
-
-def server_responds(peer, response):
-    return _send_response(peer.SI.mailbox, peer.vectors, response, peer.SI.server_id)
+def send_LinkACK(CorS, details, fromServer=True, nack=False):
+    if nack:
+        response = 'Link CTL NAK %s' % details
+    else:
+        response = 'Link CTL ACK %s' % details
+    return _send_CS_response(CorS, response)
 
 ###########################################################################
 # Gen-Z 1.0 "11.6 Link RFC"
 
 
-def _link_rfc(client, subelements):
+def _Link_RFC(client, subelements):
     if not client.SI.args.smart:
         client.SI.logmsg('This switch is not a manager')
         return False
-    kv = CSV2dict(subelements[0])
     try:
-        uS = int(kv['ttcus'])
-    except KeyError as e:
+        kv = CSV2dict(subelements[0])
+        uS = int(kv['TTCuS'])
+    except (IndexError, KeyError) as e:
         client.SI.logmsg('%d: Link RFC missing TTCuS' % client.id)
         return False
     except (TypeError, ValueError) as e:
@@ -86,38 +100,31 @@ def _link_rfc(client, subelements):
         return False
     client.SID = client.SI.defaultSID
     client.CID = client.id * 100
-    response = 'CtrlWrite Space=0,SID=%d,CID=%d' % (client.SID, client.CID)
-    return server_responds(client, response)
+    response = 'CtrlWrite Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d' % (
+        client.SI.defaultSID, client.SI.server_id * 100,
+        client.SID, client.CID)
+    return _send_CS_response(client, response)
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL"
-# send_LinkACK is also used from other modules.
 
 
-def send_LinkACK(client, details, fromServer=True, nack=False):
-    from_id = client.SI.server_id if fromServer else client.id
-    if nack:
-        response = 'Link Ctl NAK'
-    else:
-        response = 'Link Ctl ACK %s' % details
-    if fromServer:
-        return server_responds(client, response)
-    return cient_responds(client, response)
-
-
-def _link_ctl_peer_attribute(client, subelements):
-    '''Subelements should be empty but won't be checked.'''
-    details = 'C-Class=Switch,SID0=%d,CID0=%d' % (
-        client.SI.server_SID0, client.SI.server_CID0)
-    return send_LinkACK(client, details)
+def _Link_CTL(client, subelements):
+    '''Subelements should be empty.'''
+    if len(subelements) == 1 and subelements[0] == 'Peer-Attribute':
+        details = 'C-Class=%s,SID0=%d,CID0=%d' % (
+            client.SI.C_Class, client.SI.server_SID0, client.SI.server_CID0)
+        return send_LinkACK(client, details)
+    return send_LinkACK(client, 'Reason=Unsupported', nack=True)
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
+# Commands streams are case-sensitive, read the spec.
 
 
 def switch_handler(client, request):
     '''Return True if successfully parsed and processed.'''
-    elements = request.lower().split()
+    elements = request.split()
     try:
         handler, subelements = chelsea(elements)
         return handler(client, subelements)
