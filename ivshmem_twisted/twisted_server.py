@@ -66,7 +66,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
             SI = self.SI
             SI.C_Class = 'Switch'
-            SI.isClient = False     # Guides some shared routines
 
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
@@ -269,18 +268,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             SI.logmsg('Disappeering act by %d' % sender_id)
             return
-        sender_EN = peer.EN_list[from_id]
+        from_EN = peer.EN_list[from_id]
 
-        # Try the big shortcut.
-        if msg == 'ping':
-            SI.logmsg('PONG to %d' % sender_id)
-            FAMEZ_MailBox.fill(from_id, 'pong')
-            sender_EN.incr()
-            return
-
-        # I now have from_id (to fill a mailslot) and sender_EN (to kick it).
-        # FIXME get rid of "isClient" field.
-        switch_handler(peer, msg)
+        switch_handler(peer, msg, from_id, from_EN)
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven

@@ -30,14 +30,14 @@ from zope.interface import implementer
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_switch import CSV2dict, send_LinkACK
+    from famez_switch import CSV2dict, send_LinkACK, switch_handler
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_switch import CSV2dict, send_LinkACK
+    from .famez_switch import CSV2dict, send_LinkACK, switch_handler
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
@@ -73,7 +73,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 self.__class__.SI = ServerInvariant()
                 self.SI.args = cmdlineargs
                 self.SI.mailbox = None
-                self.SI.isClient = True   # Guides shared routines
                 self.SI.C_Class = 'Debugger'
 
             self.id = None       # Until initial info; state machine key
@@ -307,7 +306,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         sender_id = vectorobj.num
         from_id = selph.id
         try:
-            sender_EN = selph.id2EN_list[sender_id][from_id]
+            from_EN = selph.id2EN_list[sender_id][from_id]
         except (IndexError, KeyError) as e:
             print('Disappeering act %d: %s' % (sender_id, str(e)))
             return
@@ -319,11 +318,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print(trace)
         except Exception as e:      # VM can overrun this
             pass
-
-        if msg == 'ping':
-            FAMEZ_MailBox.fill(from_id, 'pong')
-            sender_EN.incr()
-            return
 
         elements = msg.strip().split()
 
@@ -338,15 +332,17 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if elements[0] == 'Link' and elements[1] == 'CTL':
             opcode = elements[2]
             if opcode == 'Peer-Attribute':
-                details = 'C-Class=Bridge,SID0=%d,CID0=%d' % (
-                    selph.SID0, selph.CID0)
+                details = 'C-Class=%s,SID0=%d,CID0=%d' % (
+                    selph.SI.C_Class, selph.SID0, selph.CID0)
                 print(details)
-                send_LinkACK(selph, details, fromServer=False)
+                send_LinkACK(selph, details, from_id, from_EN)
                 return
 
             if opcode == 'ACK':
                 selph.peerattrs = CSV2dict(elements[3])
                 return
+
+        switch_handler(selph, msg, from_id, from_EN)
 
     #----------------------------------------------------------------------
     # Command line parsing.  I'm just trying to get it to work.

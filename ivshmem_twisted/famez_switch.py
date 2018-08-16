@@ -60,36 +60,29 @@ def CSV2dict(oneCSVstr):
 # FIXME: make mailbox.fill() a class method and import the class to reach it.
 
 
-def _send_CS_response(peer, response):
-    if peer.SI.isClient:    # None exist right now
-        from_id = peer.id
-        # self.id2EN_list[dest][src]
-        vectors = peer.xyzzy
-    else:
-        from_id = peer.SI.server_id
-        vectors = peer.vectors
+def _send_response(peer, response, from_id, from_EN):
     FAMEZ_MailBox.fill(from_id, response)
-    vectors[from_id].incr()
+    from_EN.incr()
     return True     # FIXME: is there anything to detect?
 
 ###########################################################################
 # Also called from other modules.
 
 
-def send_LinkACK(CorS, details, fromServer=True, nack=False):
+def send_LinkACK(CorS, details, from_id, from_EN, nack=False):
     if nack:
         response = 'Link CTL NAK %s' % details
     else:
         response = 'Link CTL ACK %s' % details
-    return _send_CS_response(CorS, response)
+    return _send_response(CorS, response, from_id, from_EN)
 
 ###########################################################################
 # Gen-Z 1.0 "11.6 Link RFC"
 
 
-def _Link_RFC(client, subelements):
+def _Link_RFC(client, subelements, from_id, from_EN):
     if not client.SI.args.smart:
-        client.SI.logmsg('This switch is not a manager')
+        client.SI.logmsg('I am not a manager')
         return False
     try:
         kv = CSV2dict(subelements[0])
@@ -107,34 +100,43 @@ def _Link_RFC(client, subelements):
     response = 'CtrlWrite Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d' % (
         client.SI.defaultSID, client.SI.server_id * 100,
         client.SID, client.CID)
-    return _send_CS_response(client, response)
+    return _send_response(client, response, from_id, from_EN)
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL"
 
 
-def _Link_CTL(client, subelements):
+def _Link_CTL(client, subelements, from_id, from_EN):
     '''Subelements should be empty.'''
     if len(subelements) == 1 and subelements[0] == 'Peer-Attribute':
         details = 'C-Class=%s,SID0=%d,CID0=%d' % (
             client.SI.C_Class, client.SI.server_SID0, client.SI.server_CID0)
-        return send_LinkACK(client, details)
-    return send_LinkACK(client, 'Reason=Unsupported', nack=True)
+        nack = False
+    else:
+        details = 'Reason=Unsupported'
+        nack = True
+    return send_LinkACK(client, details, from_id, from_EN,nack=nack)
+
+###########################################################################
+# Finally a home
+
+
+def _ping(client, subelements, from_id, from_EN):
+    return _send_response(client, 'pong', from_id, from_EN)
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
 # Commands streams are case-sensitive, read the spec.
 
 
-def switch_handler(client, request):
+def switch_handler(client, request, from_id, from_EN):
     '''Return True if successfully parsed and processed.'''
     elements = request.split()
     try:
         handler, subelements = chelsea(elements)
-        return handler(client, subelements)
+        return handler(client, subelements, from_id, from_EN)
     except Exception as e:
-        print(str(e), file=sys.stderr)
-        pass
+        client.SI.logmsg(str(e))
     return False
 
 ###########################################################################
