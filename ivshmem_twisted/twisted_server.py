@@ -89,6 +89,24 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.create_new_peer_id()
 
+    # Essentially class variables as all the instances are proxies for
+    # the client connection.
+    @property
+    def SID0(self):
+        return self.SI.server_SID0
+
+    @SID0.setter
+    def SID0(self, value):
+        self.SI.server_SID0 = int(value)
+
+    @property
+    def CID0(self):
+        return self.SI.server_CID0
+
+    @CID0.setter
+    def CID0(self, value):
+        self.SI.server_CID0 = int(value)
+
     @property
     def nodename(self):
         '''For Commander prompt'''

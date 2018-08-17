@@ -100,7 +100,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def get_nodenames(self):
         self.id2nodename = OrderedDict()
         for peer_id in sorted(self.id2fd_list):   # keys() are integer IDs
-            nodename, _ = self.SI.mailbox.retrieve(peer_id, clear=False)
+            nodename, _ = FAMEZ_MailBox.retrieve(peer_id, clear=False)
             self.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
@@ -310,7 +310,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except (IndexError, KeyError) as e:
             print('Disappeering act %d: %s' % (sender_id, str(e)))
             return
-        nodename, msg = selph.SI.mailbox.retrieve(sender_id)
+        nodename, msg = FAMEZ_MailBox.retrieve(sender_id)
 
         trace = '%10s (%2d) -> "%s" (len %d)' % (
             nodename, vectorobj.num, msg, len(msg))
@@ -321,15 +321,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         elements = msg.strip().split()
 
-        if elements[0] == 'CtrlWrite':  # observe caps
-            kv = CSV2dict(elements[1])
-            if int(kv['Space']) == 0:
-                selph.SID0 = int(kv['SID'])
-                selph.CID0 = int(kv['CID'])
-                selph.linkattrs['State'] = 'configured'
-            return
-
-        if elements[0] == 'Link' and elements[1] == 'CTL':
+        if elements[0] == 'Linkkkk' and elements[1] == 'CTL':
             opcode = elements[2]
             if opcode == 'Peer-Attribute':
                 details = 'C-Class=%s,SID0=%d,CID0=%d' % (

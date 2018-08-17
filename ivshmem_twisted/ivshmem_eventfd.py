@@ -124,7 +124,7 @@ class EventfdReader(object):
     def fileno(self):
         return self.eventobj.get_fd()   # Might as well use it
 
-    def  logPrefix(self):
+    def logPrefix(self):
         return 'ServerEvent@%d' % self.fileno()
 
     def doRead(self):
