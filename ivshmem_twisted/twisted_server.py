@@ -42,7 +42,8 @@ except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
 
 # Don't use peer ID 0, certain docs imply it's reserved.  Put the clients
-# from 1 - nClients, and the server goes at nClients + 1.
+# from 1 - nClients, and the server goes at nClients + 1.  Then use slot
+# 0 as global data storage, primarily the server command-line arguments.
 
 IVSHMEM_UNUSED_ID = 0
 
@@ -89,24 +90,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.create_new_peer_id()
 
-    # Essentially class variables as all the instances are proxies for
-    # the client connection.
-    @property
-    def SID0(self):
-        return self.SI.server_SID0
-
-    @SID0.setter
-    def SID0(self, value):
-        self.SI.server_SID0 = int(value)
-
-    @property
-    def CID0(self):
-        return self.SI.server_CID0
-
-    @CID0.setter
-    def CID0(self, value):
-        self.SI.server_CID0 = int(value)
-
     @property
     def nodename(self):
         '''For Commander prompt'''
@@ -120,51 +103,49 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         self.SI.logmsg('dataReceived, quite unexpectedly')
         raise NotImplementedError(self)
 
-    # Use variables that resemble the QEMU "ivshmem-server.c":  peer == self.
     # If errors occur early enough, send a bad revision to the client so it
-    # terminates the connection.
-    def connectionMade(peer):
-        recycled = peer.SI.recycled.get(peer.id, None)
+    # terminates the connection.  Remember, "self" is a proxy for a peer.
+    def connectionMade(self):
+        recycled = self.SI.recycled.get(self.id, None)
         if recycled:
-            del peer.SI.recycled[recycled.id]
+            del self.SI.recycled[recycled.id]
         msg = 'new socket %d == peer id %d %s' % (
-              peer.transport.fileno(), peer.id,
+              self.transport.fileno(), self.id,
               'recycled' if recycled else ''
         )
-        peer.SI.logmsg(msg)
-        if peer.id == -1:           # set from __init__
-            peer.SI.logmsg('Max clients reached')
-            peer.send_initial_info(False)   # client complains but with grace
+        self.SI.logmsg(msg)
+        if self.id == -1:           # set from __init__
+            self.SI.logmsg('Max clients reached')
+            self.send_initial_info(False)   # client complains but with grace
             return
-        server_peer_list = peer.SI.peer_list
+        server_peer_list = self.SI.peer_list
 
         # Server line 175: create specified number of eventfds.  These are
         # shared with all other clients who use them to signal each other.
         if recycled:
-            peer.EN_list = recycled.EN_list
+            self.EN_list = recycled.EN_list
         else:
             try:
-                peer.EN_list = ivshmem_event_notifier_list(peer.SI.nEvents)
+                self.EN_list = ivshmem_event_notifier_list(self.SI.nEvents)
             except Exception as e:
-                peer.SI.logmsg('Event notifiers failed: %s' % str(e))
-                peer.send_initial_info(False)
+                self.SI.logmsg('Event notifiers failed: %s' % str(e))
+                self.send_initial_info(False)
                 return
 
         # Server line 183: send version, peer id, shm fd
-        if not peer.send_initial_info():
-            peer.SI.logmsg('Send initial info failed')
+        if not self.send_initial_info():
+            self.SI.logmsg('Send initial info failed')
             return
-
 
         # Server line 189: advertise the new peer to others.  Note that
         # this new peer has not yet been added to the list; this loop is
         # NOT traversed for the first peer to connect.
         if not recycled:
             for other_peer in server_peer_list:
-                for peer_EN in peer.EN_list:
+                for peer_EN in self.EN_list:
                     ivshmem_send_one_msg(
                         other_peer.transport.socket,
-                        peer.id,
+                        self.id,
                         peer_EN.wfd)
 
         # Server line 197: advertise the other peers to the new one.
@@ -172,31 +153,31 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         for other_peer in server_peer_list:
             for other_peer_EN in other_peer.EN_list:
                 ivshmem_send_one_msg(
-                    peer.transport.socket,
+                    self.transport.socket,
                     other_peer.id,
                     other_peer_EN.wfd)
 
         # Non-standard voodoo extension to previous advertisment: advertise
         # this server to the new peer.  To QEMU it just looks like one more
         # grouping in the previous batch.  Exists only in non-silent mode.
-        for server_EN in peer.SI.EN_list:
+        for server_EN in self.SI.EN_list:
             ivshmem_send_one_msg(
-                peer.transport.socket,
-                peer.SI.server_id,
+                self.transport.socket,
+                self.SI.server_id,
                 server_EN.wfd)
 
         # Server line 205: advertise the new peer to itself, ie, send the
         # eventfds it needs for receiving messages.  This final batch
-        # where the embedded peer.id matches the initial_info id is the
+        # where the embedded self.id matches the initial_info id is the
         # sentinel that communications are finished.
-        for peer_EN in peer.EN_list:
+        for peer_EN in self.EN_list:
             ivshmem_send_one_msg(
-                peer.transport.socket,
-                peer.id,
+                self.transport.socket,
+                self.id,
                 peer_EN.get_fd())   # Must be a good story here...
 
         # Oh yeah
-        server_peer_list.append(peer)
+        server_peer_list.append(self)
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
@@ -219,49 +200,51 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 EN.cleanup()
 
             # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
-            self.SI.mailbox.clear_mailslot(self.id)
+            FAMEZ_MailBox.clear_mailslot(self.id)
 
         except Exception as e:
             self.SI.logmsg('Closing peer transports failed: %s' % str(e))
 
-    def create_new_peer_id(peer):
-        '''Determine the lowest unused client ID and set peer.id.'''
-        # Does not occur often, don't sweat the performance.
+    def create_new_peer_id(self):
+        '''Determine the lowest unused client ID and set self.id.'''
 
-        if len(peer.SI.peer_list) >= peer.SI.nClients:
-            peer.id = -1    # sentinel
+        self.SID0 = 0
+        self.CID0 = 0
+        if len(self.SI.peer_list) >= self.SI.nClients:
+            self.id = -1    # sentinel
             return  # Until a Link RFC is executed
-        peer.SID0 = 0    # Until a CtrlWrite is received
-        peer.CID0 = 0
-        current_ids = frozenset((p.id for p in peer.SI.peer_list))
+        current_ids = frozenset((p.id for p in self.SI.peer_list))
         if not current_ids:
-            peer.id = 1
-            return
-        max_ids = frozenset((range(peer.SI.nClients + 2))) - \
-                  frozenset((IVSHMEM_UNUSED_ID, peer.SI.server_id ))
-        peer.id = sorted(max_ids - current_ids)[0]
+            self.id = 1
+        else:
+            max_ids = frozenset((range(self.SI.nClients + 2))) - \
+                      frozenset((IVSHMEM_UNUSED_ID, self.SI.server_id ))
+            self.id = sorted(max_ids - current_ids)[0]
+        if self.SI.args.smart:
+            self.SID0 = self.SI.default_SID
+            self.CID0 = self
 
-    def send_initial_info(peer, ok=True):   # keep the convention self=="peer"
-        # Protocol version without fd.
-        thesocket = peer.transport.socket
+    def send_initial_info(self, ok=True):
+        thesocket = self.transport.socket   # self is a proxy for the peer.
         try:
+            # 1. Protocol version without fd.
             if not ok:  # Violate the version check and bomb the client.
                 print('Early termination', file=sys.stderr)
                 ivshmem_send_one_msg(thesocket, -1)
-                peer.transport.loseConnection()
-                peer.id = -1
+                self.transport.loseConnection()
+                self.id = -1
                 return
             if not ivshmem_send_one_msg(thesocket,
-                peer.SERVER_IVSHMEM_PROTOCOL_VERSION):
+                self.SERVER_IVSHMEM_PROTOCOL_VERSION):
                 print('This is screwed', file=sys.stderr)
                 return False
 
-            # The client's id, without an fd.
-            ivshmem_send_one_msg(thesocket, peer.id)
+            # 2. The client's (new) id, without an fd.
+            ivshmem_send_one_msg(thesocket, self.id)
 
-            # -1 for data with the fd of the ivshmem file.  Using this protocol
-            # a valid fd is required.
-            ivshmem_send_one_msg(thesocket, -1, peer.SI.mailbox.fd)
+            # 3. -1 for data with the fd of the ivshmem file.  Using this
+            # protocol a valid fd is required.
+            ivshmem_send_one_msg(thesocket, -1, FAMEZ_MailBox.fd)
             return True
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -331,7 +314,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         # satisfy QEMU IVSHMEM restrictions.
         args.server_id = args.nClients + 1
         args.nEvents = args.nClients + 2
-        args.mailbox = FAMEZ_MailBox(args=args)  # replace string with object
+        FAMEZ_MailBox(args=args)  # singleton class, no need to keep instance
 
         self.cmdlineargs = args
         if args.foreground:

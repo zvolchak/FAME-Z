@@ -59,6 +59,7 @@ class FAMEZ_MailBox(object):
     MS_MSG_off = 128
     MS_MAX_MSGLEN = 384
 
+    fd = None       # There can be only one
     mm = None       # Then I can access fill() from the class
     nClients = None
     nEvents = None
@@ -105,11 +106,18 @@ class FAMEZ_MailBox(object):
         self.__class__.server_id = args.server_id
 
     #----------------------------------------------------------------------
-    # Polymorphic.  Someday I'll learn about metaclasses.
+    # Polymorphic.  Someday I'll learn about metaclasses.  While initialized
+    # as an instance, use of the whole file and individual slots is done
+    # as class methods and attributes, so __init__ is a singleton.
+
+    _beentheredonethat = False
 
     def __init__(self, args=None, fd=-1, client_id=-1, nodename=None):
         '''Server: args with command line stuff from command line.
            Client: starts with an fd and id read from AF_UNIX socket.'''
+        if self._beentheredonethat:
+            return
+        self.__class__._beetnheredonethat = True
 
         assert (self.MS_MSG_off + self.MS_MAX_MSGLEN
             == self.MAILBOX_SLOTSIZE), 'Fix this NOW'
@@ -118,9 +126,9 @@ class FAMEZ_MailBox(object):
         if args is None:
             assert fd > 0 and client_id > 0 and isinstance(nodename, str), \
                 'Bad call, ump!'
-            self.fd = fd
+            self.__class__.fd = fd
             self.nodename = nodename
-            self._init_client_mailslot(client_id)
+            self._init_mailslot(client_id, nodename)
             return
         assert fd == -1 and client_id == -1, 'Cannot assign ids to server'
 
@@ -160,7 +168,7 @@ class FAMEZ_MailBox(object):
         os.umask(oldumask)
 
         self.path = path                        # Final absolute path
-        self.fd = fd
+        self.__class__.fd = fd
         self._initialize_mailbox(args)
 
     #----------------------------------------------------------------------
@@ -228,29 +236,31 @@ class FAMEZ_MailBox(object):
     # when a peer dies.  This is mostly for QEMU crashes so the nodename
     # is not reused when a QEMU restarts, before loading famez.ko.
 
-    def clear_mailslot(self, id, nodenamebytes=None):
-        assert 1 <= id <= self.server_id, 'slot is bad: %d' % id
-        index = id * self.MAILBOX_SLOTSIZE
-        zeros = b'\0' * self.MS_NODENAME_SIZE
-        self.mm[index:index + len(zeros)] = zeros
+    @classmethod
+    def clear_mailslot(cls, id, nodenamebytes=None):
+        assert 1 <= id <= cls.server_id, 'slot is bad: %d' % id
+        index = id * cls.MAILBOX_SLOTSIZE
+        zeros = b'\0' * cls.MS_NODENAME_SIZE
+        cls.mm[index:index + len(zeros)] = zeros
         if nodenamebytes:
-            assert len(nodenamebytes) < self.MS_NODENAME_SIZE
-            self.mm[index:index + len(nodenamebytes)] = nodenamebytes
+            assert len(nodenamebytes) < cls.MS_NODENAME_SIZE
+            cls.mm[index:index + len(nodenamebytes)] = nodenamebytes
 
     #----------------------------------------------------------------------
     # Called only by client.  mmap() the file, set hostname.  Many of the
     # parameters must be retrieved from the globals area of the mailbox.
 
-    def _init_client_mailslot(self, id):
-        buf = os.fstat(self.fd)
+    @classmethod
+    def _init_mailslot(cls, id, nodename):
+        buf = os.fstat(cls.fd)
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
-        if self.mm is None:
-            self.__class__.mm = mmap.mmap(self.fd, 0)
-            (self.__class__.nClients,
-             self.__class__.nEvents,
-             self.__class__.server_id) = struct.unpack(
+        if cls.mm is None:
+            cls.mm = mmap.mmap(cls.fd, 0)
+            (cls.nClients,
+             cls.nEvents,
+             cls.server_id) = struct.unpack(
                 'QQQ',
-                self.mm[self.G_NCLIENTS_off:self.G_NCLIENTS_off + 24])
+                cls.mm[cls.G_NCLIENTS_off:cls.G_NCLIENTS_off + 24])
 
         # mailbox slot starts with nodename
-        self.clear_mailslot(id, nodenamebytes=self.nodename.encode())
+        cls.clear_mailslot(id, nodenamebytes=nodename.encode())

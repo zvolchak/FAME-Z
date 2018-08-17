@@ -83,12 +83,14 @@ def _send_response(peer, response, responder_id, responder_EN, tagged=False):
 # Received by server/switch
 
 
-def _Standalone_Acknowledgment(peer, subelements, responder_id, responder_EN):
+def _Standalone_Acknowledgment(responder, args, responder_id, responder_EN):
     retval = True
     try:
-        kv = CSV2dict(subelements[0])
+        kv = CSV2dict(args[0])
         del _tagged[kv['Tag']]
     except Exception as e:
+        print('UNTAGGING %d:%s FAILED' % (responder_id, responder.nodename),
+            file=sys.stderr)
         retval = False
     if _tagged:
         print('Outstanding tags:', file=sys.stderr)
@@ -96,95 +98,97 @@ def _Standalone_Acknowledgment(peer, subelements, responder_id, responder_EN):
     return retval
 
 
-def _send_SA(client, tag, reason, responder_id, responder_EN):
+def _send_SA(responder, tag, reason, responder_id, responder_EN):
     response = 'Standalone Acknowledgment Tag=%s,Reason=%s' % (tag, reason)
-    return _send_response(client, response, responder_id, responder_EN)
+    return _send_response(responder, response, responder_id, responder_EN)
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL" subfield
 # Sent by clients
 
 
-def send_LinkACK(CorS, details, responder_id, responder_EN, nack=False):
+def send_LinkACK(responder, details, responder_id, responder_EN, nack=False):
     if nack:
         response = 'Link CTL NAK %s' % details
     else:
         response = 'Link CTL ACK %s' % details
-    return _send_response(CorS, response, responder_id, responder_EN)
+    return _send_response(responder, response, responder_id, responder_EN)
 
 ###########################################################################
 # Gen-Z 1.0 "6.10.1 P2P Core..."
 # Received by client, only really expecting RFC data
 
 
-def _CTL_Write(client, subelements, responder_id, responder_EN):
-    kv = CSV2dict(subelements[0])
+def _CTL_Write(responder, args, responder_id, responder_EN):
+    kv = CSV2dict(args[0])
     if int(kv['Space']) != 0:
         return False
-    client.SID0 = int(kv['SID'])
-    client.CID0 = int(kv['CID'])
-    client.linkattrs['State'] = 'configured'
-    return _send_SA(client, kv['Tag'], 'OK', responder_id, responder_EN)
+    responder.SID0 = int(kv['SID'])
+    responder.CID0 = int(kv['CID'])
+    responder.linkattrs['State'] = 'configured'
+    return _send_SA(responder, kv['Tag'], 'OK', responder_id, responder_EN)
 
 ###########################################################################
 # Gen-Z 1.0 "11.6 Link RFC"
 # Received by switch
 
 
-def _Link_RFC(client, subelements, responder_id, responder_EN):
-    if not client.SI.args.smart:
-        client.SI.logmsg('I am not a manager')
+def _Link_RFC(responder, args, responder_id, responder_EN):
+    if not responder.SI.args.smart:
+        responder.SI.logmsg('I am not a manager')
         return False
     try:
-        kv = CSV2dict(subelements[0])
+        kv = CSV2dict(args[0])
         delay = kv['TTC'].lower()
     except (IndexError, KeyError) as e:
-        client.SI.logmsg('%d: Link RFC missing TTC' % client.id)
+        responder.SI.logmsg('%d: Link RFC missing TTC' % responder.id)
         return False
     if not 'us' in delay:  # greater than cycle time of this server
-        client.SI.logmsg('Delay %s is too long, dropping request' % delay)
+        responder.SI.logmsg('Delay %s is too long, dropping request' % delay)
         return False
-    client.SID = client.SI.defaultSID   # Track the tag
-    client.CID = client.id * 100
+    responder.SID = responder.SI.default_SID  # Track the tag
+    responder.CID = responder.id * 100
     response = 'CTL-Write Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d' % (
-        client.SI.defaultSID, client.SI.server_id * 100,
-        client.SID, client.CID)
-    return _send_response(client, response, responder_id, responder_EN, tagged=True)
+        responder.SI.server_SID0, responder.SI.server_CID0,
+        responder.SID, responder.CID)
+    return _send_response(
+        responder, response, responder_id, responder_EN, tagged=True)
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL"
 # Entered on both client and server responses.
 
-def _Link_CTL(client, subelements, responder_id, responder_EN):
+def _Link_CTL(responder, args, responder_id, responder_EN):
     '''Subelements should be empty.'''
-    if len(subelements) == 1:
+    arg0 = args[0] if len(args) else ''
+    if len(args) == 1:
+        if arg0 == 'Peer-Attribute':
+            attrs = 'C-Class=%s,SID0=%d,CID0=%d' % (
+                responder.SI.C_Class,
+                responder.SI.server_SID0,
+                responder.SI.server_CID0)
+            return send_LinkACK(responder, attrs, responder_id, responder_EN)
 
-        if subelements[0] == 'Peer-Attribute':
-            details = 'C-Class=%s,SID0=%d,CID0=%d' % (
-                client.SI.C_Class, client.SI.server_SID0, client.SI.server_CID0)
-            nack = False
-        else:
-            details = 'Reason=Unsupported'
-            nack = True
-        return send_LinkACK(client, details, responder_id, responder_EN, nack=nack)
+    if arg0 == 'ACK' and len(args) == 2:
+        # FIXME: correlation ala _tagged?  How do I know it's peer attrs?
+        # FIXME: add a key to the response...
+        responder.peerattrs = CSV2dict(args[1])
+        return True
 
-        client.SI.logmsg('Got a %s from %d' % (subelements[0], client.id))
-        if subelements[0] == 'ACK':     # FIXME: correlation?
-            client.peerattrs = CSV2dict(elements[1])
-            return True
+    if arg0 == 'NAK':
+        # FIXME: do I track the sender ala _tagged and deal with it?
+        print('Got a NAK, not sure what to do with it.', file=sys.stderr)
+        return False
 
-        if subelements[0] == 'ACK':
-            # FIXME: do I track the sender ala _tagged and deal with NAK?
-            return False
-
+    responder.SI.logmsg('Got %s from %d' % (str(args), responder.id))
     return False
 
 ###########################################################################
 # Finally a home
 
 
-def _ping(client, subelements, responder_id, responder_EN):
-    return _send_response(client, 'pong', responder_id, responder_EN)
+def _ping(responder, args, responder_id, responder_EN):
+    return _send_response(responder, 'pong', responder_id, responder_EN)
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
@@ -195,12 +199,12 @@ def _ping(client, subelements, responder_id, responder_EN):
 def request_handler(request, responder, responder_id, responder_EN):
     elements = request.split()
     try:
-        handler, subelements = chelsea(elements, responder.SI.args.verbose)
-        return handler(responder, subelements, responder_id, responder_EN)
+        handler, args = chelsea(elements, responder.SI.args.verbose)
+        return handler(responder, args, responder_id, responder_EN)
     except KeyError as e:
-        client.SI.logmsg('KeyError: %s' % str(e))
+        responder.SI.logmsg('KeyError: %s' % str(e))
     except Exception as e:
-        client.SI.logmsg(str(e))
+        responder.SI.logmsg(str(e))
     return False
 
 ###########################################################################

@@ -172,7 +172,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # and then a -1 with the FD of the IVSHMEM file which is
         # delivered before this.
         assert len(data) == 24, 'Initial data needs three quadwords'
-        assert self.SI.mailbox is None, 'mailbox already set'
 
         # Enough idiot checks.
         mailbox_fd = self.latest_fd
@@ -188,13 +187,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # Initialize my mailbox slot.  Get other parameters from the
         # globals because the IVSHMSG protocol doesn't allow values
         # beyond the intial three.  The constructor does some work
-        # then returns a handle to class methods.
-        self.SI.mailbox = FAMEZ_MailBox(
+        # then returns a few attributes pulled out of the globals,
+        # but work is only actually done on the first call.
+        mailbox = FAMEZ_MailBox(
             fd=mailbox_fd, client_id=self.id, nodename=self.nodename)
-        self.SI.nClients = self.SI.mailbox.nClients
-        self.SI.nEvents = self.SI.mailbox.nEvents
-        self.SI.server_id = self.SI.mailbox.server_id
-        return
+        self.SI.nClients = mailbox.nClients
+        self.SI.nEvents = mailbox.nEvents
+        self.SI.server_id = mailbox.server_id
 
     # Called multiple times so keep state info about previous calls.
     def dataReceived(self, data):
@@ -295,8 +294,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Dirty disconnect')
         else:
             print('Clean disconnect')
-        if hasattr(self, 'mailbox') and self.SI.mailbox:
-            self.SI.mailbox.clear_mailslot(self.id)  # In particular, nodename
+        FAMEZ_MailBox.clear_mailslot(self.id)  # In particular, nodename
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
