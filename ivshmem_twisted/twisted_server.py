@@ -251,7 +251,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         return False
 
     # Match the signature of twisted_client object so they're both compliant
-    # with downstream processing.
+    # with downstream processing.  General lookup form is [dest][src], ie,
+    # first get the list for dest, then pick out src ("from") trigger EN.
     def responder_EN(responder, requester_id, responder_id):
         return responder.EN_list[responder_id]  # requester is not used
 

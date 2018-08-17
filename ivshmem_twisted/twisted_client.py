@@ -66,6 +66,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     CLIENT_IVSHMEM_PROTOCOL_VERSION = 0
 
     SI = None
+    id2fd_list = OrderedDict()     # Sent to me for each peer
+    id2EN_list = OrderedDict()     # Generated from fd_list
 
     def __init__(self, cmdlineargs):
         try:                    # twisted causes blindness
@@ -76,14 +78,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 self.SI.C_Class = 'Debugger'
 
             self.id = None       # Until initial info; state machine key
-            self.linkattrs = { 'State': 'up'}
+            self.linkattrs = { 'State': 'up' }
             self.peerattrs = {}
             self.SID0 = 0
             self.CID0 = 0
             self._nodename = None   # Generate it for self, retrieve for peers
-            self.id2fd_list = OrderedDict()     # Sent to me for each peer
-            self.id2EN_list = OrderedDict()     # Generated from fd_list
-            self.id2nodename = None
             # The state machine major decisions about the semantics of blocks
             # of data have one predicate.   While technically unecessary,
             # firstpass guards against server coding errors.
@@ -97,11 +96,12 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def nodename(self):
         return self._nodename
 
-    def get_nodenames(self):
-        self.id2nodename = OrderedDict()
-        for peer_id in sorted(self.id2fd_list):   # keys() are integer IDs
+    @classmethod
+    def get_nodenames(cls):
+        cls.id2nodename = OrderedDict()
+        for peer_id in sorted(cls.id2fd_list):  # keys() are integer IDs
             nodename, _ = FAMEZ_MailBox.retrieve(peer_id, clear=False)
-            self.id2nodename[peer_id] = nodename
+            cls.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
         '''Return a list even for one item for consistency with keywords
@@ -115,7 +115,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except TypeError as e:
             return indices
         except ValueError as e:
-            if instr.lower() in ('server', 'switch'):
+            if instr.lower()[-6:] in ('server', 'switch'):
                 return (self.SI.server_id,)
             elif instr.lower() == 'all':
                 return sorted(self.id2nodename.keys())
@@ -147,7 +147,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
-                    self.id2EN_list[D][S].incr()
+                    self.responder_EN(D, S).incr()
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue

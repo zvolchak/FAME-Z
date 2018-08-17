@@ -42,9 +42,9 @@ def parse_cmdline(cmdline_args):
         default='famez_mailbox'
     )
     parser.add_argument('--nClients', '-n', metavar='<integer>',
-        help='Server up to this number of clients (limit=62)',
+        help='Server up to this number of clients (limit=30)',
         type=int,
-        default=2
+        default=8
     )
     parser.add_argument('--norecycle',
         dest='recycle',     # By default, DO recycle FDs, do not...
@@ -66,10 +66,11 @@ def parse_cmdline(cmdline_args):
         default=0,
         action='count'
     )
-    parser.add_argument('--smart',
-        help='Perform rudimentary fabric management for VMs',
-        action='store_true',
-        default=False
+    parser.add_argument('--noPFM',
+        dest='smart',
+        help='Suppress rudimentary fabric management for clients',
+        action='store_false',
+        default=True
     )
 
     # Generate the object and postprocess some of the fields.
