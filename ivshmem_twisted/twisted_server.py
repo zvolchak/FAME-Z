@@ -29,14 +29,14 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_switch import switch_handler
+    from famez_requests import request_handler
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_switch import switch_handler
+    from .famez_requests import request_handler
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
@@ -267,28 +267,31 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             print(str(e), file=sys.stderr)
         return False
 
-    # Retrieve the proxy object for the server connection and craft a response.
+    # The cbdata is a class variable common to all requester proxy objects.
+    # The object which serves as the responder needs to be calculated.
     @staticmethod
     def ServerCallback(vectorobj):
+        requester_id = vectorobj.num
+        requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
         SI = vectorobj.cbdata
-        sender_id = vectorobj.num
-        from_id = SI.server_id
-        sendername, msg = FAMEZ_MailBox.retrieve(sender_id)
-        print('%d:%s -> "%s"' % (sender_id, sendername, msg),
-            file=sys.stderr)
-        # SI.logmsg('"%s" (%d) -> "%s"' % (sendername, sender_id, msg))
+        responder_id = SI.server_id
 
-        # Find the peer in the list, just to insure this isn't spurious.
-        # FIXME: convert to dict{} like client.
-        for peer in SI.peer_list:
-            if peer.id == sender_id:
+        trace = '%10s@%d->"%s" (%d)' % (
+            requester_name, requester_id, request, len(request))
+        print(trace, file=sys.stderr)
+        # SI.logmsg(trace)
+
+        # The requester can die between its request and this callback.
+        # peer_list[] is the proxy objects, one for each original connection.
+        for responder in SI.peer_list:
+            if responder.id == requester_id:
                 break
         else:
-            SI.logmsg('Disappeering act by %d' % sender_id)
+            SI.logmsg('Disappeering act by %d' % requester_id)
             return
-        from_EN = peer.EN_list[from_id]
+        responder_EN = responder.EN_list[responder_id]
 
-        switch_handler(peer, msg, from_id, from_EN)
+        request_handler(request, responder, responder_id, responder_EN)
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven

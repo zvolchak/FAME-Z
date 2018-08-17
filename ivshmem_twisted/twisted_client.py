@@ -30,14 +30,14 @@ from zope.interface import implementer
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_switch import CSV2dict, send_LinkACK, switch_handler
+    from famez_requests import request_handler
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_switch import CSV2dict, send_LinkACK, switch_handler
+    from .famez_requests import request_handler
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
 
@@ -300,41 +300,30 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
+    # The cbdata is precisely the object which can be used for the response.
     @staticmethod
     def ClientCallback(vectorobj):
-        selph = vectorobj.cbdata
-        sender_id = vectorobj.num
-        from_id = selph.id
-        try:
-            from_EN = selph.id2EN_list[sender_id][from_id]
-        except (IndexError, KeyError) as e:
-            print('Disappeering act %d: %s' % (sender_id, str(e)))
-            return
-        nodename, msg = FAMEZ_MailBox.retrieve(sender_id)
+        requester_id = vectorobj.num
+        requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
+        responder = vectorobj.cbdata
+        responder_id = responder.id
 
-        trace = '%10s (%2d) -> "%s" (len %d)' % (
-            nodename, vectorobj.num, msg, len(msg))
+        trace = '%10s@%d->"%s" (%d)' % (
+            requester_name, requester_id, request, len(request))
         try:
             print(trace)
         except Exception as e:      # VM can overrun this
             pass
 
-        elements = msg.strip().split()
+        # The requester can die between its request and this callback.
+        # The list is accessed as id2EN_list[destination][source].
+        try:
+            responder_EN = responder.id2EN_list[requester_id][responder_id]
+        except (IndexError, KeyError) as e:
+            print('Disappeering act %d: %s' % (requester_id, str(e)))
+            return
 
-        if elements[0] == 'Linkkkk' and elements[1] == 'CTL':
-            opcode = elements[2]
-            if opcode == 'Peer-Attribute':
-                details = 'C-Class=%s,SID0=%d,CID0=%d' % (
-                    selph.SI.C_Class, selph.SID0, selph.CID0)
-                print(details)
-                send_LinkACK(selph, details, from_id, from_EN)
-                return
-
-            if opcode == 'ACK':
-                selph.peerattrs = CSV2dict(elements[3])
-                return
-
-        switch_handler(selph, msg, from_id, from_EN)
+        request_handler(request, responder, responder_id, responder_EN)
 
     #----------------------------------------------------------------------
     # Command line parsing.  I'm just trying to get it to work.
