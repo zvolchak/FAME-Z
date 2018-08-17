@@ -95,7 +95,7 @@ class FAMEZ_MailBox(object):
             self.mm[index:index + len(packed_peer)] = packed_peer
 
         # My "hostname", zero-padded
-        data = 'Z-server'.encode()
+        data = 'Z-switch'.encode() if args.smart else 'Z-server'.encode()
         index = args.server_id * self.MAILBOX_SLOTSIZE
         self.mm[index:index + len(data)] = data
 

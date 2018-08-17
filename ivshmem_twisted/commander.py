@@ -36,17 +36,17 @@ class _proxyCommander(LineReceiver):
             return _once
         self._once = self
         self.commProto = commProto
-        self.jfdi = getattr(commProto, 'doCommand', self.doCommand)
-        print('Ready')
+        self.jfdi = getattr(commProto, 'doCommand', self.doCommandDefault)
+        print('Command processing is ready...')
 
     def connectionMade(self):   # First contact
         pass    # Could write first prompt now
 
     def connectionLost(self, reason):
-        if self.jfdi == self.doCommand:     # doing it to myself
+        if self.jfdi == self.doCommandDefault:     # doing it to myself
             TIreactor.stop()
 
-    def doCommand(self, cmdline):
+    def doCommandDefault(self, cmdline):
         '''The default command line processor:  help and quit.'''
         if not cmdline.strip():
             return True     # "Keep going"

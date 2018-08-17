@@ -32,14 +32,14 @@ try:
     from famez_mailbox import FAMEZ_MailBox
     from famez_requests import request_handler
     from general import ServerInvariant
-    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
+    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
     from .famez_requests import request_handler
     from .general import ServerInvariant
-    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader, IVSHMEM_Event_Notifier
+    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -142,7 +142,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         assert src_indices, 'missing or unknown source(s)'
         assert dest_indices, 'missing or unknown destination(s)'
         for S in src_indices:
-            self.SI.mailbox.fill(S, msg)
+            FAMEZ_MailBox.fill(S, msg)
             for D in dest_indices:
                 if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
@@ -300,6 +300,12 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
+    # Match the signature of twisted_server object so they're both compliant
+    # with downstream processing.   General lookup form is [dest][src], ie,
+    # first get the list for dest, then pick out src ("from") trigger EN.
+    def responder_EN(responder, requester_id, responder_id):
+        return responder.id2EN_list[requester_id][responder_id]
+
     # The cbdata is precisely the object which can be used for the response.
     @staticmethod
     def ClientCallback(vectorobj):
@@ -316,9 +322,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             pass
 
         # The requester can die between its request and this callback.
-        # The list is accessed as id2EN_list[destination][source].
         try:
-            responder_EN = responder.id2EN_list[requester_id][responder_id]
+            responder_EN = responder.responder_EN(requester_id, responder_id)
         except (IndexError, KeyError) as e:
             print('Disappeering act %d: %s' % (requester_id, str(e)))
             return

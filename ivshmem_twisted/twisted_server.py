@@ -110,7 +110,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     @property
     def nodename(self):
         '''For Commander prompt'''
-        return self.mailbox.nodename
+        return 'Z-switch' if self.SI.args.smart else 'Z-server'
 
     def logPrefix(self):    # This override works after instantiation
         return 'ProtoIVSHMSG'
@@ -267,6 +267,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             print(str(e), file=sys.stderr)
         return False
 
+    # Match the signature of twisted_client object so they're both compliant
+    # with downstream processing.
+    def responder_EN(responder, requester_id, responder_id):
+        return responder.EN_list[responder_id]  # requester is not used
+
     # The cbdata is a class variable common to all requester proxy objects.
     # The object which serves as the responder needs to be calculated.
     @staticmethod
@@ -279,7 +284,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         trace = '%10s@%d->"%s" (%d)' % (
             requester_name, requester_id, request, len(request))
         print(trace, file=sys.stderr)
-        # SI.logmsg(trace)
 
         # The requester can die between its request and this callback.
         # peer_list[] is the proxy objects, one for each original connection.
@@ -289,7 +293,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
-        responder_EN = responder.EN_list[responder_id]
+        responder_EN = responder.responder_EN(requester_id, responder_id)
 
         request_handler(request, responder, responder_id, responder_EN)
 
