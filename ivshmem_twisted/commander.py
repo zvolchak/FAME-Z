@@ -18,6 +18,7 @@
 # severs the network connection established by the protocol object.
 
 import os
+import sys
 
 from twisted.internet import reactor as TIreactor
 
@@ -33,18 +34,27 @@ class _proxyCommander(LineReceiver):
 
     def __init__(self, commProto):
         if self._once is not None:
-            return _once
-        self._once = self
+            return
+        self.__class__._once = self
         self.commProto = commProto
         self.jfdi = getattr(commProto, 'doCommand', self.doCommandDefault)
-        print('Command processing is ready...')
+        print('Command processing is ready...', file=sys.stderr)
 
-    def connectionMade(self):   # First contact
-        pass    # Could write first prompt now
+    def connectionMade(self):   # First contact, kick the machinery
+        self.lineReceived(b'')  # FIXME: direct write to stdin?
 
     def connectionLost(self, reason):
         if self.jfdi == self.doCommandDefault:     # doing it to myself
             TIreactor.stop()
+
+    def _issue_prompt(self):
+        try:
+            nodename = self.commProto.nodename
+        except AttributeError as e:
+            nodename = 'cmd'
+        tmp = '%s> ' % nodename
+        self.prompt = tmp.encode()
+        self.transport.write(self.prompt)
 
     def doCommandDefault(self, cmdline):
         '''The default command line processor:  help and quit.'''
@@ -57,20 +67,33 @@ class _proxyCommander(LineReceiver):
             print('q[uit]\n\tJust do it')
         elif cmd.startswith('q'):
             self.transport.loseConnection()
-            return False
         return True
 
     def lineReceived(self, line):
-        if self.jfdi(line.decode()):
-            # Else the reactor should be shutting down.  If not, get the
-            # nodename each time cuz client's is not known at __init__ time.
+        line = line.decode().strip()
+        args = line.split()
+        ok = True
+        cmd = args.pop(0) if len(args) else ''
+        if cmd:
             try:
-                nodename = self.commProto.nodename
-            except AttributeError as e:
-                nodename = 'cmd'
-            tmp = '%s> ' % nodename
-            self.prompt = tmp.encode()
-            self.transport.write(self.prompt)
+                ok = self.jfdi(cmd, args)
+            except NotImplementedError as e:
+                print(str(e))
+                ok = False
+            except Exception as e:
+                ok = False
+                print('Error: %s' % str(e), file=sys.stderr)
+
+        if not ok:
+            if cmd:
+                if cmd in ('q', 'quit'):
+                    self.commProto.transport.loseConnection()
+                    self.transport.loseConnection()
+                    return
+            print('Unrecognized command "%s", try "help"' % cmd)
+
+        # Do this each time cuz client's is not known at __init__ time.
+        self._issue_prompt()
 
 ###########################################################################
 

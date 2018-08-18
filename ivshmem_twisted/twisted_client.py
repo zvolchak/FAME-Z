@@ -329,91 +329,82 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         request_handler(request, responder, responder_id, responder_EN)
 
     #----------------------------------------------------------------------
-    # Command line parsing.  I'm just trying to get it to work.
+    # Command line parsing.
 
-    def doCommand(self, cmdline):
-        if not cmdline.strip():
-            return True     # "Keep going"
-        elems = cmdline.split()
-        cmd = elems.pop(0)
+    def doCommand(self, cmd, args):
+        if cmd in ('p', 'ping', 's', 'send'):
+            if cmd.startswith('p'):
+                assert len(args) == 1, 'Missing dest'
+                cmd = 'send'
+                args.append('ping')    # Message payload
+            else:
+                assert len(args) >= 1, 'Missing dest'
+            dest = args.pop(0)
+            msg = ' '.join(args)       # Empty list -> empty string
+            self.place_and_go(dest, msg)
+            return True
 
-        try:    # Errors in here break things
-            if cmd in ('p', 'ping', 's', 'send'):
-                if cmd.startswith('p'):
-                    assert len(elems) == 1, 'Missing dest'
-                    cmd = 'send'
-                    elems.append('ping')    # Message payload
-                else:
-                    assert len(elems) >= 1, 'Missing dest'
-                dest = elems.pop(0)
-                msg = ' '.join(elems)       # Empty list -> empty string
-                self.place_and_go(dest, msg)
-                return True
+        if cmd in ('i', 'int'):     # Legacy from QEMU ivshmem-client
+            assert len(args) >= 2, 'Missing dest and/or src'
+            dest = args.pop(0)
+            src = args.pop(0)
+            msg = ' '.join(args)   # Empty list -> empty string
+            self.place_and_go(dest, msg, src)
+            return True
 
-            if cmd in ('i', 'int'):     # Legacy from QEMU ivshmem-client
-                assert len(elems) >= 2, 'Missing dest and/or src'
-                dest = elems.pop(0)
-                src = elems.pop(0)
-                msg = ' '.join(elems)   # Empty list -> empty string
-                self.place_and_go(dest, msg, src)
-                return True
+        if cmd in ('d', 'dump'):    # Include the server
+            if self.SI.args.verbose > 1:
+                print('Peer list keys (%d max):' % (self.SI.nClients + 1))
+                print('\t%s' % sorted(self.id2EN_list.keys()))
 
-            if cmd in ('d', 'dump'):    # Include the server
-                if self.SI.args.verbose > 1:
-                    print('Peer list keys (%d max):' % (self.SI.nClients + 1))
-                    print('\t%s' % sorted(self.id2EN_list.keys()))
+                print('\nActor event fds:')
+                for key in sorted(self.id2fd_list.keys()):
+                    print('\t%2d %s' % (key, self.id2fd_list[key]))
+                print()
 
-                    print('\nActor event fds:')
-                    for key in sorted(self.id2fd_list.keys()):
-                        print('\t%2d %s' % (key, self.id2fd_list[key]))
-                    print()
+            print('Client node/host names:')
+            for key in sorted(self.id2nodename.keys()):
+                print('\t%2d %s' % (key, self.id2nodename[key]))
 
-                print('Client node/host names:')
-                for key in sorted(self.id2nodename.keys()):
-                    print('\t%2d %s' % (key, self.id2nodename[key]))
+            print('\nMy SID0:CID0 = %d:%d' % (self.SID0, self.CID0))
+            print('Link attributes:\n', self.linkattrs)
+            print('Peer attributes:\n', self.peerattrs)
 
-                print('\nMy SID0:CID0 = %d:%d' % (self.SID0, self.CID0))
-                print('Link attributes:\n', self.linkattrs)
-                print('Peer attributes:\n', self.peerattrs)
+            return True
 
-                return True
+        if cmd in ('h', 'help') or '?' in cmd:
+            print('dest/src can be integer, hostname, or "server"\n')
+            print('h[elp]\n\tThis message')
+            print('l[ink]\n\tLink commands (CTL and RFC)')
+            print('p[ing] dest\n\tShorthand for "send dest ping"')
+            print('q[uit]\n\tJust do it')
+            print('s[end] dest [text...]\n\tLike "int" where src=me')
+            print('w[ho]\n\tList all peers')
 
-            if cmd in ('h', 'help') or '?' in cmd:
-                print('dest/src can be integer, hostname, or "server"\n')
-                print('h[elp]\n\tThis message')
-                print('l[ink]\n\tLink commands (CTL and RFC)')
-                print('p[ing] dest\n\tShorthand for "send dest ping"')
-                print('q[uit]\n\tJust do it')
-                print('s[end] dest [text...]\n\tLike "int" where src=me')
-                print('w[ho]\n\tList all peers')
+            print('\nLegacy commands from QEMU "ivshmem-client":\n')
+            print('i[nt] dest src [text...]\n\tCan spoof src')
+            return True
 
-                print('\nLegacy commands from QEMU "ivshmem-client":\n')
-                print('i[nt] dest src [text...]\n\tCan spoof src')
-                return True
+        if cmd in ('w', 'who'):
+            print('\nThis ID = %2d (%s)' % (self.id, self.nodename))
+            self.get_nodenames()
+            for id, nodename in self.id2nodename.items():
+                if id == self.id:
+                    continue
+                print('Peer ID = %2d (%s)' % (id, nodename))
+            return True
 
-            if cmd in ('w', 'who'):
-                print('\nThis ID = %2d (%s)' % (self.id, self.nodename))
-                self.get_nodenames()
-                for id, nodename in self.id2nodename.items():
-                    if id == self.id:
-                        continue
-                    print('Peer ID = %2d (%s)' % (id, nodename))
-                return True
+        if cmd in ('l', 'link', 'L', 'Link'):
+            assert len(args) >= 1, 'Missing directive'
+            msg = 'Link %s' % ' '.join(args)
+            self.place_and_go('server', msg)
+            return True
 
-            if cmd in ('l', 'link', 'L', 'Link'):
-                assert len(elems) >= 1, 'Missing directive'
-                msg = 'Link %s' % ' '.join(elems)
-                self.place_and_go('server', msg)
-                return True
+        if cmd in ('q', 'quit'):
+            self.transport.loseConnection()
+            return False
 
-            if cmd in ('q', 'quit'):
-                self.transport.loseConnection()
-                return False
-
-            print('Unrecognized command "%s", try "help"' % cmd)
-
-        except Exception as e:
-            print('Error: %s' % str(e), file=sys.stderr)
+        print('Unrecognized command "%s", try "help"' % cmd)
 
         return True
 

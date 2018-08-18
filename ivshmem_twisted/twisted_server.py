@@ -14,6 +14,7 @@ import struct
 import sys
 
 from collections import OrderedDict
+from pprint import pprint
 
 from twisted.python import log as TPlog
 from twisted.python.logfile import DailyLogFile
@@ -179,6 +180,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Oh yeah
         server_peer_list.append(self)
 
+        msg = 'Link CTL Peer-Attribute'
+        FAMEZ_MailBox.fill(self.SI.server_id, msg)
+        self.EN_list[self.SI.server_id].incr()
+
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
@@ -280,6 +285,29 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         responder_EN = responder.responder_EN(requester_id, responder_id)
 
         request_handler(request, responder, responder_id, responder_EN)
+
+    #----------------------------------------------------------------------
+    # Command line parsing.
+
+    def doCommand(self, cmd, args):
+
+        if cmd in ('h', 'help') or '?' in cmd:
+            print('h[elp]\n\tThis message')
+            print('s[tatus]\n\tStatus of all ports')
+            print('q[uit]\n\tShut it all down')
+            return True
+
+        if cmd in ('s', 'status'):
+            print('Oooh shiny')
+            for peer in self.SI.peer_list:
+                pprint(args(peer), stream=sys.stdout)
+            return True
+
+        if cmd in ('q', 'quit'):
+            self.transport.loseConnection()
+            return False
+
+        raise NotImplementedError('asdf')
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven
