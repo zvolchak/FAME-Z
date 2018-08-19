@@ -49,7 +49,7 @@ class _proxyCommander(LineReceiver):
 
     def _issue_prompt(self):
         try:
-            nodename = self.commProto.nodename
+            nodename = self.commProto.promptname
         except AttributeError as e:
             nodename = 'cmd'
         tmp = '%s> ' % nodename

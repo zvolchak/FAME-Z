@@ -92,7 +92,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         self.create_new_peer_id()
 
     @property
-    def nodename(self):
+    def promptname(self):
         '''For Commander prompt'''
         return 'Z-switch' if self.SI.args.smart else 'Z-server'
 
@@ -177,12 +177,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 self.id,
                 peer_EN.get_fd())   # Must be a good story here...
 
-        # Oh yeah
+        # And now that it's finished:
         server_peer_list.append(self)
 
-        msg = 'Link CTL Peer-Attribute'
-        FAMEZ_MailBox.fill(self.SI.server_id, msg)
-        self.EN_list[self.SI.server_id].incr()
+        if self.SI.args.smart:
+            msg = 'Link CTL Peer-Attribute'
+            FAMEZ_MailBox.fill(self.SI.server_id, msg)
+            self.EN_list[self.SI.server_id].incr()
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
@@ -213,8 +214,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     def create_new_peer_id(self):
         '''Determine the lowest unused client ID and set self.id.'''
 
-        self.SID0 = 0
-        self.CID0 = 0
+        self.SID0 = 0   # When queried, the answer is in the context...
+        self.CID0 = 0   # ...of the server/switch, NOT the proxy item.
         if len(self.SI.peer_list) >= self.SI.nClients:
             self.id = -1    # sentinel
             return  # Until a Link RFC is executed
@@ -225,9 +226,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             max_ids = frozenset((range(self.SI.nClients + 2))) - \
                       frozenset((IVSHMEM_UNUSED_ID, self.SI.server_id ))
             self.id = sorted(max_ids - current_ids)[0]
+        # FIXME: This should have been set up before socket connection made?
+        self.nodename, _ = FAMEZ_MailBox.retrieve(self.id, clear=False)
         if self.SI.args.smart:
             self.SID0 = self.SI.default_SID
-            self.CID0 = self
+            self.CID0 = self.SI.server_id * 100
 
     def send_initial_info(self, ok=True):
         thesocket = self.transport.socket   # self is a proxy for the peer.
@@ -270,10 +273,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         SI = vectorobj.cbdata
         responder_id = SI.server_id
 
-        trace = '%10s@%d->"%s" (%d)' % (
-            requester_name, requester_id, request, len(request))
-        print(trace, file=sys.stderr)
-
         # The requester can die between its request and this callback.
         # peer_list[] is the proxy objects, one for each original connection.
         for responder in SI.peer_list:
@@ -283,6 +282,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
         responder_EN = responder.responder_EN(requester_id, responder_id)
+        if not responder.nodename:  # FIXME: see FIXME in create_new_id()
+            responder.nodename = requester_name
+
+        trace = '\n%10s@%d->"%s" (%d)' % (
+            responder.nodename, requester_id, request, len(request))
+        print(trace, file=sys.stderr)
 
         request_handler(request, responder, responder_id, responder_EN)
 
@@ -365,7 +370,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
-        args.logmsg('FAME-Z server (id=%d) listening for up to %d clients on %s' %
+        args.logmsg('FAME-Z server (id=%d) ready for up to %d clients on %s' %
             (args.server_id, args.nClients, args.socketpath))
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor

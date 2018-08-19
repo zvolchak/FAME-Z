@@ -82,7 +82,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.peerattrs = {}
             self.SID0 = 0
             self.CID0 = 0
-            self._nodename = None   # Generate it for self, retrieve for peers
+            self.nodename = None   # Generate it for self, retrieve for peers
             # The state machine major decisions about the semantics of blocks
             # of data have one predicate.   While technically unecessary,
             # firstpass guards against server coding errors.
@@ -93,8 +93,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             # ...and any number of attribute references will fail soon
 
     @property   # For Commander prompt
-    def nodename(self):
-        return self._nodename
+    def promptname(self):
+        return self.nodename
 
     @classmethod
     def get_nodenames(cls):
@@ -181,7 +181,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         assert minusone == -1, \
             'Expected -1 with mailbox fd, got %d' % minuseone
         assert 1 <= self.id, 'My ID is bad: %d' % self.id
-        self._nodename = 'z%02d' % self.id
+        self.nodename = 'z%02d' % self.id
         print('This ID = %2d (%s)' % (self.id, self.nodename))
 
         # Initialize my mailbox slot.  Get other parameters from the
@@ -257,7 +257,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print('This (%d) waiting for more fds...\n' % this)
             return
 
-        if self.SI.args.verbose:
+        if self.SI.args.verbose > 1:
             print('--------- Finish housekeeping')
 
         # First generate event notifiers from each fd_list for signalling
@@ -270,7 +270,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # Now arm my incoming events and announce readiness.
         # FIXME: can I really get here more than once?
         if self.firstpass:
-            self.get_nodenames()    # Including mine
+            self.get_nodenames()    # From mailbox, including mine
             if this == self.id:
                 for i, N in enumerate(self.id2EN_list[self.id]):
                     N.num = i

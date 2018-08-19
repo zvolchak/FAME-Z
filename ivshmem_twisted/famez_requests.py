@@ -165,8 +165,8 @@ def _Link_CTL(responder, args, responder_id, responder_EN):
         if arg0 == 'Peer-Attribute':
             attrs = 'C-Class=%s,SID0=%d,CID0=%d' % (
                 responder.SI.C_Class,
-                responder.SI.server_SID0,
-                responder.SI.server_CID0)
+                responder.SID0,
+                responder.CID0)
             return send_LinkACK(responder, attrs, responder_id, responder_EN)
 
     if arg0 == 'ACK' and len(args) == 2:
