@@ -31,14 +31,14 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_requests import request_handler
+    from famez_requests import handle_request
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_requests import request_handler
+    from .famez_requests import handle_request
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
@@ -72,7 +72,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
-            # It will get looped even if it's empty (silent mode).
+            # This variable will get looped even if it's empty (silent mode).
             SI.EN_list = []
 
             # Usually create eventfds for receiving messages in IVSHMSG and
@@ -271,8 +271,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # Match the signature of twisted_client object so they're both compliant
     # with downstream processing.  General lookup form is [dest][src], ie,
     # first get the list for dest, then pick out src ("from") trigger EN.
-    def responder_EN(responder, requester_id, responder_id):
-        return responder.EN_list[responder_id]  # requester is not used
+    @property
+    def responder_EN(self):
+        return self.EN_list[self.responder_id]  # requester not used
 
     # The cbdata is a class variable common to all requester proxy objects.
     # The object which serves as the responder needs to be calculated.
@@ -281,7 +282,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         requester_id = vectorobj.num
         requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
         SI = vectorobj.cbdata
-        responder_id = SI.server_id
 
         # The requester can die between its request and this callback.
         # peer_list[] is the proxy objects, one for each original connection.
@@ -291,15 +291,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
-        responder_EN = responder.responder_EN(requester_id, responder_id)
-        if not responder.nodename:  # FIXME: see FIXME in create_new_id()
+        responder.requester_id = requester_id   # ?Is it always responder.id?
+        responder.responder_id = SI.server_id   # THE MARK OF THE BEAST
+
+        # For QEMU/VM, this may be the first chance to retreive the filename.
+        if not responder.nodename:
             responder.nodename = requester_name
 
-        trace = '\n%10s@%d->"%s" (%d)' % (
-            responder.nodename, requester_id, request, len(request))
-        print(trace, file=sys.stderr)
-
-        ret = request_handler(request, responder, responder_id, responder_EN)
+        ret = handle_request(request, responder)
 
         if responder.afterACK:
             msg = responder.afterACK.pop()

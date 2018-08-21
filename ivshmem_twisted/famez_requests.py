@@ -195,11 +195,15 @@ def _ping(responder, args, responder_id, responder_EN):
 # Return True if successfully parsed and processed.
 
 
-def request_handler(request, responder, responder_id, responder_EN):
+def handle_request(request, responder):
+    trace = '%10s@%d->"%s" (%d)' % (
+        responder.nodename, responder.requester_id, request, len(request))
+    responder.SI.trace(trace)
+
     elements = request.split()
     try:
         handler, args = chelsea(elements, responder.SI.args.verbose)
-        return handler(responder, args, responder_id, responder_EN)
+        return handler(responder, args, responder.responder_id, responder.responder_EN)
     except KeyError as e:
         responder.SI.logmsg('KeyError: %s' % str(e))
     except Exception as e:

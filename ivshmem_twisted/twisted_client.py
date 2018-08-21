@@ -30,14 +30,14 @@ from zope.interface import implementer
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_requests import request_handler
+    from famez_requests import handle_request
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_requests import request_handler
+    from .famez_requests import handle_request
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
@@ -147,7 +147,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
-                    self.responder_EN(D, S).incr()
+                    self.requester_id = D
+                    self.responder_id = S
+                    self.responder_EN.incr()
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue
@@ -301,8 +303,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     # Match the signature of twisted_server object so they're both compliant
     # with downstream processing.   General lookup form is [dest][src], ie,
     # first get the list for dest, then pick out src ("from") trigger EN.
-    def responder_EN(responder, requester_id, responder_id):
-        return responder.id2EN_list[requester_id][responder_id]
+    @property
+    def responder_EN(self, D=None, S=None):
+        if D is None:
+            D = self.requester_id
+        if S is None:
+            S = self.responder_id
+        return self.id2EN_list[self.requester_id][self.responder_id]
 
     # The cbdata is precisely the object which can be used for the response.
     @staticmethod
@@ -310,23 +317,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         requester_id = vectorobj.num
         requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
         responder = vectorobj.cbdata
-        responder_id = responder.id
+        responder.requester_id = requester_id   # ?Is it always responder.id?
+        responder.responder_id = responder.id   # See twisted_server.py
 
-        trace = '%10s@%d->"%s" (%d)' % (
-            responder.nodename, requester_id, request, len(request))
-        try:
-            print(trace)
-        except Exception as e:      # VM can overrun this
-            pass
-
-        # The requester can die between its request and this callback.
-        try:
-            responder_EN = responder.responder_EN(requester_id, responder_id)
-        except (IndexError, KeyError) as e:
-            print('Disappeering act %d: %s' % (requester_id, str(e)))
-            return
-
-        request_handler(request, responder, responder_id, responder_EN)
+        handle_request(request, responder)
 
     #----------------------------------------------------------------------
     # Command line parsing.

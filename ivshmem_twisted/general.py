@@ -5,6 +5,8 @@
 
 ###########################################################################
 
+import sys
+
 
 class ServerInvariant(object):
 
@@ -15,11 +17,13 @@ class ServerInvariant(object):
             self.server_id = 0
             self.logmsg = print
             self.logerr = print
+            self.stdtrace = sys.stdout
             return
 
         self.args = args
         self.logmsg = args.logmsg           # Often-used
         self.logerr = args.logerr
+        self.stdtrace = sys.stderr
         self.nClients = args.nClients
         self.server_id = args.nClients + 1  # This is me!
         self.nEvents = args.nClients + 2
@@ -39,3 +43,5 @@ class ServerInvariant(object):
         # bigger help but would bend that code-following convention.
         self.peer_list = []
 
+    def trace(self, tracemsg):
+        print(tracemsg, file=self.stdtrace)
