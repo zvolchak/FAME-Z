@@ -10,6 +10,7 @@ import argparse
 import grp
 import mmap
 import os
+import random
 import struct
 import sys
 
@@ -88,7 +89,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     tmp = EventfdReader(EN, self.ServerCallback, SI)
                     if i:   # Technically it blocks mailslot 0, the globals
                         tmp.start()
-
+        self.peerattrs = {}
+        self.afterACK = []
         self.create_new_peer_id()
 
     @property
@@ -219,18 +221,26 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         if len(self.SI.peer_list) >= self.SI.nClients:
             self.id = -1    # sentinel
             return  # Until a Link RFC is executed
-        current_ids = frozenset((p.id for p in self.SI.peer_list))
-        if not current_ids:
-            self.id = 1
+
+        # dumb: monotonic from 1; smart: random (finds holes in the code).
+        # Generate ID sets used by each.
+        active_ids = frozenset((p.id for p in self.SI.peer_list))
+        unused_ids = frozenset((range(self.SI.nClients + 2))) - \
+                     frozenset((IVSHMEM_UNUSED_ID, self.SI.server_id))
+        available_ids = unused_ids - active_ids
+        if self.SI.args.smart:
+            self.id = random.choice(tuple(available_ids))
         else:
-            max_ids = frozenset((range(self.SI.nClients + 2))) - \
-                      frozenset((IVSHMEM_UNUSED_ID, self.SI.server_id ))
-            self.id = sorted(max_ids - current_ids)[0]
+            if not self.SI.peer_list:   # empty
+                self.id = 1
+            else:
+                self.id = (sorted(available_ids))[0]
+
         # FIXME: This should have been set up before socket connection made?
         self.nodename, _ = FAMEZ_MailBox.retrieve(self.id, clear=False)
         if self.SI.args.smart:
             self.SID0 = self.SI.default_SID
-            self.CID0 = self.SI.server_id * 100
+            self.CID0 = self.id * 100
 
     def send_initial_info(self, ok=True):
         thesocket = self.transport.socket   # self is a proxy for the peer.
@@ -289,7 +299,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             responder.nodename, requester_id, request, len(request))
         print(trace, file=sys.stderr)
 
-        request_handler(request, responder, responder_id, responder_EN)
+        ret = request_handler(request, responder, responder_id, responder_EN)
+
+        if responder.afterACK:
+            msg = responder.afterACK.pop()
+            print('After ACK: %s' % msg, file=sys.stderr)
+            FAMEZ_MailBox.fill(responder_id, msg)   # look above: SI.server_id
+            responder_EN.incr()
 
     #----------------------------------------------------------------------
     # Command line parsing.
@@ -303,9 +319,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('s', 'status'):
-            print('Oooh shiny')
             for peer in self.SI.peer_list:
-                pprint(args(peer), stream=sys.stdout)
+                print('%10s: %s' % (peer.nodename, peer.peerattrs),
+                    file=sys.stderr)
+                # pprint(vars(peer), stream=sys.stdout)
             return True
 
         if cmd in ('q', 'quit'):

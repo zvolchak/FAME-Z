@@ -72,7 +72,7 @@ def _send_response(peer, response, responder_id, responder_EN, tagged=False):
 
     if tagged:
         response += ',Tag=%d' % _next_tag
-        _tagged[str(_next_tag)] = '%d.%d!%s' % (peer.SID, peer.CID, response)
+        _tagged[str(_next_tag)] = '%d.%d!%s' % (peer.SID0, peer.CID0, response)
         _next_tag += 1
     FAMEZ_MailBox.fill(responder_id, response)
     responder_EN.incr()
@@ -146,11 +146,10 @@ def _Link_RFC(responder, args, responder_id, responder_EN):
     if not 'us' in delay:  # greater than cycle time of this server
         responder.SI.logmsg('Delay %s is too long, dropping request' % delay)
         return False
-    responder.SID = responder.SI.default_SID  # Track the tag
-    responder.CID = responder.id * 100
     response = 'CTL-Write Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d' % (
         responder.SI.server_SID0, responder.SI.server_CID0,
-        responder.SID, responder.CID)
+        responder.SID0, responder.CID0)
+    responder.afterACK.append('Link CTL Peer-Attribute')
     return _send_response(
         responder, response, responder_id, responder_EN, tagged=True)
 
@@ -163,10 +162,10 @@ def _Link_CTL(responder, args, responder_id, responder_EN):
     arg0 = args[0] if len(args) else ''
     if len(args) == 1:
         if arg0 == 'Peer-Attribute':
+            SID0 = responder.SID0
+            CID0 = responder.CID0
             attrs = 'C-Class=%s,SID0=%d,CID0=%d' % (
-                responder.SI.C_Class,
-                responder.SID0,
-                responder.CID0)
+                responder.SI.C_Class, SID0, CID0)
             return send_LinkACK(responder, attrs, responder_id, responder_EN)
 
     if arg0 == 'ACK' and len(args) == 2:

@@ -29,7 +29,7 @@ class FAMEZ_MailBox(object):
 
     # QEMU rules: file size (product of first two) must be a power of two.
     MAILBOX_SLOTSIZE = 512
-    MAILBOX_MAX_SLOTS = 32    # Dummy + server leaves 30 actual clients
+    MAILBOX_MAX_SLOTS = 16    # Dummy + server leaves 14 actual clients
 
     G_SLOTSIZE_off = 0        # in the space of mailslot index 0
     G_MSG_OFFSET_off = 8

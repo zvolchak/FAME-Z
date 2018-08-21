@@ -74,7 +74,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             if self.SI is None:
                 self.__class__.SI = ServerInvariant()
                 self.SI.args = cmdlineargs
-                self.SI.mailbox = None
                 self.SI.C_Class = 'Debugger'
 
             self.id = None       # Until initial info; state machine key
@@ -83,6 +82,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.SID0 = 0
             self.CID0 = 0
             self.nodename = None   # Generate it for self, retrieve for peers
+            self.afterACK = []
             # The state machine major decisions about the semantics of blocks
             # of data have one predicate.   While technically unecessary,
             # firstpass guards against server coding errors.
@@ -313,7 +313,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         responder_id = responder.id
 
         trace = '%10s@%d->"%s" (%d)' % (
-            requester_name, requester_id, request, len(request))
+            responder.nodename, requester_id, request, len(request))
         try:
             print(trace)
         except Exception as e:      # VM can overrun this
@@ -332,6 +332,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     # Command line parsing.
 
     def doCommand(self, cmd, args):
+        cmd = cmd.lower()
         if cmd in ('p', 'ping', 's', 'send'):
             if cmd.startswith('p'):
                 assert len(args) == 1, 'Missing dest'
@@ -378,6 +379,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('l[ink]\n\tLink commands (CTL and RFC)')
             print('p[ing] dest\n\tShorthand for "send dest ping"')
             print('q[uit]\n\tJust do it')
+            print('r[fc]\n\tSend "Link RFC ..." to the server')
             print('s[end] dest [text...]\n\tLike "int" where src=me')
             print('w[ho]\n\tList all peers')
 
@@ -394,9 +396,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print('Peer ID = %2d (%s)' % (id, nodename))
             return True
 
-        if cmd in ('l', 'link', 'L', 'Link'):
+        if cmd.lower() in ('l', 'link'):
             assert len(args) >= 1, 'Missing directive'
             msg = 'Link %s' % ' '.join(args)
+            self.place_and_go('server', msg)
+            return True
+
+        if cmd in ('r', 'rfc'):
+            msg = 'Link RFC TTC=27us'
             self.place_and_go('server', msg)
             return True
 

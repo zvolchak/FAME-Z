@@ -42,9 +42,9 @@ def parse_cmdline(cmdline_args):
         default='famez_mailbox'
     )
     parser.add_argument('--nClients', '-n', metavar='<integer>',
-        help='Server up to this number of clients (limit=30)',
+        help='Serve up to this number of clients (max=14)',
         type=int,
-        default=8
+        default=14
     )
     parser.add_argument('--norecycle',
         dest='recycle',     # By default, DO recycle FDs, do not...
