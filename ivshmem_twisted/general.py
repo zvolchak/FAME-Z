@@ -32,10 +32,12 @@ class ServerInvariant(object):
             self.default_SID = 27
             self.server_SID0 = self.default_SID
             self.server_CID0 = self.server_id * 100
+            self.isPFM = True
         else:
             self.default_SID = 0
             self.server_SID0 = 0
             self.server_CID0 = 0
+            self.isPFM = False
 
         # It's really "clients" (QEMU and [famez|ivshmem]_client) but
         # the original code is written around a "peer_list".  Keep that

@@ -33,7 +33,6 @@ try:
     from famez_requests import handle_request, send_payload
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox

@@ -178,8 +178,12 @@ def _Link_CTL(responder, args):
     arg0 = args[0] if len(args) else ''
     if len(args) == 1:
         if arg0 == 'Peer-Attribute':
-            SID0 = responder.SID0
-            CID0 = responder.CID0
+            if getattr(responder.SI, 'isPFM', None) is None:
+                SID0 = responder.SID0
+                CID0 = responder.CID0
+            else:
+                SID0 = responder.SI.server_SID0
+                CID0 = responder.SI.server_CID0
             attrs = 'C-Class=%s,SID0=%d,CID0=%d' % (
                 responder.SI.C_Class, SID0, CID0)
             return send_LinkACK(responder, attrs)
