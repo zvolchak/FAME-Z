@@ -31,14 +31,14 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_requests import handle_request
+    from famez_requests import handle_request, send_payload
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_requests import handle_request
+    from .famez_requests import handle_request, send_payload
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
@@ -61,6 +61,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
     SI = None
+    responder_id = None     # ie, I am the one responding to interrupts
 
     def __init__(self, factory):
         '''"self" is a new client connection, not "me" the server.'''
@@ -69,6 +70,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
             SI = self.SI
             SI.C_Class = 'Switch'
+            self.__class__.responder_id = SI.server_id  # THE MARK OF THE BEAST
 
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
@@ -183,9 +185,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         server_peer_list.append(self)
 
         if self.SI.args.smart:
-            msg = 'Link CTL Peer-Attribute'
-            FAMEZ_MailBox.fill(self.SI.server_id, msg)
-            self.EN_list[self.SI.server_id].incr()
+            send_payload(self, 'Link CTL Peer-Attribute')
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
@@ -291,20 +291,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
-        responder.requester_id = requester_id   # ?Is it always responder.id?
-        responder.responder_id = SI.server_id   # THE MARK OF THE BEAST
+        responder.requester_id = requester_id
 
         # For QEMU/VM, this may be the first chance to retreive the filename.
         if not responder.nodename:
             responder.nodename = requester_name
 
-        ret = handle_request(request, responder)
-
-        if responder.afterACK:
-            msg = responder.afterACK.pop()
-            print('After ACK: %s' % msg, file=sys.stderr)
-            FAMEZ_MailBox.fill(responder_id, msg)   # look above: SI.server_id
-            responder_EN.incr()
+        ret = handle_request(request, requester_name, responder)
 
     #----------------------------------------------------------------------
     # Command line parsing.
@@ -317,7 +310,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             print('q[uit]\n\tShut it all down')
             return True
 
-        if cmd in ('s', 'status'):
+        if cmd in ('d', 'dump'):
             for peer in self.SI.peer_list:
                 print('%10s: %s' % (peer.nodename, peer.peerattrs),
                     file=sys.stderr)
@@ -386,7 +379,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
-        args.logmsg('FAME-Z server (id=%d) ready for up to %d clients on %s' %
+        args.logmsg('FAME-Z server @%d ready for %d clients on %s' %
             (args.server_id, args.nClients, args.socketpath))
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor

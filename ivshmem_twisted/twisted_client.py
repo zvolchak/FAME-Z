@@ -30,14 +30,14 @@ from zope.interface import implementer
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox
-    from famez_requests import handle_request
+    from famez_requests import handle_request, send_payload
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
-    from .famez_requests import handle_request
+    from .famez_requests import handle_request, send_payload
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
@@ -142,14 +142,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         assert src_indices, 'missing or unknown source(s)'
         assert dest_indices, 'missing or unknown destination(s)'
         for S in src_indices:
-            FAMEZ_MailBox.fill(S, msg)
             for D in dest_indices:
                 if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
                     self.requester_id = D
                     self.responder_id = S
-                    self.responder_EN.incr()
+                    # Yes it repeat-loads a mailslot D times but who cares
+                    send_payload(self, msg)
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue
@@ -302,13 +302,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     # Match the signature of twisted_server object so they're both compliant
     # with downstream processing.   General lookup form is [dest][src], ie,
-    # first get the list for dest, then pick out src ("from") trigger EN.
+    # first get the list for dest, then pick out src ("from me") trigger EN.
     @property
-    def responder_EN(self, D=None, S=None):
-        if D is None:
-            D = self.requester_id
-        if S is None:
-            S = self.responder_id
+    def responder_EN(self):
         return self.id2EN_list[self.requester_id][self.responder_id]
 
     # The cbdata is precisely the object which can be used for the response.
@@ -317,10 +313,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         requester_id = vectorobj.num
         requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
         responder = vectorobj.cbdata
-        responder.requester_id = requester_id   # ?Is it always responder.id?
-        responder.responder_id = responder.id   # See twisted_server.py
 
-        handle_request(request, responder)
+        # Need to be set each time because of spoof cabability, especiall
+        # with destinations like "other" and "all"
+        responder.requester_id = requester_id
+        responder.responder_id = responder.id   # Not like twisted_server.py
+
+        handle_request(request, requester_name, responder)
 
     #----------------------------------------------------------------------
     # Command line parsing.
