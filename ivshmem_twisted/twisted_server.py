@@ -95,9 +95,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     tmp = EventfdReader(EN, self.ServerCallback, SI)
                     if i:   # Technically it blocks mailslot 0, the globals
                         tmp.start()
-        self.peerattrs = {}
-        self.afterACK = []
+
         self.create_new_peer_id()
+        self.peerattrs = {
+            'SID0': '0',
+            'CID0': '0',
+            'C-Class': 'Meat popsicle'
+        }
 
     @property
     def promptname(self):
@@ -147,6 +151,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 return
 
         # Server line 183: send version, peer id, shm fd
+        if self.SI.args.verbose:
+            PRINT('Sending initial info to new peer...')
         if not self.send_initial_info():
             self.SI.logmsg('Send initial info failed')
             return
@@ -155,6 +161,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # this new peer has not yet been added to the list; this loop is
         # NOT traversed for the first peer to connect.
         if not recycled:
+            if self.SI.args.verbose:
+                PRINT('NOT recycled: advertising other peers...')
             for other_peer in server_peer_list:
                 for peer_EN in self.EN_list:
                     ivshmem_send_one_msg(
@@ -164,6 +172,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         # Server line 197: advertise the other peers to the new one.
         # Remember "this" new peer proxy has not been added to the list yet.
+        if self.SI.args.verbose:
+            PRINT('Advertising other peers to the new peer...')
         for other_peer in server_peer_list:
             for other_peer_EN in other_peer.EN_list:
                 ivshmem_send_one_msg(
@@ -174,6 +184,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Non-standard voodoo extension to previous advertisment: advertise
         # this server to the new peer.  To QEMU it just looks like one more
         # grouping in the previous batch.  Exists only in non-silent mode.
+        if self.SI.args.verbose:
+            PRINT('Advertising this server to the new peer...')
         for server_EN in self.SI.EN_list:
             ivshmem_send_one_msg(
                 self.transport.socket,
@@ -184,6 +196,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # eventfds it needs for receiving messages.  This final batch
         # where the embedded self.id matches the initial_info id is the
         # sentinel that communications are finished.
+        if self.SI.args.verbose:
+            PRINT('Advertising the new peer to itself...')
         for peer_EN in self.EN_list:
             ivshmem_send_one_msg(
                 self.transport.socket,
