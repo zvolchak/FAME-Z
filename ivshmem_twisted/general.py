@@ -7,6 +7,8 @@
 
 import sys
 
+from collections import OrderedDict
+
 
 class ServerInvariant(object):
 
@@ -27,6 +29,7 @@ class ServerInvariant(object):
         self.nClients = args.nClients
         self.server_id = args.nClients + 1  # This is me!
         self.nEvents = args.nClients + 2
+        self.clients = OrderedDict()        # Order probably not necessary
         self.recycled = {}
         if args.smart:
             self.default_SID = 27
@@ -38,12 +41,6 @@ class ServerInvariant(object):
             self.server_SID0 = 0
             self.server_CID0 = 0
             self.isPFM = False
-
-        # It's really "clients" (QEMU and [famez|ivshmem]_client) but
-        # the original code is written around a "peer_list".  Keep that
-        # convention for easier comparisons.  An OrderedDict would be
-        # bigger help but would bend that code-following convention.
-        self.peer_list = []
 
     def trace(self, tracemsg):
         print(tracemsg, file=self.stdtrace)

@@ -127,10 +127,15 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.SI.logmsg('Max clients reached')
             self.send_initial_info(False)   # client complains but with grace
             return
-        server_peer_list = self.SI.peer_list
+
+        # The original original code was written around this variable name.
+        # Keep that convention for easier comparison.
+        server_peer_list = list(self.SI.clients.values())
 
         # Server line 175: create specified number of eventfds.  These are
         # shared with all other clients who use them to signal each other.
+        # Recycling keeps QEMU sessions from dying when other clients drop,
+        # a perk not found in original code.
         if recycled:
             self.EN_list = recycled.EN_list
         else:
@@ -186,7 +191,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 peer_EN.get_fd())   # Must be a good story here...
 
         # And now that it's finished:
-        server_peer_list.append(self)
+        self.SI.clients[self.id] = self
 
         if self.SI.args.smart:
             send_payload(self, 'Link CTL Peer-Attribute')
@@ -198,14 +203,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             txt = 'Clean'
         self.SI.logmsg('%s disconnect from peer id %d' % (txt, self.id))
-        if self in self.SI.peer_list:     # Only if everything was completed
-            self.SI.peer_list.remove(self)
+        if self.id in self.SI.clients:     # Only if everything was completed
+            del self.SI.clients[self.id]
         if self.SI.args.recycle:
             self.SI.recycled[self.id] = self
             return
 
         try:
-            for other_peer in self.SI.peer_list:
+            for other_peer in self.SI.clients.values():
                 ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
             for EN in self.EN_list:
@@ -222,20 +227,20 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.SID0 = 0   # When queried, the answer is in the context...
         self.CID0 = 0   # ...of the server/switch, NOT the proxy item.
-        if len(self.SI.peer_list) >= self.SI.nClients:
+        if len(self.SI.clients) >= self.SI.nClients:
             self.id = -1    # sentinel
             return  # Until a Link RFC is executed
 
         # dumb: monotonic from 1; smart: random (finds holes in the code).
         # Generate ID sets used by each.
-        active_ids = frozenset((p.id for p in self.SI.peer_list))
+        active_ids = frozenset(self.SI.clients.keys())
         unused_ids = frozenset((range(self.SI.nClients + 2))) - \
                      frozenset((IVSHMEM_UNUSED_ID, self.SI.server_id))
         available_ids = unused_ids - active_ids
         if self.SI.args.smart:
             self.id = random.choice(tuple(available_ids))
         else:
-            if not self.SI.peer_list:   # empty
+            if not self.SI.clients:   # empty
                 self.id = 1
             else:
                 self.id = (sorted(available_ids))[0]
@@ -288,14 +293,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         SI = vectorobj.cbdata
 
         # The requester can die between its request and this callback.
-        # peer_list[] is the proxy objects, one for each original connection.
-        for responder in SI.peer_list:
-            if responder.id == requester_id:
-                break
-        else:
+        try:
+            responder = SI.clients[requester_id]
+        except KeyError as e:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
-        responder.requester_id = requester_id
+        responder.requester_id = requester_id   # FIXME: is this necessary?
 
         # For QEMU/VM, this may be the first chance to retreive the filename.
         if not responder.nodename:
@@ -315,15 +318,31 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('d', 'dump'):
+            clients = self.SI.clients
+            lfmt = '%10s %2s@%-4s'
+            lspaces = ' ' * 18
+            rfmt = '%2s@%-4s %s'
             limit = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
-            PRINT('==========')
+            PRINT('%s  _________' % lspaces)
             for i in range(1, limit + 1):
                 left = i
                 right = left + limit
-                PRINT('|%2d    %2d|' % (left, right))
-            PRINT('==========')
-            for peer in self.SI.peer_list:
-                PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
+                try:
+                    c = clients[left]
+                    pa = c.peerattrs
+                    ldesc = lfmt % (c.nodename, pa['SID0'], pa['CID0'])
+                except KeyError as e:
+                    ldesc = lspaces
+                try:
+                    c = clients[right]
+                    pa = c.peerattrs
+                    rdesc = rfmt % (pa['SID0'], pa['CID0'], c.nodename)
+                except KeyError as e:
+                    rdesc = ''
+                PRINT('%s -|%1d    %2d|- %s' % (ldesc, left, right, rdesc))
+            PRINT('%s  =========' % lspaces)
+            # for id, peer in self.SI.clients.items():
+                # PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
                 # PPRINT(vars(peer), stream=sys.stdout)
             return True
 
