@@ -7,6 +7,7 @@
 # Rocky Craig <rocky.craig@hpe.com>
 
 import argparse
+import functools
 import grp
 import mmap
 import os
@@ -48,6 +49,9 @@ except ImportError as e:
 # 0 as global data storage, primarily the server command-line arguments.
 
 IVSHMEM_UNUSED_ID = 0
+
+PRINT = functools.partial(print, file=sys.stderr)
+PPRINT = functools.partial(pprint, stream=sys.stderr)
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -247,14 +251,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         try:
             # 1. Protocol version without fd.
             if not ok:  # Violate the version check and bomb the client.
-                print('Early termination', file=sys.stderr)
+                PRINT('Early termination')
                 ivshmem_send_one_msg(thesocket, -1)
                 self.transport.loseConnection()
                 self.id = -1
                 return
             if not ivshmem_send_one_msg(thesocket,
                 self.SERVER_IVSHMEM_PROTOCOL_VERSION):
-                print('This is screwed', file=sys.stderr)
+                PRINT('This is screwed')
                 return False
 
             # 2. The client's (new) id, without an fd.
@@ -265,7 +269,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             ivshmem_send_one_msg(thesocket, -1, FAMEZ_MailBox.fd)
             return True
         except Exception as e:
-            print(str(e), file=sys.stderr)
+            PRINT(str(e))
         return False
 
     # Match the signature of twisted_client object so they're both compliant
@@ -311,10 +315,16 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('d', 'dump'):
+            limit = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
+            PRINT('==========')
+            for i in range(1, limit + 1):
+                left = i
+                right = left + limit
+                PRINT('|%2d    %2d|' % (left, right))
+            PRINT('==========')
             for peer in self.SI.peer_list:
-                print('%10s: %s' % (peer.nodename, peer.peerattrs),
-                    file=sys.stderr)
-                # pprint(vars(peer), stream=sys.stdout)
+                PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
+                # PPRINT(vars(peer), stream=sys.stdout)
             return True
 
         if cmd in ('q', 'quit'):
@@ -363,7 +373,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         if args.foreground:
             TPlog.startLogging(sys.stdout, setStdout=False)
         else:
-            print('Logging to %s' % args.logfile, file=sys.stderr)
+            PRINT('Logging to %s' % args.logfile)
             TPlog.startLogging(
                 DailyLogFile.fromFullPath(args.logfile),
                 setStdout=True)     # "Pass-through" explicit print() for debug

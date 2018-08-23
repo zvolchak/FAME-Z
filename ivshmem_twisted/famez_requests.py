@@ -63,14 +63,17 @@ def CSV2dict(oneCSVstr):
 # "discussion initiator" usually from the REPL interpreters, or as a
 # response to a received command from the callbacks.
 
-_next_tag = 1
+_next_tag = 1               # Gen-Z tag field
 
 _tagged = OrderedDict()     # By tag, just store receiver now
 
+_tracker = 0                # FAME-Z addenda to watch client/server.py
+
+_TRACKER_TOKEN = '!FZT='
 
 def send_payload(peer, response,
-        sender_id=None, sender_EN=None, tag=None):
-    global _next_tag
+        sender_id=None, sender_EN=None, tag=None, reset_tracker=False):
+    global _next_tag, _tracker
 
     if sender_id is None:   # Not currently used, responder_id is pre-filled
         sender_id = peer.responder_id
@@ -81,6 +84,13 @@ def send_payload(peer, response,
         _tagged[str(_next_tag)] = '%d.%d!%s|%s' % (
             peer.SID0, peer.CID0, response, tag)
         _next_tag += 1
+
+    # Put the tracker on the end where it's easier to find
+    if reset_tracker:
+        _tracker = 0
+    _tracker += 1
+    response += '%s%d' % (_TRACKER_TOKEN, _tracker)
+
     FAMEZ_MailBox.fill(sender_id, response)
     sender_EN.incr()
     return True     # FIXME: is there anything to detect?
@@ -216,11 +226,19 @@ def _ping(responder, args):
 
 
 def handle_request(request, requester_name, responder):
+    global _tracker
+
+    elements = request.split(_TRACKER_TOKEN)
+    payload = elements.pop(0)
     trace = '\n%10s@%d->"%s"' % (
-        requester_name, responder.requester_id, request)
+        requester_name, responder.requester_id, payload)
+    FTZ = int(elements[0]) if elements else False
+    if FTZ:
+        trace += ' (%d)' % FTZ
+        _tracker = FTZ
     responder.SI.trace(trace)
 
-    elements = request.split()
+    elements = payload.split()
     try:
         handler, args = chelsea(elements, responder.SI.args.verbose)
         return handler(responder, args)

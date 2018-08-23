@@ -129,7 +129,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     break
         return indices
 
-    def place_and_go(self, dest, msg, src=None):
+    def place_and_go(self, dest, msg, src=None, reset_tracker=True):
+        '''Yes, reset_tracker defaults to True here.'''
         dest_indices = self.parse_target(dest)
         if src is None:
             src_indices = (self.id,)
@@ -148,7 +149,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     self.requester_id = D
                     self.responder_id = S
                     # Yes it repeat-loads a mailslot D times but who cares
-                    send_payload(self, msg)
+                    send_payload(self, msg, reset_tracker=reset_tracker)
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue
@@ -281,8 +282,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             msg = 'Ready player %s' % self.nodename
             if self.SI.args.verbose:
                 print(msg)
-            # FIXME: issue a Link CTL Peer-Attribute
-            # self.place_and_go('server', msg)
+            self.place_and_go('server', 'Link CTL Peer-Attribute',
+                reset_tracker=False)
 
         self.firstpass = False
 
