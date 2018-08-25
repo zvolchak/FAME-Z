@@ -9,6 +9,8 @@
 #include <linux/semaphore.h>
 #include <linux/wait.h>
 
+#include "genz_baseline.h"
+
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
 #define FAMEZ_NAME	"famez"
@@ -80,6 +82,7 @@ struct famez_config {
 	// responsibility of that module, managed by open() & release().
 	void *outgoing;
 
+	struct genz_core_structure *core;
 };
 
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
@@ -116,8 +119,8 @@ extern struct semaphore famez_active_sema;
 // famez_config.c - create/populate and destroy a config structure
 
 // Linked in to famez.ko, used by various other source modules
-struct famez_config *famez_create_config(struct pci_dev *);
-void famez_destroy_config(struct famez_config *);
+struct famez_config *famez_config_create(struct pci_dev *);
+void famez_config_destroy(struct famez_config *);
 struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
 						  unsigned);
 

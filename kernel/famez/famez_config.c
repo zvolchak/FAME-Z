@@ -91,7 +91,7 @@ err_unmap:
 
 //-------------------------------------------------------------------------
 
-void famez_destroy_config(struct famez_config *config)
+void famez_config_destroy(struct famez_config *config)
 {
 	struct pci_dev *pdev;
 
@@ -114,13 +114,14 @@ void famez_destroy_config(struct famez_config *config)
 		kfree(config->outgoing);
 	config->outgoing = NULL;
 
+	genz_core_structure_destroy(config->core);
 	kfree(config);
 }
 
 //-------------------------------------------------------------------------
 // Set up more globals and mailbox references to realize dynamic padding.
 
-struct famez_config *famez_create_config(struct pci_dev *pdev)
+struct famez_config *famez_config_create(struct pci_dev *pdev)
 {
 	struct famez_config *config = NULL;
 	int ret;
@@ -129,6 +130,13 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 		pr_err(FZSP "Cannot kzalloc(config)\n");
 		return ERR_PTR(-ENOMEM);
 	}
+
+	// Do it before interrupts.
+	if (IS_ERR_OR_NULL((config->core = genz_core_structure_create(GENZ_CORE_STRUCTURE_ALLOC_ALL)))) {
+		kfree(config);
+		return ERR_PTR(-ENOMEM);
+	}
+
 	// Lots of backpointers.
 	pci_set_drvdata(pdev, config);		// Just pass around pdev.
 	dev_set_drvdata(&pdev->dev, config);	// Never hurts to go deep.
@@ -139,8 +147,8 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 	spin_lock_init(&(config->incoming_slot_lock));
 
 	// Real work.
-	if ((ret = mapBARs(pdev)))
-		return ERR_PTR(ret);
+	if ((ret = mapBARs(pdev))) 
+		goto err_kfree;
 
 	// Now that there's access to globals and registers...Docs for 
 	// pci_iomap() say to use io[read|write]32.  Since this is QEMU,
@@ -178,6 +186,6 @@ struct famez_config *famez_create_config(struct pci_dev *pdev)
 	return config;
 
 err_kfree:
-	famez_destroy_config(config);
+	famez_config_destroy(config);
 	return ERR_PTR(ret);
 }

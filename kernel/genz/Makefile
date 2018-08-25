@@ -15,7 +15,7 @@ P:=$(shell make --no-print-directory -C ${KERNELDIR} kernelversion | cut -d. -f2
 
 obj-$(CONFIG_GENZ) += genz.o
 
-genz-objs := genz_bus.o
+genz-objs := genz_bus.o genz_stuff.o
 
 RUNNING_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH_CPU 2>/dev/null)
 

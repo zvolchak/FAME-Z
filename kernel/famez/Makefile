@@ -22,15 +22,19 @@ famez-objs := famez_pci_base.o famez_config.o famez_IVSHMSG.o \
 
 famez_bridge-objs := fz_bridge.o
 
+# $(HOME) is the only absolute, unless I want to play makefile-level games.
+# Insure there's at least a symlink to the git repo.
+ccflags-y:=-I$(HOME)/FAME-Z/kernel/genz
+
 RUNNING_ARCH := $(shell dpkg-architecture -qDEB_BUILD_ARCH_CPU 2>/dev/null)
 
 all:	modules
 
 modules:	versioncheck
 ifeq "$(RUNNING_ARCH)" "amd64"
-	make $(CFLAGS) -C $(KERNELDIR) M=$(PWD) ARCH=x86 modules
+	make V=0 $(CFLAGS) -C $(KERNELDIR) M=$(PWD) ARCH=x86 modules
 else
-	make $(CFLAGS) -C $(KERNELDIR) M=$(PWD) modules
+	make V=0 $(CFLAGS) -C $(KERNELDIR) M=$(PWD) modules
 endif
 
 modules_install:	modules

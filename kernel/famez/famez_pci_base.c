@@ -46,11 +46,9 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
 	struct famez_config *config = NULL, *cur = NULL;
 	int ret = -ENOTTY;
-	char imalive[80];
+	char *get_peer_attributes = "Link CTL Peer-Attribute";
 
 	PR_V1("probe(%s)\n", CARDLOC(pdev));
-
-	// Has this device been configured already?
 
 	if (pci_get_drvdata(pdev)) {	// Is this possible?
 		pr_err(FZSP "This device is already configured\n");
@@ -73,7 +71,7 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	}
 	pr_info(FZ "IVSHMEM @ %s has IVSHMSG features\n", CARDLOC(pdev));
 
-	if (IS_ERR_VALUE((config = famez_create_config(pdev)))) {
+	if (IS_ERR_VALUE((config = famez_config_create(pdev)))) {
 		ret = PTR_ERR(config);
 		config = NULL;
 		goto err_pci_disable_device;
@@ -102,17 +100,17 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 		goto err_MSIX_teardown;
 	}
 
-	// Tell the server I'm here.
-	snprintf(imalive, sizeof(imalive) - 1,
-		"Client %d is ready", config->my_id);
+	// Get peer-attributes from famez_server.  This message will also
+	// trigger the server to read my hostname from the mailbox.  The
+	// response is processed elsewhere.
 	ret = famez_create_outgoing(
 		FAMEZ_SID_CID_IS_PEER_ID,
 		config->globals->server_id,
-		imalive, strlen(imalive), config);
+		get_peer_attributes, strlen(get_peer_attributes), config);
 	if (ret > 0)
-		ret = ret == strlen(imalive) ? 0 : -EIO;
+		ret = ret == strlen(get_peer_attributes) ? 0 : -EIO;
 	if (!ret)
-		return ret;
+		return ret;	// else fall through
 
 err_MSIX_teardown:
 	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
@@ -123,7 +121,7 @@ err_pci_disable_device:
 	pci_disable_device(pdev);
 
 // err_destroy_config:
-	famez_destroy_config(config);
+	famez_config_destroy(config);
 	return ret;
 }
 
@@ -155,7 +153,7 @@ void famez_remove(struct pci_dev *pdev)
 	}
 	up(&famez_active_sema);
 
-	famez_destroy_config(config);
+	famez_config_destroy(config);
 }
 
 //-------------------------------------------------------------------------
