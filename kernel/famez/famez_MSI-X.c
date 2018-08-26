@@ -30,35 +30,24 @@ static irqreturn_t all_msix(int vector, void *data) {
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
-	incoming_id = msix_entries[slotnum].entry;
-
 	// All returns from here are IRQ_HANDLED
-
+	
+	incoming_id = msix_entries[slotnum].entry;
 	if (!(incoming_slot = calculate_mailslot(config, incoming_id))) {
 		spin_unlock(&(config->incoming_slot_lock));
 		pr_err(FZ "Could not match peer %u\n", incoming_id);
 		return IRQ_HANDLED;
 	}
 
-	// These are all fixed values now, but someday...
-	incoming_slot->peer_SID = FAMEZ_SID_DEFAULT;
-	incoming_slot->peer_CID = incoming_id * 100;
-
 	// This may do weird things with the spinlock held.
 	PR_V2("IRQ %d == sender %u -> \"%s\"\n",
 		vector, incoming_id, incoming_slot->buf);
 
-	// Easy loopback test as proof of life.  Handle it all right here
-	// right now, don't let driver layers even see it.
-	if (incoming_slot->buflen == 4 &&
-	    STREQ_N(incoming_slot->buf, "ping", 4)) {
-		// Needs to be okay with interrupt context.  Signal completion.
-		spin_unlock(&(config->incoming_slot_lock));
-		incoming_slot->buflen = 0;	// buf received
-		famez_create_outgoing(FAMEZ_SID_CID_IS_PEER_ID, incoming_id,
-			"pong", 4, config);
+	// Link layer management can be fully processed here, otherwise 
+	// deal with a "normal" message.
+	if (famez_link_request(incoming_slot, config) == IRQ_HANDLED)
 		return IRQ_HANDLED;
-	}
+
 	if (config->incoming_slot)	// print outside the spinlock
 		stomped = config->incoming_slot->peer_id;
 	config->incoming_slot = incoming_slot;
@@ -87,8 +76,8 @@ int famez_ISR_setup(struct pci_dev *pdev)
 	}
 	pr_info(FZSP "%2d MSI-X vectors available (%sabled)\n",
 		nvectors, pdev->msix_enabled ? "en" : "dis");
-	if (nvectors != 64) {	// Convention in FAME emulation_configure.sh
-		pr_err(FZ "Expected 64 MSI-X vectors, not %d\n", nvectors);
+	if (nvectors != 16) {	// Convention in FAME emulation_configure.sh
+		pr_err(FZ "Expected 16 MSI-X vectors, not %d\n", nvectors);
 		return -EINVAL;
 	}
 

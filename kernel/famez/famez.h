@@ -143,6 +143,9 @@ extern int famez_create_outgoing(int, int, char *, size_t, struct famez_config *
 // ARM64:	famez_MSI-X.c with assist from QEMU vfio modules
 // RISCV:	not written yet
 
+irqreturn_t famez_link_request(struct famez_mailslot __iomem *,
+			       struct famez_config *);
+
 // EXPORTed
 int famez_ISR_setup(struct pci_dev *);
 void famez_ISR_teardown(struct pci_dev *);
