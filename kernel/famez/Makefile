@@ -1,5 +1,7 @@
 # Makefile for famez
 
+VERBOSE=0
+
 CONFIG_FAMEZ ?= m
 
 KERNELBASE = /lib/modules/$(shell uname -r)
@@ -32,9 +34,9 @@ all:	modules
 
 modules:	versioncheck
 ifeq "$(RUNNING_ARCH)" "amd64"
-	make V=0 $(CFLAGS) -C $(KERNELDIR) M=$(PWD) ARCH=x86 modules
+	make V=$(VERBOSE) $(CFLAGS) -C $(KERNELDIR) M=$(PWD) ARCH=x86 modules
 else
-	make V=0 $(CFLAGS) -C $(KERNELDIR) M=$(PWD) modules
+	make V=$(VERBOSE) $(CFLAGS) -C $(KERNELDIR) M=$(PWD) modules
 endif
 
 modules_install:	modules

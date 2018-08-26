@@ -41,7 +41,7 @@ struct genz_interface_structure {
 		 PeerState;
 };
 
-struct genz_core_structure *genz_core_structure_create(uint64_t flags);
-void genz_core_structure_destroy(struct genz_core_structure *);
+extern struct genz_core_structure *genz_core_structure_create(uint64_t flags);
+extern void genz_core_structure_destroy(struct genz_core_structure *);
 
 #endif

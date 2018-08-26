@@ -151,9 +151,10 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 		return PTR_ERR(sender);
 	PR_V2(FZSP "wait finished, %llu bytes to read\n", sender->buflen);
 
-	// Two parts to the response: first is the sender "SID.CID:"
+	// Two parts to the response: first is the sender "CID,SID:".
+	// Omit  the [] brackets commonly seen in the spec, ala [CID,SID].
 	n = snprintf(sidcidstr, sizeof(sidcidstr) - 1,
-		"%llu.%llu:", sender->peer_SID, sender->peer_CID);
+		"%llu,%llu:", sender->peer_CID, sender->peer_SID);
 
 	if (n >= sizeof(sidcidstr) || buflen < sender->buflen + n - 1) {
 		ret = -E2BIG;
@@ -217,16 +218,17 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	// SID and CID from varying input, including "expert use" of a peer id.
 
 	SID = FAMEZ_SID_CID_IS_PEER_ID;
-	if (STREQ(buffers->wbuf, "server") || STREQ(buffers->wbuf, "switch"))
+	if (STREQ(buffers->wbuf, "server") || STREQ(buffers->wbuf, "switch") ||
+	    STREQ(buffers->wbuf, "link") || STREQ(buffers->wbuf, "interface"))
 		CID = config->globals->server_id;
 	else {
-		char *dot = strchr(buffers->wbuf, '.');	// Want SID.CID
+		char *comma = strchr(buffers->wbuf, ','); // Want CID,SID
 
-		if (dot) {
-			*dot = '\0';
+		if (comma) {
+			*comma = '\0';
 			if ((ret = kstrtoint(buffers->wbuf, 0, &SID)))
 				goto unlock_return;
-			if ((ret = kstrtoint(dot + 1, 0, &CID)))
+			if ((ret = kstrtoint(comma + 1, 0, &CID)))
 				goto unlock_return;
 		} else {	// Direct use of an IVSHMSG peer id
 			if ((ret = kstrtoint(buffers->wbuf, 0, &CID)))
@@ -241,7 +243,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 
 	restarts = 0;
 restart:
-	ret = famez_create_outgoing(SID, CID, bufbody, buflen, config);
+	ret = famez_create_outgoing(CID, SID, bufbody, buflen, config);
 	if (ret == -ERESTARTSYS) {	// spurious timeout
 		if (restarts++ < 2)
 			goto restart;

@@ -104,8 +104,8 @@ int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 	// trigger the server to read my hostname from the mailbox.  The
 	// response is processed elsewhere.
 	ret = famez_create_outgoing(
-		FAMEZ_SID_CID_IS_PEER_ID,
 		config->globals->server_id,
+		FAMEZ_SID_CID_IS_PEER_ID,
 		get_peer_attributes, strlen(get_peer_attributes), config);
 	if (ret > 0)
 		ret = ret == strlen(get_peer_attributes) ? 0 : -EIO;

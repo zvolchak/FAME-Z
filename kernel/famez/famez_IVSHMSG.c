@@ -12,13 +12,14 @@
 // duration. I tried a 3x timeout whose success varied from 2 minutes to
 // three hours before it popped. 4x was better, lasted until I did a
 // compile, so...use a slightly adaptive timeout to reach the LOOP_MAX.
+// CID,SID is the order used in the spec.
 
 #define PRIOR_RESP_WAIT		(5 * HZ)	// 5x
 #define DELAY_MS_LOOP_MAX	10		// or about 100 writes/second
 
 static unsigned long longest = PRIOR_RESP_WAIT/2;
 
-int famez_create_outgoing(int SID, int CID, char *buf, size_t buflen,
+int famez_create_outgoing(int CID, int SID, char *buf, size_t buflen,
 			  struct famez_config *config)
 {
 	uint32_t peer_id;
