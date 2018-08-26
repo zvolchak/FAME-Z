@@ -4,6 +4,7 @@
 # on messages retrieved by parsing and generating a response.
 
 import os
+import functools
 import sys
 
 from collections import OrderedDict
@@ -13,6 +14,9 @@ try:
     from famez_mailbox import FAMEZ_MailBox
 except ImportError as e:
     from .famez_mailbox import FAMEZ_MailBox
+
+PRINT = functools.partial(print, file=sys.stderr)
+PPRINT = functools.partial(pprint, stream=sys.stderr)
 
 ###########################################################################
 # Create a subroutine name out of the elements passed in.  Return

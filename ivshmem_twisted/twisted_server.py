@@ -98,9 +98,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.create_new_peer_id()
         self.peerattrs = {
-            'SID0': '0',
             'CID0': '0',
-            'C-Class': 'Meat popsicle'
+            'SID0': '0',
+            'C-Class': 'Driverless QEMU'
         }
 
     @property
