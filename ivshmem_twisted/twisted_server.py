@@ -332,32 +332,43 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('d', 'dump'):
+            if self.SI.args.verbose:    # Blah blah blah
+                PRINT('')
+                for id, peer in self.SI.clients.items():
+                    PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
+                    if self.SI.args.verbose > 1:
+                        PPRINT(vars(peer), stream=sys.stdout)
+
+            # ASCII art switch: Print full left side, right justifed, into 30
             clients = self.SI.clients
-            lfmt = '%10s %2s@%-4s'
-            lspaces = ' ' * 18
-            rfmt = '%2s@%-4s %s'
+            lfmt = '%s %s [%s,%s]'
+            rfmt = '[%s,%s] %s %s'
             limit = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
+            N = 30
+            lspaces = ' ' * N
             PRINT('%s  _________' % lspaces)
             for i in range(1, limit + 1):
                 left = i
                 right = left + limit
                 try:
+                    ldesc = lspaces
                     c = clients[left]
                     pa = c.peerattrs
-                    ldesc = lfmt % (c.nodename, pa['SID0'], pa['CID0'])
+                    ldesc += lfmt % (
+                        pa['C-Class'], c.nodename, pa['CID0'], pa['SID0'])
                 except KeyError as e:
-                    ldesc = lspaces
+                    pass
                 try:
                     c = clients[right]
                     pa = c.peerattrs
-                    rdesc = rfmt % (pa['SID0'], pa['CID0'], c.nodename)
+                    rdesc = rfmt % (
+                        pa['CID0'], pa['SID0'], pa['C-Class'], c.nodename)
                 except KeyError as e:
                     rdesc = ''
-                PRINT('%s -|%1d    %2d|- %s' % (ldesc, left, right, rdesc))
+                PRINT('%-s -|%1d    %2d|- %s' % (
+                    ldesc[-N:], left, right, rdesc))
             PRINT('%s  =========' % lspaces)
-            # for id, peer in self.SI.clients.items():
-                # PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
-                # PPRINT(vars(peer), stream=sys.stdout)
+
             return True
 
         if cmd in ('q', 'quit'):
