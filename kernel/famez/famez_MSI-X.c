@@ -70,24 +70,24 @@ int famez_ISR_setup(struct pci_dev *pdev)
 	int ret, i, nvectors = 0, last_irq_index;
 	struct msix_entry *msix_entries;	// pci.h, will be an array
 
+	// How many vectors are provided versus neeed?  Slot 0 doesn't need
+	// one but all others do.
 	if ((nvectors = pci_msix_vec_count(pdev)) < 0) {
 		pr_err(FZ "Error retrieving MSI-X vector count\n");
 		return nvectors;
 	}
 	pr_info(FZSP "%2d MSI-X vectors available (%sabled)\n",
 		nvectors, pdev->msix_enabled ? "en" : "dis");
-	if (nvectors != 16) {	// Convention in FAME emulation_configure.sh
-		pr_err(FZ "Expected 16 MSI-X vectors, not %d\n", nvectors);
+	if (nvectors < 16) {	// Convention in FAME emulation_configure.sh
+		pr_err(FZ "QEMU must provide >= 16 MSI-X vectors; only %d\n", nvectors);
 		return -EINVAL;
 	}
-
-	// Remember, don't need a vector for slot 0
 	if (config->globals->nEvents > nvectors) {
 		pr_err(FZ "need %llu MSI-X vectors, only %d available\n",
 			config->globals->nEvents, nvectors);
 		return -ENOSPC;
 	}
-	nvectors = config->globals->nEvents;		// legibility
+	nvectors = config->globals->nEvents;		// legibility below
 
 	ret = -ENOMEM;
 	if (!(msix_entries = kzalloc(
@@ -99,7 +99,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 
 	// .vector was zeroed by kzalloc
 	for (i = 0; i < nvectors; i++)
-		msix_entries[i].entry  = i;
+		msix_entries[i].entry = i;
 
 	// There used to be a direct call for "exact match".  Re-create it.
 	if ((ret = pci_alloc_irq_vectors(
@@ -165,7 +165,7 @@ err_kfree_msix_entries:
 
 //-------------------------------------------------------------------------
 // There is no disable control on this "device", hope one doesn't fire...
-// Can be called from setup() above.
+// Can be called from setup() above so account for partial completion.
 
 void famez_ISR_teardown(struct pci_dev *pdev)
 {

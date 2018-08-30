@@ -6,13 +6,17 @@
 // See famez_requests.py:_Link_CTL(), etc for required formats.
 // I'm skipping the tracker FZT for now.
 
-#define LINK_CTL_PEER_ATTRIBUTE "Link CTL Peer-Attribute"
+#define LINK_CTL_PEER_ATTRIBUTE \
+	"Link CTL Peer-Attribute"
 
-#define LINK_CTL_ACK "Link CTL ACK C-Class=Bridge,SID0=%d,CID0=%d"
+#define LINK_CTL_ACK \
+	"Link CTL ACK C-Class=%s,SID0=%d,CID0=%d"
 
-#define CTL_WRITE_0_CID_SID_FMT "CTL-Write Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d,Tag=%d"
+#define CTL_WRITE_0_SID_CID \
+	"CTL-Write Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d,Tag=%d"
 
-#define STANDALONE_ACKNOWLEDGMENT "Standalone Acknowledgment Tag=%d,Reason=OK"
+#define STANDALONE_ACKNOWLEDGMENT \
+	"Standalone Acknowledgment Tag=%d,Reason=OK"
 
 //-------------------------------------------------------------------------
 // This is called in interrupt context with the incoming_slot->lock held.
@@ -45,7 +49,9 @@ irqreturn_t famez_link_request(struct famez_mailslot __iomem *incoming_slot,
 		incoming_slot->buflen = 0;	// buf received
 		spin_unlock(&(config->incoming_slot_lock));
 		sprintf(outbuf, LINK_CTL_ACK,
-			config->core->SID0, config->core->CID0);
+			config->core->Base_C_Class_str,
+			config->core->SID0,
+			config->core->CID0);
 		famez_create_outgoing(
 			incoming_slot->peer_id,
 			FAMEZ_SID_CID_IS_PEER_ID,
@@ -54,8 +60,7 @@ irqreturn_t famez_link_request(struct famez_mailslot __iomem *incoming_slot,
 		return IRQ_HANDLED;
 	}
 
-	if (sscanf(incoming_slot->buf,
-		   CTL_WRITE_0_CID_SID_FMT,
+	if (sscanf(incoming_slot->buf, CTL_WRITE_0_SID_CID,
 		   &PFMSID, &PFMCID, &SID, &CID, &tag) == 5) {
 		incoming_slot->buflen = 0;	// buf received
 		spin_unlock(&(config->incoming_slot_lock));

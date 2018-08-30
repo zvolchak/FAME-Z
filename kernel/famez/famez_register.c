@@ -27,7 +27,8 @@
 //-------------------------------------------------------------------------
 // In the monolithic driver this was famez_bridge_setup()
 
-int famez_misc_register(char *basename, const struct file_operations *fops)
+int famez_register(const char *Base_C_Class_str, const char *basename,
+		   const struct file_operations *fops)
 {
 	struct famez_config *config;
 	struct pci_dev *pdev;
@@ -64,6 +65,8 @@ int famez_misc_register(char *basename, const struct file_operations *fops)
 		lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
 		lookup->miscdev.mode = 0666;
 	
+		strncpy(config->core->Base_C_Class_str, Base_C_Class_str,
+			sizeof(config->core->Base_C_Class_str));
 		lookup->config = config;	// Don't point that thing at me
 		config->teardown_lookup = lookup;
 		if ((ret = misc_register(&lookup->miscdev))) {
@@ -82,13 +85,13 @@ up_and_out:
 	up(&famez_active_sema);
 	return ret;
 }
-EXPORT_SYMBOL(famez_misc_register);
+EXPORT_SYMBOL(famez_register);
 
 //-------------------------------------------------------------------------
 // In the monolithic driver this was famez_bridge_teardown().  Return the
 // count of bindings broken or -ERRNO.
 
-int famez_misc_deregister(const struct file_operations *fops)
+int famez_deregister(const struct file_operations *fops)
 {
 	struct famez_config *config;
 	struct miscdev2config *lookup;
@@ -111,6 +114,7 @@ int famez_misc_deregister(const struct file_operations *fops)
 				kfree(lookup->miscdev.name);
 				kfree(lookup);
 				config->teardown_lookup = NULL;
+				strcpy(config->core->Base_C_Class_str, "FAME-Z_Adapter");
 				ret++;
 				pr_cont("success\n");
 		} else
@@ -120,5 +124,5 @@ int famez_misc_deregister(const struct file_operations *fops)
 	return ret;
 
 }
-EXPORT_SYMBOL(famez_misc_deregister);
+EXPORT_SYMBOL(famez_deregister);
 

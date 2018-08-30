@@ -136,6 +136,7 @@ struct famez_config *famez_config_create(struct pci_dev *pdev)
 		kfree(config);
 		return ERR_PTR(-ENOMEM);
 	}
+	strcpy(config->core->Base_C_Class_str, "FAME-Z Adapter");
 
 	// Lots of backpointers.
 	pci_set_drvdata(pdev, config);		// Just pass around pdev.

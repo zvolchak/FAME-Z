@@ -298,7 +298,7 @@ int __init fzbridge_init(void)
 	pr_info(FZSP "verbose = %d\n", verbose);
 
 	_nbindings = 0;
-	if ((ret = famez_misc_register("bridge", &bridge_fops)) < 0)
+	if ((ret = famez_register("Bridge", "br", &bridge_fops)) < 0)
 		return ret;
 	_nbindings = ret;
 	pr_info(FZBR "%d bindings made\n", _nbindings);
@@ -312,7 +312,7 @@ module_init(fzbridge_init);
 
 void fzbridge_exit(void)
 {
-	int ret = famez_misc_deregister(&bridge_fops);
+	int ret = famez_deregister(&bridge_fops);
 	if (ret >= 0)
 		pr_info(FZBR "%d/%d bindings released\n", ret, _nbindings);
 	else

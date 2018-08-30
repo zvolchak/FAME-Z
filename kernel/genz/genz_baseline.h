@@ -18,6 +18,7 @@
 #define GENZ_CORE_STRUCTURE_ALLOC_ALL			0xffff
 
 struct genz_core_structure {
+	char Base_C_Class_str[32];
 	int32_t CID0, SID0,	// 0 if unassigned, -1 if unused
 	    PMCID,		// If I am the fabric manager
 	    PFMCID, PFMSID,	// If someone else is the FM
