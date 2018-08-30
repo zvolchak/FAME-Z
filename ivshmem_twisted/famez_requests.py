@@ -37,14 +37,14 @@ def chelsea(elements, verbose=0):
     for i, e in enumerate(elements):
         e = e.replace('-', '_')         # Such as 'Link CTL Peer-Attribute'
         entry += '_%s' % e
-        if verbose:
+        if verbose > 1:
             print('Looking for %s()...' % entry, end='', file=sys.stderr)
         if entry in G:
             args = elements[i + 1:]
-            if verbose:
+            if verbose > 1:
                 print('found it->%s' % str(args), file=sys.stderr)
             return G[entry], args
-        if verbose:
+        if verbose > 1:
             print('NOPE', file=sys.stderr)
     return _unprocessed, elements
 
