@@ -1,194 +1,192 @@
-// Initial discovery and setup of IVSHMEM/IVSHMSG devices
-// HP(E) lineage: res2hot from MMS PoC "mimosa" mms_base.c, flavored by zhpe.
+/*
+ * Copyright (C) 2018 Hewlett Packard Enterprise Development LP.
+ * All rights reserved.
+ *
+ * This source code file is part of the FAME-Z project.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 of the License, or
+ * (at your option) any later version.
 
-#include <linux/module.h>
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include <linux/utsname.h>
 
 #include "famez.h"
 
-MODULE_LICENSE("GPL");
-MODULE_VERSION(FAMEZ_VERSION);
-MODULE_AUTHOR("Rocky Craig <rocky.craig@hpe.com>");
-MODULE_DESCRIPTION("Base subsystem for FAME-Z project.");
+//-------------------------------------------------------------------------
+// Slot 0 is the globals data, so disallow its use.  Server id currently
+// follows last client but in general could be discontiguous.
 
-// Find the one macro that does the right thing.  Notice there is no "device"
-// for QEMU in the PCI ID database, just the sub* things.
+struct famez_mailslot __iomem *calculate_mailslot(
+	struct famez_adapter *adapter,
+	unsigned slotnum)
+{
+	struct famez_mailslot __iomem *slot;
 
-static struct pci_device_id famez_PCI_ID_table[] = {
-    { PCI_DEVICE_SUB(	// vend, dev, subvend, subdev
-    	PCI_VENDOR_ID_REDHAT_QUMRANET,
-    	PCI_ANY_ID,
-    	PCI_SUBVENDOR_ID_REDHAT_QUMRANET,
-	PCI_SUBDEVICE_ID_QEMU)
-    },
-    { 0 },
-};
-
-MODULE_DEVICE_TABLE(pci, famez_PCI_ID_table);	// depmod, hotplug, modinfo
-
-// module parameters are global
-
-int verbose = 0;
-module_param(verbose, uint, 0644);
-MODULE_PARM_DESC(verbose, "increase amount of printk info (0)");
-
-// Multiple bridge "devices" accepted by famez_init_one().  PCI core might
-// do everything I need but I can't shake the feeling I want this for
-// something else...right now it just tracks insmod/rmmod.
-
-LIST_HEAD(famez_active_list);
-DEFINE_SEMAPHORE(famez_active_sema);
+	if ((slotnum < 1 || slotnum > adapter->globals->nClients) &&
+	     slotnum != adapter->globals->server_id) {
+		pr_err(FZ "mailslot %u is out of range\n", slotnum);
+		return NULL;
+	}
+	slot = (void *)(
+		(uint64_t)adapter->globals + slotnum * adapter->globals->slotsize);
+	return slot;
+}
 
 //-------------------------------------------------------------------------
-// Called at insmod time and also at hotplug events (shouldn't be any).
-// Only take IVSHMEM (filtered by PCI core) with a BAR 1 and 64 vectors.
 
-static char get_peer_attributes[] = "Link CTL Peer-Attribute";
-
-static int famez_init_one(
-	struct pci_dev *pdev, const struct pci_device_id *pdev_id)
+static void unmapBARs(struct pci_dev *pdev)
 {
-	struct famez_config *config = NULL, *cur = NULL;
-	int ret = -ENOTTY;
+	struct famez_adapter *adapter = pci_get_drvdata(pdev);
 
-	PR_V1("%s(%s)\n", __FUNCTION__, CARDLOC(pdev));
+	if (adapter->regs) pci_iounmap(pdev, adapter->regs);	// else whine
+	adapter->regs = NULL;
+	if (adapter->globals) pci_iounmap(pdev, adapter->globals);
+	adapter->globals = NULL;
+	pci_release_regions(pdev);
+}
 
-	if (pci_get_drvdata(pdev)) {	// Is this possible?
-		pr_err(FZSP "This device is already configured\n");
-		return -EALREADY;
-	}
+//-------------------------------------------------------------------------
+// Map the regions and overlay data structures.  Since it's QEMU, ioremap
+// (uncached) for BAR0/1 and ioremap_cached(BAR2) would be fine.  However,
+// the proscribed calls do the start/end/length math so use them.
 
-	// Enable it to discriminate values and create a configuration for
-	// this instance.
+static int mapBARs(struct pci_dev *pdev)
+{
+	struct famez_adapter *adapter = pci_get_drvdata(pdev);
+	int ret;
 
-	if ((ret = pci_enable_device(pdev)) < 0) {
-		pr_err(FZSP "pci_enable_device failed: %d\n", ret);
+	// "cat /proc/iomem" seems to be very finicky about spaces and
+	// punctuation even if there are other things in there with it.
+	if ((ret = pci_request_regions(pdev, FAMEZ_NAME)) < 0) {
+		pr_err(FZSP "pci_request_regions failed: %d\n", ret);
 		return ret;
 	}
-	if (pdev->revision != 1 ||
-	    !pdev->msix_cap ||
-	    !pci_resource_start(pdev, 1)) {
-		PR_V1("IVSHMEM @ %s is missing IVSHMSG features\n", CARDLOC(pdev));
-		ret = -ENODEV;
-		goto err_pci_disable_device;
-	}
-	pr_info(FZ "IVSHMEM @ %s has IVSHMSG features\n", CARDLOC(pdev));
 
-	if (IS_ERR_VALUE((config = famez_config_create(pdev)))) {
-		ret = PTR_ERR(config);
-		config = NULL;
-		goto err_pci_disable_device;
-	}
+	PR_V1(FZSP "Mapping BAR0 regs (%llu bytes)\n",
+		pci_resource_len(pdev, 0));
+	if (!(adapter->regs = pci_iomap(pdev, 0, 0)))
+		goto err_unmap;
 
-	if ((ret = famez_ISR_setup(pdev)))
-		goto err_pci_disable_device;
+	PR_V1(FZSP "Mapping BAR2 globals/mailslots (%llu bytes)\n",
+		pci_resource_len(pdev, 2));
+	if (!(adapter->globals = pci_iomap(pdev, 2, 0)))
+		goto err_unmap;
+	
+	return 0;
 
-	// It's a keeper...unless it's already there.  Unlikely, but it's
-	// not paranoia when in the kernel.
-	ret = down_interruptible(&famez_active_sema);	// FIXME: deal with ret
-	ret = 0;
-	list_for_each_entry(cur, &famez_active_list, lister) {
-		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
-			ret = -EALREADY;
-			break;
-		}
-	}
-	if (!ret) {
-		list_add_tail(&config->lister, &famez_active_list);
-		PR_V1("config added to active list\n")
-	}
-	up(&famez_active_sema);
-	if (ret) {
-		pr_err(FZSP "This device is already in active list\n");
-		goto err_MSIX_teardown;
-	}
-
-	// Get peer-attributes from famez_server.  This message will also
-	// trigger the server to read my hostname from the mailbox.  The
-	// response is processed elsewhere.
-	ret = famez_create_outgoing(
-		config->globals->server_id,
-		FAMEZ_SID_CID_IS_PEER_ID,
-		get_peer_attributes, strlen(get_peer_attributes), config);
-	if (ret > 0)
-		ret = ret == strlen(get_peer_attributes) ? 0 : -EIO;
-	if (!ret)
-		return ret;	// else fall through
-
-err_MSIX_teardown:
-	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
-	famez_ISR_teardown(pdev);
-
-err_pci_disable_device:
-	PR_V1("disabling device %s\n", CARDLOC(pdev));
-	pci_disable_device(pdev);
-
-// err_destroy_config:
-	famez_config_destroy(config);
-	return ret;
+err_unmap:
+	unmapBARs(pdev);
+	return -ENOMEM;
 }
 
 //-------------------------------------------------------------------------
 
-static void famez_remove_one(struct pci_dev *pdev)
+void famez_adapter_destroy(struct famez_adapter *adapter)
 {
-	struct famez_config *cur, *next, *config = pci_get_drvdata(pdev);
-	int ret;
+	struct pci_dev *pdev;
 
-	pr_info(FZ "%s(%s): ", __FUNCTION__, CARDLOC(pdev));
-	if (!config) {
-		pr_cont("still not my circus\n");
+	if (!adapter) return;	// probably not worth whining
+	if (!(pdev = adapter->pdev)) {
+		pr_err(FZ "destroy_adapter() has NULL pdev\n");
 		return;
 	}
-	pr_cont("disabling/removing/freeing resources\n");
 
-	famez_ISR_teardown(pdev);
+	unmapBARs(pdev);	// May have be done, doesn't hurt
 
-	pci_disable_device(pdev);
+	dev_set_drvdata(&pdev->dev, NULL);
+	pci_set_drvdata(pdev, NULL);
+	adapter->pdev = NULL;
 
-	if (atomic_read(&config->nr_users))
-		pr_err(FZSP "# users is non-zero, very interesting\n");
-	
-	ret = down_interruptible(&famez_active_sema);	// FIXME: deal with ret
-	list_for_each_entry_safe(cur, next, &famez_active_list, lister) {
-		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
-			list_del(&(cur->lister));
-	}
-	up(&famez_active_sema);
+	if (adapter->IRQ_private) kfree(adapter->IRQ_private);
+	adapter->IRQ_private = NULL;
+	// Probably other memory leakage if this ever executes.
+	if (adapter->outgoing)
+		kfree(adapter->outgoing);
+	adapter->outgoing = NULL;
 
-	famez_config_destroy(config);
+	genz_core_structure_destroy(adapter->core);
+	kfree(adapter);
 }
 
 //-------------------------------------------------------------------------
+// Set up more globals and mailbox references to realize dynamic padding.
 
-static struct pci_driver famez_driver = {
-	.name =		FAMEZ_NAME,
-	.id_table =	famez_PCI_ID_table,
-	.probe =	famez_init_one,
-	.remove =	famez_remove_one
-};
-
-int __init famez_init(void)
+struct famez_adapter *famez_adapter_create(struct pci_dev *pdev)
 {
+	struct famez_adapter *adapter = NULL;
 	int ret;
 
-	pr_info("-------------------------------------------------------");
-	pr_info(FZ FAMEZ_VERSION "; parms:\n");
-	pr_info(FZSP "verbose = %d\n", verbose);
+	if (!(adapter = kzalloc(sizeof(*adapter), GFP_KERNEL))) {
+		pr_err(FZSP "Cannot kzalloc(adapter)\n");
+		return ERR_PTR(-ENOMEM);
+	}
 
-	if ((ret = pci_register_driver(&famez_driver)))
-		pr_err(FZ "pci_register_driver() = %d\n", ret);
+	// Do it before interrupts.
+	if (IS_ERR_OR_NULL((adapter->core = genz_core_structure_create(GENZ_CORE_STRUCTURE_ALLOC_ALL)))) {
+		kfree(adapter);
+		return ERR_PTR(-ENOMEM);
+	}
+	strcpy(adapter->core->Base_C_Class_str, "FAME-Z Adapter");
 
-	return ret;
+	// Lots of backpointers.
+	pci_set_drvdata(pdev, adapter);		// Just pass around pdev.
+	dev_set_drvdata(&pdev->dev, adapter);	// Never hurts to go deep.
+	adapter->pdev = pdev;			// Reverse pointers never hurt.
+
+	// Simple fields.
+	init_waitqueue_head(&(adapter->incoming_slot_wqh));
+	spin_lock_init(&(adapter->incoming_slot_lock));
+
+	// Real work.
+	if ((ret = mapBARs(pdev))) 
+		goto err_kfree;
+
+	// Now that there's access to globals and registers...Docs for 
+	// pci_iomap() say to use io[read|write]32.  Since this is QEMU,
+	// direct memory references should work.  The offset passed in
+	// globals is handcrafted in Python, make sure it's all kosher.
+	// If these fail, go back and add tests to Python, not here.
+	ret = -EINVAL;
+	if (offsetof(struct famez_mailslot, buf) != adapter->globals->buf_offset) {
+		pr_err(FZ "MSG_OFFSET global != C offset in here\n");
+		goto err_kfree;
+	}
+	if (adapter->globals->slotsize <= adapter->globals->buf_offset) {
+		pr_err(FZ "MSG_OFFSET global is > SLOTSIZE global\n");
+		goto err_kfree;
+	}
+	adapter->max_buflen = adapter->globals->slotsize -
+			     adapter->globals->buf_offset;
+	adapter->my_id = adapter->regs->IVPosition;
+
+	// All the needed parameters are set to finish this off.
+
+	// My slot and message pointers.
+	if (!(adapter->my_slot = calculate_mailslot(adapter, adapter->my_id)))
+		goto err_kfree;
+	memset(adapter->my_slot, 0, adapter->globals->slotsize);
+	snprintf(adapter->my_slot->nodename,
+		 sizeof(adapter->my_slot->nodename) - 1,
+		 "%s.%02x", utsname()->nodename, adapter->pdev->devfn >> 3);
+
+	PR_V1(FZSP "mailslot size=%llu, buf offset=%llu, server=%llu\n",
+		adapter->globals->slotsize,
+		adapter->globals->buf_offset,
+		adapter->globals->server_id);
+
+	return adapter;
+
+err_kfree:
+	famez_adapter_destroy(adapter);
+	return ERR_PTR(ret);
 }
-
-module_init(famez_init);
-
-//-------------------------------------------------------------------------
-// Called from rmmod.
-
-void famez_exit(void)
-{
-	pci_unregister_driver(&famez_driver);
-}
-
-module_exit(famez_exit);

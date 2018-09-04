@@ -51,37 +51,37 @@ DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
 static int bridge_open(struct inode *inode, struct file *file)
 {
-	struct famez_config *config = extract_config(file);
+	struct famez_adapter *adapter = extract_adapter(file);
 	int n, ret;
 
 	// FIXME: got to come up with more 'local module' support for this.
 	// Just keep it single user for now.
 	ret = 0;
-	if ((n = atomic_add_return(1, &config->nr_users) == 1)) {
+	if ((n = atomic_add_return(1, &adapter->nr_users) == 1)) {
 		struct bridge_buffers *buffers;
 
 		if (!(buffers = kzalloc(sizeof(*buffers), GFP_KERNEL))) {
 			ret = -ENOMEM;
 			goto alldone;
 		}
-		if (!(buffers->wbuf = kzalloc(config->max_buflen, GFP_KERNEL))) {
+		if (!(buffers->wbuf = kzalloc(adapter->max_buflen, GFP_KERNEL))) {
 			kfree(buffers);
 			ret = -ENOMEM;
 			goto alldone;
 		}
 		mutex_init(&(buffers->wbuf_mutex));
-		config->outgoing = buffers;
+		adapter->outgoing = buffers;
 	} else {
 		pr_warn(FZBRSP "Sorry, just exclusive open() for now\n");
 		ret = -EBUSY;
 		goto alldone;
 	}
 
-	PR_V1("open: %d users\n", atomic_read(&config->nr_users));
+	PR_V1("open: %d users\n", atomic_read(&adapter->nr_users));
 
 alldone:
 	if (ret) 
-		atomic_dec(&config->nr_users);
+		atomic_dec(&adapter->nr_users);
 	return ret;
 }
 
@@ -90,15 +90,15 @@ alldone:
 
 static int bridge_flush(struct file *file, fl_owner_t id)
 {
-	struct famez_config *config = extract_config(file);
+	struct famez_adapter *adapter = extract_adapter(file);
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
-	nr_users = atomic_read(&config->nr_users);
+	nr_users = atomic_read(&adapter->nr_users);
 	f_count = atomic_long_read(&file->f_count);
 	spin_unlock(&file->f_lock);
 	if (f_count == 1) {
-		atomic_dec(&config->nr_users);
+		atomic_dec(&adapter->nr_users);
 		nr_users--;
 	}
 
@@ -113,19 +113,19 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 
 static int bridge_release(struct inode *inode, struct file *file)
 {
-	struct famez_config *config = extract_config(file);
-	struct bridge_buffers *buffers = config->outgoing;
+	struct famez_adapter *adapter = extract_adapter(file);
+	struct bridge_buffers *buffers = adapter->outgoing;
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
-	nr_users = atomic_read(&config->nr_users);
+	nr_users = atomic_read(&adapter->nr_users);
 	f_count = atomic_long_read(&file->f_count);
 	spin_unlock(&file->f_lock);
 	PR_V1("release: %d users, file count = %d\n", nr_users, f_count);
 	BUG_ON(nr_users);
 	kfree(buffers->wbuf);
 	kfree(buffers);
-	config->outgoing = NULL;
+	adapter->outgoing = NULL;
 	return 0;
 }
 
@@ -138,7 +138,7 @@ static int bridge_release(struct inode *inode, struct file *file)
 static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
 {
-	struct famez_config *config = extract_config(file);
+	struct famez_adapter *adapter = extract_adapter(file);
 	struct famez_mailslot *sender;
 	int ret, n;
 	// SID is 28 bits or 10 decimal digits; CID is 16 bits or 5 digits
@@ -146,7 +146,7 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 	char sidcidstr[32];
 
 	// A successful return needs cleanup via famez_release_incoming().
-	sender = famez_await_incoming(config, file->f_flags & O_NONBLOCK);
+	sender = famez_await_incoming(adapter, file->f_flags & O_NONBLOCK);
 	if (IS_ERR(sender))
 		return PTR_ERR(sender);
 	PR_V2(FZSP "wait finished, %llu bytes to read\n", sender->buflen);
@@ -174,7 +174,7 @@ static ssize_t bridge_read(struct file *file, char __user *buf,
 		*ppos = 0;
 
 read_complete:	// Whether I used it or not, let everything go
-	famez_release_incoming(config);
+	famez_release_incoming(adapter);
 	return ret;
 }
 
@@ -185,13 +185,13 @@ read_complete:	// Whether I used it or not, let everything go
 static ssize_t bridge_write(struct file *file, const char __user *buf,
 			    size_t buflen, loff_t *ppos)
 {
-	struct famez_config *config = extract_config(file);
-	struct bridge_buffers *buffers = config->outgoing;
+	struct famez_adapter *adapter = extract_adapter(file);
+	struct bridge_buffers *buffers = adapter->outgoing;
 	ssize_t successlen = buflen;
 	char *bufbody;
 	int ret, restarts, SID, CID;
 
-	if (buflen >= config->max_buflen - 1) {		// Paranoia on term NUL
+	if (buflen >= adapter->max_buflen - 1) {	// Paranoia on term NUL
 		PR_V1("buflen of %lu is too big\n", buflen);
 		return -E2BIG;
 	}
@@ -220,7 +220,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 	SID = FAMEZ_SID_CID_IS_PEER_ID;
 	if (STREQ(buffers->wbuf, "server") || STREQ(buffers->wbuf, "switch") ||
 	    STREQ(buffers->wbuf, "link") || STREQ(buffers->wbuf, "interface"))
-		CID = config->globals->server_id;
+		CID = adapter->globals->server_id;
 	else {
 		char *comma = strchr(buffers->wbuf, ','); // Want CID,SID
 
@@ -243,7 +243,7 @@ static ssize_t bridge_write(struct file *file, const char __user *buf,
 
 	restarts = 0;
 restart:
-	ret = famez_create_outgoing(CID, SID, bufbody, buflen, config);
+	ret = famez_create_outgoing(CID, SID, bufbody, buflen, adapter);
 	if (ret == -ERESTARTSYS) {	// spurious timeout
 		if (restarts++ < 2)
 			goto restart;
@@ -263,13 +263,13 @@ unlock_return:
 
 static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 {
-	struct famez_config *config = extract_config(file);
+	struct famez_adapter *adapter = extract_adapter(file);
 	uint ret = 0;
 
 	poll_wait(file, &bridge_reader_wait, wait);
 		ret |= POLLIN | POLLRDNORM;
 	// FIXME encapsulate this better, it's really the purview of sendstring
-	if (!config->my_slot->buflen)
+	if (!adapter->my_slot->buflen)
 		ret |= POLLOUT | POLLWRNORM;
 	return ret;
 }

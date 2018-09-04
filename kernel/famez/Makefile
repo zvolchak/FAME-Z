@@ -17,9 +17,9 @@ P:=$(shell make --no-print-directory -C ${KERNELDIR} kernelversion | cut -d. -f2
 
 obj-$(CONFIG_FAMEZ) += famez.o famez_bridge.o
 
-# famez_adapter.c has the MODULE declarations
+# famez_pci.c has the MODULE declarations
 
-famez-objs := famez_adapter.o famez_config.o famez_IVSHMSG.o \
+famez-objs := famez_pci.o famez_adapter.o famez_IVSHMSG.o \
 	famez_register.o famez_MSI-X.o famez_link.o
 
 famez_bridge-objs := fz_bridge.o

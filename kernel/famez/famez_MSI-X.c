@@ -10,31 +10,31 @@
 // overrunning the incoming slot during a tight loop client?
 
 static irqreturn_t all_msix(int vector, void *data) {
-	struct famez_config *config = data;
-	struct msix_entry *msix_entries = config->IRQ_private;
+	struct famez_adapter *adapter = data;
+	struct msix_entry *msix_entries = adapter->IRQ_private;
 	int slotnum, stomped = 0;
 	uint16_t incoming_id = 0;	// see pci.h for msix_entry
 	struct famez_mailslot __iomem *incoming_slot;
 
-	spin_lock(&(config->incoming_slot_lock));
+	spin_lock(&(adapter->incoming_slot_lock));
 
 	// Match the IRQ vector to entry/vector pair which yields the sender.
 	// Turns out i and msix_entries[i].entry are identical in famez.
 	// FIXME: preload a lookup table if I ever care about speed.
-	for (slotnum = 1; slotnum < config->globals->nEvents; slotnum++) {
+	for (slotnum = 1; slotnum < adapter->globals->nEvents; slotnum++) {
 		if (vector == msix_entries[slotnum].vector)
 			break;
 	}
-	if (slotnum >= config->globals->nEvents) {
-		spin_unlock(&(config->incoming_slot_lock));
+	if (slotnum >= adapter->globals->nEvents) {
+		spin_unlock(&(adapter->incoming_slot_lock));
 		pr_err(FZ "IRQ handler could not match vector %d\n", vector);
 		return IRQ_NONE;
 	}
 	// All returns from here are IRQ_HANDLED
 	
 	incoming_id = msix_entries[slotnum].entry;
-	if (!(incoming_slot = calculate_mailslot(config, incoming_id))) {
-		spin_unlock(&(config->incoming_slot_lock));
+	if (!(incoming_slot = calculate_mailslot(adapter, incoming_id))) {
+		spin_unlock(&(adapter->incoming_slot_lock));
 		pr_err(FZ "Could not match peer %u\n", incoming_id);
 		return IRQ_HANDLED;
 	}
@@ -45,18 +45,18 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 	// Link layer management can be fully processed here, otherwise 
 	// deal with a "normal" message.
-	if (famez_link_request(incoming_slot, config) == IRQ_HANDLED)
+	if (famez_link_request(incoming_slot, adapter) == IRQ_HANDLED)
 		return IRQ_HANDLED;
 
-	if (config->incoming_slot)	// print outside the spinlock
-		stomped = config->incoming_slot->peer_id;
-	config->incoming_slot = incoming_slot;
-	spin_unlock(&(config->incoming_slot_lock));
+	if (adapter->incoming_slot)	// print outside the spinlock
+		stomped = adapter->incoming_slot->peer_id;
+	adapter->incoming_slot = incoming_slot;
+	spin_unlock(&(adapter->incoming_slot_lock));
 
-	wake_up(&(config->incoming_slot_wqh));
+	wake_up(&(adapter->incoming_slot_wqh));
 	if (stomped)
 		pr_warn(FZ "%s() stomped incoming slot for reader %d\n",
-			__FUNCTION__, config->my_id);
+			__FUNCTION__, adapter->my_id);
 	return IRQ_HANDLED;
 }
 
@@ -66,7 +66,7 @@ static irqreturn_t all_msix(int vector, void *data) {
 
 int famez_ISR_setup(struct pci_dev *pdev)
 {
-	struct famez_config *config = pci_get_drvdata(pdev);
+	struct famez_adapter *adapter = pci_get_drvdata(pdev);
 	int ret, i, nvectors = 0, last_irq_index;
 	struct msix_entry *msix_entries;	// pci.h, will be an array
 
@@ -82,12 +82,12 @@ int famez_ISR_setup(struct pci_dev *pdev)
 		pr_err(FZ "QEMU must provide >= 16 MSI-X vectors; only %d\n", nvectors);
 		return -EINVAL;
 	}
-	if (config->globals->nEvents > nvectors) {
+	if (adapter->globals->nEvents > nvectors) {
 		pr_err(FZ "need %llu MSI-X vectors, only %d available\n",
-			config->globals->nEvents, nvectors);
+			adapter->globals->nEvents, nvectors);
 		return -ENOSPC;
 	}
-	nvectors = config->globals->nEvents;		// legibility below
+	nvectors = adapter->globals->nEvents;		// legibility below
 
 	ret = -ENOMEM;
 	if (!(msix_entries = kzalloc(
@@ -95,7 +95,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 		pr_err(FZ "Can't allocate MSI-X entries table\n");
 		goto err_kfree_msix_entries;
 	}
-	config->IRQ_private = msix_entries;
+	adapter->IRQ_private = msix_entries;
 
 	// .vector was zeroed by kzalloc
 	for (i = 0; i < nvectors; i++)
@@ -139,7 +139,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 			all_msix,
 			0,
 			"FAME-Z",
-			config))) {
+			adapter))) {
 				pr_err(FZ "request_irq(%d) failed: %d\n",
 					last_irq_index, ret);
 				goto err_free_completed_irqs;
@@ -152,14 +152,14 @@ int famez_ISR_setup(struct pci_dev *pdev)
 
 err_free_completed_irqs:
 	for (i = 0; i < last_irq_index; i++)
-		free_irq(msix_entries[i].vector, config);
+		free_irq(msix_entries[i].vector, adapter);
 
 err_pci_free_irq_vectors:
 	pci_free_irq_vectors(pdev);
 
 err_kfree_msix_entries:
 	kfree(msix_entries);
-	config->IRQ_private = NULL;	// sentinel for teardown
+	adapter->IRQ_private = NULL;	// sentinel for teardown
 	return ret;
 }
 
@@ -169,16 +169,16 @@ err_kfree_msix_entries:
 
 void famez_ISR_teardown(struct pci_dev *pdev)
 {
-	struct famez_config *config = pci_get_drvdata(pdev);
-	struct msix_entry *msix_entries = config->IRQ_private;
+	struct famez_adapter *adapter = pci_get_drvdata(pdev);
+	struct msix_entry *msix_entries = adapter->IRQ_private;
 	int i;
 
 	if (!msix_entries)	// Been there, done that
 		return;
 
-	for (i = 0; i < config->globals->nClients + 2; i++)
-		free_irq(msix_entries[i].vector, config);
+	for (i = 0; i < adapter->globals->nClients + 2; i++)
+		free_irq(msix_entries[i].vector, adapter);
 	pci_free_irq_vectors(pdev);
 	kfree(msix_entries);
-	config->IRQ_private = NULL;
+	adapter->IRQ_private = NULL;
 }

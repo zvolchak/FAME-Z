@@ -56,7 +56,7 @@ struct __attribute__ ((packed)) famez_mailslot {
 };
 
 // The primary configuration/context data.
-struct famez_config {
+struct famez_adapter {
 	struct list_head lister;
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
@@ -68,7 +68,7 @@ struct famez_config {
 	struct famez_mailslot *my_slot;			// indexed by my_id
 	void *IRQ_private;				// arch-dependent?
 
-	// Per-config handshaking between doorbell/mail delivery and a
+	// Per-adapter handshaking between doorbell/mail delivery and a
 	// driver read().  Doorbell comes in and sets the pointer then
 	// issues a wakeup.  read() follows the pointer then sets it
 	// to NULL for next one.  Since reading is more of a one-to-many
@@ -87,42 +87,43 @@ struct famez_config {
 
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
 // A lookup table to take advantage of misc_register putting its argument
-// into file->private at open().  Fill in the blanks for each config and go.
+// into file->private at open().  Fill in the blanks for each adapter and go.
 // I modified the article's solution to treat it as a container pointer and
 // just grab whatever field I want, it doesn't even have to be the first one.
 // If I put the "primary key" structure as the first field, then I wouldn't
 // even need container_of as the address is synonymous with both.
 
-struct miscdev2config {
+struct miscdev2adapter {
 	struct miscdevice miscdev;	// full structure, not a ptr
-	struct famez_config *config;	// what I want to recover
+	struct famez_adapter *adapter;	// what I want to recover
 };
 
-static inline struct famez_config *extract_config(struct file *file)
+static inline struct famez_adapter *extract_adapter(struct file *file)
 {
 	struct miscdevice *encapsulated_miscdev = file->private_data;
-	struct miscdev2config  *lookup = container_of(
+	struct miscdev2adapter  *lookup = container_of(
 		encapsulated_miscdev,	// the pointer to the member
-		struct miscdev2config,	// the type of the container struct
+		struct miscdev2adapter,	// the type of the container struct
 		miscdev);		// the name of the member in the struct
-	return lookup->config;
+	return lookup->adapter;
 }
 
 //-------------------------------------------------------------------------
-// famez_adapter.c - insmod/rmmod handling with pci_register probe()/remove()
+// famez_pci.c - insmod/rmmod handling with pci_register probe()/remove()
 
 extern int verbose;				// insmod parameter
 extern struct list_head famez_active_list;
 extern struct semaphore famez_active_sema;
 
 //-------------------------------------------------------------------------
-// famez_config.c - create/populate and destroy a config structure
+// famez_adapter.c - create/populate and destroy an adapter structure
 
 // Linked in to famez.ko, used by various other source modules
-struct famez_config *famez_config_create(struct pci_dev *);
-void famez_config_destroy(struct famez_config *);
-struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
-						  unsigned);
+struct famez_adapter *famez_adapter_create(struct pci_dev *);
+void famez_adapter_destroy(struct famez_adapter *);
+struct famez_mailslot __iomem *calculate_mailslot(
+	struct famez_adapter *, unsigned);
+
 // Nothing EXPORTed
 
 //.........................................................................
@@ -132,9 +133,9 @@ struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
 #define FAMEZ_SID_CID_IS_PEER_ID	-42	// interpret cid as peer_id
 
 // EXPORTed
-extern struct famez_mailslot *famez_await_incoming(struct famez_config *, int);
-extern void famez_release_incoming(struct famez_config *);
-extern int famez_create_outgoing(int, int, char *, size_t, struct famez_config *);
+extern struct famez_mailslot *famez_await_incoming(struct famez_adapter *, int);
+extern void famez_release_incoming(struct famez_adapter *);
+extern int famez_create_outgoing(int, int, char *, size_t, struct famez_adapter *);
 
 //.........................................................................
 // famez_???.c - handle interrupts from other FAME-Z peers (input). By arch:
@@ -143,7 +144,7 @@ extern int famez_create_outgoing(int, int, char *, size_t, struct famez_config *
 // RISCV:	not written yet
 
 irqreturn_t famez_link_request(struct famez_mailslot __iomem *,
-			       struct famez_config *);
+			       struct famez_adapter *);
 
 // EXPORTed
 int famez_ISR_setup(struct pci_dev *);

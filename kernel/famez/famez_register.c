@@ -30,9 +30,9 @@
 int famez_register(const char *Base_C_Class_str, const char *basename,
 		   const struct file_operations *fops)
 {
-	struct famez_config *config;
+	struct famez_adapter *adapter;
 	struct pci_dev *pdev;
-	struct miscdev2config *lookup;
+	struct miscdev2adapter *lookup;
 	char *ownername, *devname;
 	int ret, nbindings;
 
@@ -42,9 +42,9 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		return ret;
 
 	nbindings = 0;
-	list_for_each_entry(config, &famez_active_list, lister) {
+	list_for_each_entry(adapter, &famez_active_list, lister) {
 
-		pdev = config->pdev;
+		pdev = adapter->pdev;
 		pr_info(FZ "binding %s to %s: ",
 			ownername, pci_resource_name(pdev, 1));
 
@@ -65,10 +65,10 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
 		lookup->miscdev.mode = 0666;
 	
-		strncpy(config->core->Base_C_Class_str, Base_C_Class_str,
-			sizeof(config->core->Base_C_Class_str));
-		lookup->config = config;	// Don't point that thing at me
-		config->teardown_lookup = lookup;
+		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
+			sizeof(adapter->core->Base_C_Class_str));
+		lookup->adapter = adapter;	// Don't point that thing at me
+		adapter->teardown_lookup = lookup;
 		if ((ret = misc_register(&lookup->miscdev))) {
 			kfree(devname);
 			kfree(lookup);
@@ -93,8 +93,8 @@ EXPORT_SYMBOL(famez_register);
 
 int famez_deregister(const struct file_operations *fops)
 {
-	struct famez_config *config;
-	struct miscdev2config *lookup;
+	struct famez_adapter *adapter;
+	struct miscdev2adapter *lookup;
 	char *ownername;
 	int ret;
 
@@ -104,17 +104,17 @@ int famez_deregister(const struct file_operations *fops)
 		return ret;
 
 	ret = 0;
-	list_for_each_entry(config, &famez_active_list, lister) {
+	list_for_each_entry(adapter, &famez_active_list, lister) {
 		pr_info(FZ "UNbind %s from %s: ",
-			ownername, pci_resource_name(config->pdev, 0));
+			ownername, pci_resource_name(adapter->pdev, 0));
 
-		if ((lookup = config->teardown_lookup) &&
+		if ((lookup = adapter->teardown_lookup) &&
 		    (lookup->miscdev.fops == fops)) {
 				misc_deregister(&lookup->miscdev);
 				kfree(lookup->miscdev.name);
 				kfree(lookup);
-				config->teardown_lookup = NULL;
-				strcpy(config->core->Base_C_Class_str, FAMEZ_NAME);
+				adapter->teardown_lookup = NULL;
+				strcpy(adapter->core->Base_C_Class_str, FAMEZ_NAME);
 				ret++;
 				pr_cont("success\n");
 		} else
