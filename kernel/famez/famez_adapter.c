@@ -31,8 +31,8 @@ int verbose = 0;
 module_param(verbose, uint, 0644);
 MODULE_PARM_DESC(verbose, "increase amount of printk info (0)");
 
-// Multiple bridge "devices" accepted by famez_probe().  It might be that PCI
-// core does everything I need but I can't shake the feeling I want this for
+// Multiple bridge "devices" accepted by famez_init_one().  PCI core might
+// do everything I need but I can't shake the feeling I want this for
 // something else...right now it just tracks insmod/rmmod.
 
 LIST_HEAD(famez_active_list);
@@ -42,13 +42,15 @@ DEFINE_SEMAPHORE(famez_active_sema);
 // Called at insmod time and also at hotplug events (shouldn't be any).
 // Only take IVSHMEM (filtered by PCI core) with a BAR 1 and 64 vectors.
 
-int famez_probe(struct pci_dev *pdev, const struct pci_device_id *pdev_id)
+static char get_peer_attributes[] = "Link CTL Peer-Attribute";
+
+static int famez_init_one(
+	struct pci_dev *pdev, const struct pci_device_id *pdev_id)
 {
 	struct famez_config *config = NULL, *cur = NULL;
 	int ret = -ENOTTY;
-	char *get_peer_attributes = "Link CTL Peer-Attribute";
 
-	PR_V1("probe(%s)\n", CARDLOC(pdev));
+	PR_V1("%s(%s)\n", __FUNCTION__, CARDLOC(pdev));
 
 	if (pci_get_drvdata(pdev)) {	// Is this possible?
 		pr_err(FZSP "This device is already configured\n");
@@ -127,12 +129,12 @@ err_pci_disable_device:
 
 //-------------------------------------------------------------------------
 
-void famez_remove(struct pci_dev *pdev)
+static void famez_remove_one(struct pci_dev *pdev)
 {
 	struct famez_config *cur, *next, *config = pci_get_drvdata(pdev);
 	int ret;
 
-	pr_info(FZ "famez_remove(%s): ", CARDLOC(pdev));
+	pr_info(FZ "%s(%s): ", __FUNCTION__, CARDLOC(pdev));
 	if (!config) {
 		pr_cont("still not my circus\n");
 		return;
@@ -158,11 +160,11 @@ void famez_remove(struct pci_dev *pdev)
 
 //-------------------------------------------------------------------------
 
-static struct pci_driver famez_pci_driver = {
-	.name      = FAMEZ_NAME,
-	.id_table  = famez_PCI_ID_table,
-	.probe     = famez_probe,
-	.remove    = famez_remove
+static struct pci_driver famez_driver = {
+	.name =		FAMEZ_NAME,
+	.id_table =	famez_PCI_ID_table,
+	.probe =	famez_init_one,
+	.remove =	famez_remove_one
 };
 
 int __init famez_init(void)
@@ -173,7 +175,7 @@ int __init famez_init(void)
 	pr_info(FZ FAMEZ_VERSION "; parms:\n");
 	pr_info(FZSP "verbose = %d\n", verbose);
 
-	if ((ret = pci_register_driver(&famez_pci_driver)))
+	if ((ret = pci_register_driver(&famez_driver)))
 		pr_err(FZ "pci_register_driver() = %d\n", ret);
 
 	return ret;
@@ -186,7 +188,7 @@ module_init(famez_init);
 
 void famez_exit(void)
 {
-	pci_unregister_driver(&famez_pci_driver);
+	pci_unregister_driver(&famez_driver);
 }
 
 module_exit(famez_exit);

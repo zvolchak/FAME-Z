@@ -13,7 +13,7 @@
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
-#define FAMEZ_NAME	"famez"
+#define FAMEZ_NAME	"FAME-Z_adapter"
 #define FZ		"famez: "	// pr_xxxx header
 #define FZSP		"       "	// pr_xxxx header same length indent
 
@@ -109,7 +109,7 @@ static inline struct famez_config *extract_config(struct file *file)
 }
 
 //-------------------------------------------------------------------------
-// famez_pci_base.c - insmod/rmmod handling with pci_register probe()/remove()
+// famez_adapter.c - insmod/rmmod handling with pci_register probe()/remove()
 
 extern int verbose;				// insmod parameter
 extern struct list_head famez_active_list;
@@ -123,7 +123,6 @@ struct famez_config *famez_config_create(struct pci_dev *);
 void famez_config_destroy(struct famez_config *);
 struct famez_mailslot __iomem *calculate_mailslot(struct famez_config *,
 						  unsigned);
-
 // Nothing EXPORTed
 
 //.........................................................................

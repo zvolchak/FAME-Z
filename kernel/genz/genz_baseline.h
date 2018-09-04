@@ -3,8 +3,33 @@
 #ifndef GENZ_BASELINE_DOT_H
 #define GENZ_BASELINE_DOT_H
 
+#include <linux/device.h>
 #include <linux/list.h>
-#include <linux/mutex.h>
+
+#define DRV_NAME	"Gen-Z"
+#define DRV_VERSION	"0.1"
+
+#define GZNAMFMTSIZ	64
+
+#define __unused __attribute__ ((unused))
+
+struct genz_private {			// Just following netdev
+	int junk;
+};
+
+struct genz_device {
+	char namefmt[GZNAMFMTSIZ];
+	struct list_head lister;
+	uint64_t flags;
+	struct device dev;		// for to_genz_dev
+	struct genz_priv *priv;
+};
+#define to_genz_dev(nnn) container_of(nnn, struct genz_device, dev)
+
+struct genz_device_ops {
+	int (*init)(struct genz_device *genz_dev);
+	void (*uninit)(struct genz_device *genz_dev);
+};
 
 // Minimum proscribed data structures are listed in
 // Gen-Z 1.0 "8.13.1 Grouping: Baseline Structures" and 
@@ -42,7 +67,7 @@ struct genz_interface_structure {
 		 PeerState;
 };
 
-extern struct genz_core_structure *genz_core_structure_create(uint64_t flags);
-extern void genz_core_structure_destroy(struct genz_core_structure *);
+struct genz_core_structure *genz_core_structure_create(uint64_t flags);
+void genz_core_structure_destroy(struct genz_core_structure *);
 
 #endif

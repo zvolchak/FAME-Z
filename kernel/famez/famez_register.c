@@ -114,7 +114,7 @@ int famez_deregister(const struct file_operations *fops)
 				kfree(lookup->miscdev.name);
 				kfree(lookup);
 				config->teardown_lookup = NULL;
-				strcpy(config->core->Base_C_Class_str, "FAME-Z_Adapter");
+				strcpy(config->core->Base_C_Class_str, FAMEZ_NAME);
 				ret++;
 				pr_cont("success\n");
 		} else

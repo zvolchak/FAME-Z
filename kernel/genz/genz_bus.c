@@ -4,30 +4,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
-#define DRV_NAME	"Gen-Z"
-#define DRV_VERSION	"0.1"
-
-#define GZNAMFMTSIZ	64
-
-#define __unused __attribute__ ((unused))
-
-struct genz_private {			// Just following netdev
-	int junk;
-};
-
-struct genz_device {
-	char namefmt[GZNAMFMTSIZ];
-	struct list_head lister;
-	uint64_t flags;
-	struct device dev;		// for to_genz_dev
-	struct genz_priv *priv;
-};
-#define to_genz_dev(nnn) container_of(nnn, struct genz_device, dev)
-
-struct genz_device_ops {
-	int (*init)(struct genz_device *genz_dev);
-	void (*uninit)(struct genz_device *genz_dev);
-};
+#include "genz_baseline.h"
 
 //-------------------------------------------------------------------------
 // Boolean
@@ -46,13 +23,6 @@ static int genz_num_vf(struct device *dev)
 {
 	pr_info("%s()\n", __FUNCTION__);
 	return 1;
-}
-
-//-------------------------------------------------------------------------
-
-static void release_famez_parent(struct device *dev)
-{
-	pr_info("%s()\n", __FUNCTION__);
 }
 
 //-----------------------------------------------------------------------
@@ -158,13 +128,8 @@ static struct bus_type genz_bus = {
 	.num_vf = genz_num_vf,
 };
 
-static struct device famez_parent = {
-	.init_name	= "FAME-Z_adapter",
-	.bus		= &genz_bus,
-	.release	= release_famez_parent,
-};
 
-int __init jfdi(void)
+int __init genz_bus_init(void)
 {
 	int ret = 0;
 
@@ -173,14 +138,9 @@ int __init jfdi(void)
 		pr_err("Registering Gen-Z bus failed\n");
 		return ret;
 	}
-	if ((ret = device_register(&famez_parent))) {
-		pr_err("Registering parent device failed\n");
-		bus_unregister(&genz_bus);
-		return ret;
-	}
+
 	if ((ret = genz_init_one())) {
 		pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
-		device_unregister(&famez_parent);
 		bus_unregister(&genz_bus);
 		return ret;
 	}
@@ -189,14 +149,13 @@ int __init jfdi(void)
 	return 0;
 }
 
-void genz_exit(void)
+void genz_bus_exit(void)
 {
 	pr_info("%s()\n", __FUNCTION__);
-	device_unregister(&famez_parent);
 	bus_unregister(&genz_bus);
 }
 
-module_init(jfdi);
-module_exit(genz_exit);
+module_init(genz_bus_init);
+module_exit(genz_bus_exit);
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);

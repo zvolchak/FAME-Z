@@ -34,3 +34,24 @@ void genz_core_structure_destroy(struct genz_core_structure *core)
 	kfree(core);
 }
 EXPORT_SYMBOL(genz_core_structure_destroy);
+
+
+#ifdef DEVICE_REGISTER_PARENT
+
+static void release_famez_parent(struct device *dev)
+{
+	pr_info("%s()\n", __FUNCTION__);
+}
+
+static struct device __unused famez_parent = {
+	.init_name	= "FAME-Z_adapter",
+	.bus		= &genz_bus,
+	.release	= release_famez_parent,
+};
+	if ((ret = device_register(&famez_parent))) {
+		pr_err("Registering parent device failed\n");
+		bus_unregister(&genz_bus);
+		return ret;
+	}
+#endif
+
