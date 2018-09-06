@@ -32,7 +32,7 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 {
 	struct famez_adapter *adapter;
 	struct pci_dev *pdev;
-	struct miscdev2adapter *lookup;
+	struct genz_char_device *lookup;
 	char *ownername, *devname;
 	int ret, nbindings;
 
@@ -94,7 +94,7 @@ EXPORT_SYMBOL(famez_register);
 int famez_deregister(const struct file_operations *fops)
 {
 	struct famez_adapter *adapter;
-	struct miscdev2adapter *lookup;
+	struct genz_char_device *lookup;
 	char *ownername;
 	int ret;
 
