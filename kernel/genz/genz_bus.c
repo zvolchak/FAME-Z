@@ -122,7 +122,7 @@ int genz_init_one(void)
 //-----------------------------------------------------------------------
 // Module wrapping.
 
-static struct bus_type genz_bus = {
+struct bus_type genz_bus = {
 	.name	= "genz",
 	.match = genz_match,
 	.num_vf = genz_num_vf,

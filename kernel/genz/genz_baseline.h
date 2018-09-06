@@ -68,11 +68,20 @@ struct genz_interface_structure {
 };
 
 //-------------------------------------------------------------------------
+// genz_bus.c
+
+extern struct bus_type genz_bus;
+
+//-------------------------------------------------------------------------
 // genz_class.c
 
 int genz_classes_init(void);
 void genz_classes_destroy(void);
 struct class *genz_class_lookup(unsigned);
+
+// EXPORTed
+
+extern int genz_register_bridge(unsigned, const struct file_operations *);
 
 //-------------------------------------------------------------------------
 // genz_device.c

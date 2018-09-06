@@ -35,13 +35,13 @@ static struct class genz_classes[] = {
 };
 
 //-------------------------------------------------------------------------
-// It's actually all pointers so the math should be good...I think
+// It's actually all pointers so the math is good.
 
 static unsigned maxindex = (sizeof(genz_classes)/sizeof(genz_classes[0])) - 2;
 
 struct class *genz_class_getter(unsigned index)
 {
-	return (index < 1 || index > maxindex) ? NULL : &genz_classes[index];
+	return (index && index <= maxindex) ? &genz_classes[index] : NULL;
 }
 
 //-------------------------------------------------------------------------
