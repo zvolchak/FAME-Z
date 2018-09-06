@@ -135,12 +135,16 @@ int __init genz_bus_init(void)
 
 	pr_info("%s()\n", __FUNCTION__);
 	if ((ret = bus_register(&genz_bus))) {
-		pr_err("Registering Gen-Z bus failed\n");
+		pr_err("%s()->bus_register() failed\n", __FUNCTION__);
 		return ret;
 	}
-
 	if ((ret = genz_init_one())) {
 		pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
+		bus_unregister(&genz_bus);
+		return ret;
+	}
+	if ((ret = genz_classes_init())) {
+		pr_err("%s()->genz_classes_init() failed\n", __FUNCTION__);
 		bus_unregister(&genz_bus);
 		return ret;
 	}
@@ -152,6 +156,7 @@ int __init genz_bus_init(void)
 void genz_bus_exit(void)
 {
 	pr_info("%s()\n", __FUNCTION__);
+	genz_classes_destroy();
 	bus_unregister(&genz_bus);
 }
 

@@ -67,6 +67,16 @@ struct genz_interface_structure {
 		 PeerState;
 };
 
+//-------------------------------------------------------------------------
+// genz_class.c
+
+int genz_classes_init(void);
+void genz_classes_destroy(void);
+struct class *genz_class_lookup(unsigned);
+
+//-------------------------------------------------------------------------
+// genz_device.c
+
 struct genz_core_structure *genz_core_structure_create(uint64_t flags);
 void genz_core_structure_destroy(struct genz_core_structure *);
 
