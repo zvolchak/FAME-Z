@@ -93,7 +93,7 @@ struct famez_adapter {
 // If I put the "primary key" structure as the first field, then I wouldn't
 // even need container_of as the address is synonymous with both.
 
-struct miscdev2adapter {
+struct genz_char_device {
 	struct miscdevice miscdev;	// full structure, not a ptr
 	struct famez_adapter *adapter;	// what I want to recover
 };
@@ -101,10 +101,10 @@ struct miscdev2adapter {
 static inline struct famez_adapter *extract_adapter(struct file *file)
 {
 	struct miscdevice *encapsulated_miscdev = file->private_data;
-	struct miscdev2adapter  *lookup = container_of(
-		encapsulated_miscdev,	// the pointer to the member
-		struct miscdev2adapter,	// the type of the container struct
-		miscdev);		// the name of the member in the struct
+	struct genz_char_device *lookup = container_of(
+		encapsulated_miscdev,		// pointer to the member
+		struct genz_char_device,	// type of the container struct
+		miscdev);			// name of the member
 	return lookup->adapter;
 }
 
