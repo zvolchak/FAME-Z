@@ -275,13 +275,13 @@ static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 }
 
 static const struct file_operations bridge_fops = {
-	.owner	=	THIS_MODULE,
-	.open	=	bridge_open,
-	.flush  =	bridge_flush,
-	.release =      bridge_release,
-	.read	=       bridge_read,
-	.write	=       bridge_write,
-	.poll	=       bridge_poll,
+	.owner =	THIS_MODULE,
+	.open =		bridge_open,
+	.flush =	bridge_flush,
+	.release =	bridge_release,
+	.read =		bridge_read,
+	.write =	bridge_write,
+	.poll =		bridge_poll,
 };
 
 //-------------------------------------------------------------------------

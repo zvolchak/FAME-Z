@@ -86,7 +86,7 @@ extern int genz_register_bridge(unsigned, const struct file_operations *);
 //-------------------------------------------------------------------------
 // genz_device.c
 
-struct genz_core_structure *genz_core_structure_create(uint64_t flags);
-void genz_core_structure_destroy(struct genz_core_structure *);
+extern struct genz_core_structure *genz_core_structure_create(uint64_t);
+extern void genz_core_structure_destroy(struct genz_core_structure *);
 
 #endif

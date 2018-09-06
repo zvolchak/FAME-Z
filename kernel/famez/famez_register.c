@@ -18,14 +18,21 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <linux/bitops.h>
 #include <linux/export.h>
 #include <linux/fs.h>
+#include <linux/kdev_t.h>
 #include <linux/module.h>	// fops->owner
 
 #include "famez.h"
 
 //-------------------------------------------------------------------------
-// In the monolithic driver this was famez_bridge_setup()
+
+#define MAXMINORS (1 << MINORBITS)
+
+static DECLARE_BITMAP(famez_bridge_minor_bitmap, MAXMINORS) = { 0 };
+
+static uint64_t famez_bridge_major = 0;		// Until first allocation
 
 int famez_register(const char *Base_C_Class_str, const char *basename,
 		   const struct file_operations *fops)
@@ -35,11 +42,39 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 	struct genz_char_device *lookup;
 	char *ownername, *devname;
 	int ret, nbindings;
+	dev_t majmin;
+	uint64_t minor;
+
+	pr_info("bitmask is %lu bytes\n", sizeof(famez_bridge_minor_bitmap));
 
 	ownername = fops->owner->name;
 
 	if ((ret = down_interruptible(&famez_active_sema)))
 		return ret;
+
+	for (minor = 0; minor < MAXMINORS; minor++) {
+		if (test_and_set_bit(minor, famez_bridge_minor_bitmap))
+			break;
+	}
+	if (minor >= MAXMINORS) {
+		pr_err("Exhausted all minor numbers for major %llu (%s)\n",
+			famez_bridge_major, basename);
+		return -EDOM;
+	}
+
+	if (famez_bridge_major) {
+		majmin = MKDEV(famez_bridge_major, minor);
+		ret = register_chrdev_region(majmin, 1, basename);
+	} else {
+		if (!(ret = alloc_chrdev_region(&majmin, minor, 1, basename)))
+			famez_bridge_major = MAJOR(majmin);
+	}
+	if (ret) {
+		pr_err("Can't allocate chrdev_region: %d\n", ret);
+		return ret;
+	}
+	pr_info("%s is major number %llu\n", basename, famez_bridge_major);
+	set_bit(minor, famez_bridge_minor_bitmap);
 
 	nbindings = 0;
 	list_for_each_entry(adapter, &famez_active_list, lister) {
@@ -97,11 +132,18 @@ int famez_deregister(const struct file_operations *fops)
 	struct genz_char_device *lookup;
 	char *ownername;
 	int ret;
+	uint64_t minor;
 
 	ownername = fops->owner->name;
 
 	if ((ret = down_interruptible(&famez_active_sema)))
 		return ret;
+
+	for (minor = 0; minor < MAXMINORS; minor++) {
+		if (test_and_clear_bit(minor, famez_bridge_minor_bitmap))
+			unregister_chrdev_region(
+				MKDEV(famez_bridge_major, minor), 1);
+	}
 
 	ret = 0;
 	list_for_each_entry(adapter, &famez_active_list, lister) {
@@ -125,4 +167,3 @@ int famez_deregister(const struct file_operations *fops)
 
 }
 EXPORT_SYMBOL(famez_deregister);
-
