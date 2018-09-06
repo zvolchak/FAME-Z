@@ -51,7 +51,7 @@ DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
 static int bridge_open(struct inode *inode, struct file *file)
 {
-	struct famez_adapter *adapter = extract_adapter(file);
+	struct famez_adapter *adapter = filp2adapter(file);
 	int n, ret;
 
 	// FIXME: got to come up with more 'local module' support for this.
@@ -90,7 +90,7 @@ alldone:
 
 static int bridge_flush(struct file *file, fl_owner_t id)
 {
-	struct famez_adapter *adapter = extract_adapter(file);
+	struct famez_adapter *adapter = filp2adapter(file);
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
@@ -113,7 +113,7 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 
 static int bridge_release(struct inode *inode, struct file *file)
 {
-	struct famez_adapter *adapter = extract_adapter(file);
+	struct famez_adapter *adapter = filp2adapter(file);
 	struct bridge_buffers *buffers = adapter->outgoing;
 	int nr_users, f_count;
 
@@ -138,7 +138,7 @@ static int bridge_release(struct inode *inode, struct file *file)
 static ssize_t bridge_read(struct file *file, char __user *buf,
 			   size_t buflen, loff_t *ppos)
 {
-	struct famez_adapter *adapter = extract_adapter(file);
+	struct famez_adapter *adapter = filp2adapter(file);
 	struct famez_mailslot *sender;
 	int ret, n;
 	// SID is 28 bits or 10 decimal digits; CID is 16 bits or 5 digits
@@ -185,7 +185,7 @@ read_complete:	// Whether I used it or not, let everything go
 static ssize_t bridge_write(struct file *file, const char __user *buf,
 			    size_t buflen, loff_t *ppos)
 {
-	struct famez_adapter *adapter = extract_adapter(file);
+	struct famez_adapter *adapter = filp2adapter(file);
 	struct bridge_buffers *buffers = adapter->outgoing;
 	ssize_t successlen = buflen;
 	char *bufbody;
@@ -263,7 +263,7 @@ unlock_return:
 
 static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 {
-	struct famez_adapter *adapter = extract_adapter(file);
+	struct famez_adapter *adapter = filp2adapter(file);
 	uint ret = 0;
 
 	poll_wait(file, &bridge_reader_wait, wait);

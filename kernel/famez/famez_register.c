@@ -42,7 +42,7 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 {
 	struct famez_adapter *adapter;
 	struct pci_dev *pdev;
-	struct genz_char_device *lookup;
+	struct famez_char_device *lookup;
 	char *ownername, *devname;
 	int ret, nbindings;
 	dev_t majmin;
@@ -85,27 +85,31 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 			ownername, pci_resource_name(pdev, 1));
 
 		ret = -ENOMEM;
-		if (!(lookup = kzalloc(sizeof(*lookup),
-				       GFP_KERNEL)))
+		if (!(lookup = kzalloc(sizeof(*lookup), GFP_KERNEL)))
 			goto up_and_out;
 		if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
 				     GFP_KERNEL))) {
 			kfree(lookup);
 			goto up_and_out;
 		}
-
-		// Device file name is meant to be reminiscent of lspci output
-		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
-		lookup->miscdev.name = devname;
-		lookup->miscdev.fops = fops;
-		lookup->miscdev.minor = MISC_DYNAMIC_MINOR;
-		lookup->miscdev.mode = 0666;
-	
 		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
 			sizeof(adapter->core->Base_C_Class_str));
-		lookup->adapter = adapter;	// Don't point that thing at me
+
+		// Device file name is meant to be reminiscent of lspci output.
+		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
+
+		// This sets .fops, .list, and .kobj == ktype_cdev_default.
+		// Then add anything else.  FIXME: mode like that in miscdev?
+		cdev_init(&lookup->cdev, fops);
+		kobject_set_name(&lookup->cdev.kobj, "%s", devname);
+
+		// Finish init for teardown
+		lookup->adapter = adapter;
 		adapter->teardown_lookup = lookup;
-		if ((ret = misc_register(&lookup->miscdev))) {
+
+		if ((ret = cdev_add(&lookup->cdev,
+				    MKDEV(famez_bridge_major, minor),
+				    1))) {
 			kfree(devname);
 			kfree(lookup);
 			goto up_and_out;
@@ -130,7 +134,7 @@ EXPORT_SYMBOL(famez_register);
 int famez_deregister(const struct file_operations *fops)
 {
 	struct famez_adapter *adapter;
-	struct genz_char_device *lookup;
+	struct famez_char_device *lookup;
 	char *ownername;
 	int ret;
 	uint64_t minor;
@@ -142,9 +146,12 @@ int famez_deregister(const struct file_operations *fops)
 
 	// If I get them all it releases the major number automatically.
 	for (minor = 0; minor < MAXMINORS; minor++) {
-		if (test_bit(minor, famez_bridge_minor_bitmap))
+		if (test_bit(minor, famez_bridge_minor_bitmap)) {
 			unregister_chrdev_region(
 				MKDEV(famez_bridge_major, minor), 1);
+			// cdev_del(...
+			// free(devname in kobject_set_name?)
+		}
 	}
 	memset(famez_bridge_minor_bitmap, 0, sizeof(famez_bridge_minor_bitmap));
 
@@ -154,9 +161,8 @@ int famez_deregister(const struct file_operations *fops)
 			ownername, pci_resource_name(adapter->pdev, 0));
 
 		if ((lookup = adapter->teardown_lookup) &&
-		    (lookup->miscdev.fops == fops)) {
-				misc_deregister(&lookup->miscdev);
-				kfree(lookup->miscdev.name);
+		    (lookup->cdev.ops == fops)) {
+				// kfree(lookup->cdev.name);  FIXME, devname?
 				kfree(lookup);
 				adapter->teardown_lookup = NULL;
 				strcpy(adapter->core->Base_C_Class_str, FAMEZ_NAME);

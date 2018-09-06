@@ -3,8 +3,8 @@
 #ifndef FAMEZ_DOT_H
 #define FAMEZ_DOT_H
 
+#include <linux/cdev.h>
 #include <linux/list.h>
-#include <linux/miscdevice.h>
 #include <linux/pci.h>
 #include <linux/semaphore.h>
 #include <linux/wait.h>
@@ -88,23 +88,19 @@ struct famez_adapter {
 // https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
 // A lookup table to take advantage of misc_register putting its argument
 // into file->private at open().  Fill in the blanks for each adapter and go.
-// I modified the article's solution to treat it as a container pointer and
-// just grab whatever field I want, it doesn't even have to be the first one.
-// If I put the "primary key" structure as the first field, then I wouldn't
-// even need container_of as the address is synonymous with both.
 
-struct genz_char_device {
-	struct miscdevice miscdev;	// full structure, not a ptr
+struct famez_char_device {		// And maybe a famez_net_device...
 	struct famez_adapter *adapter;	// what I want to recover
+	struct cdev cdev;		// full structure, not a ptr, passed to core
 };
 
-static inline struct famez_adapter *extract_adapter(struct file *file)
+static inline struct famez_adapter *filp2adapter(struct file *file)
 {
-	struct miscdevice *encapsulated_miscdev = file->private_data;
-	struct genz_char_device *lookup = container_of(
-		encapsulated_miscdev,		// pointer to the member
-		struct genz_char_device,	// type of the container struct
-		miscdev);			// name of the member
+	struct cdev *encapsulated_cdev = file->private_data;	// FIXME
+	struct famez_char_device *lookup = container_of(
+		encapsulated_cdev,		// pointer to the member
+		struct famez_char_device,	// type of the container struct
+		cdev);				// name of the member
 	return lookup->adapter;
 }
 
