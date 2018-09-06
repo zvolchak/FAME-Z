@@ -53,27 +53,30 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		return ret;
 
 	for (minor = 0; minor < MAXMINORS; minor++) {
-		if (test_and_set_bit(minor, famez_bridge_minor_bitmap))
+		pr_cont(" %llu", minor);
+		if (!test_bit(minor, famez_bridge_minor_bitmap)) {
+			set_bit(minor, famez_bridge_minor_bitmap);
 			break;
+		}
 	}
 	if (minor >= MAXMINORS) {
 		pr_err("Exhausted all minor numbers for major %llu (%s)\n",
-			famez_bridge_major, basename);
+			famez_bridge_major, ownername);
 		return -EDOM;
 	}
 
 	if (famez_bridge_major) {
 		majmin = MKDEV(famez_bridge_major, minor);
-		ret = register_chrdev_region(majmin, 1, basename);
+		ret = register_chrdev_region(majmin, 1, ownername);
 	} else {
-		if (!(ret = alloc_chrdev_region(&majmin, minor, 1, basename)))
+		if (!(ret = alloc_chrdev_region(&majmin, minor, 1, ownername)))
 			famez_bridge_major = MAJOR(majmin);
 	}
 	if (ret) {
 		pr_err("Can't allocate chrdev_region: %d\n", ret);
 		return ret;
 	}
-	pr_info("%s is major number %llu\n", basename, famez_bridge_major);
+	pr_info("%s is major number %llu\n", ownername, famez_bridge_major);
 	set_bit(minor, famez_bridge_minor_bitmap);
 
 	nbindings = 0;
@@ -140,7 +143,7 @@ int famez_deregister(const struct file_operations *fops)
 		return ret;
 
 	for (minor = 0; minor < MAXMINORS; minor++) {
-		if (test_and_clear_bit(minor, famez_bridge_minor_bitmap))
+		if (test_bit(minor, famez_bridge_minor_bitmap))
 			unregister_chrdev_region(
 				MKDEV(famez_bridge_major, minor), 1);
 	}
