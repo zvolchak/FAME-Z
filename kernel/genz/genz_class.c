@@ -43,6 +43,7 @@ struct class *genz_class_getter(unsigned index)
 {
 	return (index && index <= maxindex) ? &genz_classes[index] : NULL;
 }
+EXPORT_SYMBOL(genz_class_getter);
 
 //-------------------------------------------------------------------------
 // 0 or error

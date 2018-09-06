@@ -112,8 +112,8 @@ static inline struct famez_adapter *extract_adapter(struct file *file)
 // famez_pci.c - insmod/rmmod handling with pci_register probe()/remove()
 
 extern int verbose;				// insmod parameter
-extern struct list_head famez_active_list;
-extern struct semaphore famez_active_sema;
+extern struct list_head famez_adapter_list;
+extern struct semaphore famez_adapter_sema;
 
 //-------------------------------------------------------------------------
 // famez_adapter.c - create/populate and destroy an adapter structure

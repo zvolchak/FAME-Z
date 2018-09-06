@@ -13,6 +13,8 @@
 
 #define __unused __attribute__ ((unused))
 
+#define GENZ_CCE_DISCRETE_BRIDGE	0x14
+
 struct genz_private {			// Just following netdev
 	int junk;
 };
@@ -24,7 +26,7 @@ struct genz_device {
 	struct device dev;		// for to_genz_dev
 	struct genz_priv *priv;
 };
-#define to_genz_dev(nnn) container_of(nnn, struct genz_device, dev)
+#define to_genz_dev(pPp) container_of(pPp, struct genz_device, dev)
 
 struct genz_device_ops {
 	int (*init)(struct genz_device *genz_dev);
@@ -77,10 +79,10 @@ extern struct bus_type genz_bus;
 
 int genz_classes_init(void);
 void genz_classes_destroy(void);
-struct class *genz_class_lookup(unsigned);
 
 // EXPORTed
 
+extern struct class *genz_class_getter(unsigned);
 extern int genz_register_bridge(unsigned, const struct file_operations *);
 
 //-------------------------------------------------------------------------

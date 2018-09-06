@@ -35,8 +35,8 @@ MODULE_PARM_DESC(verbose, "increase amount of printk info (0)");
 // do everything I need but I can't shake the feeling I want this for
 // something else...right now it just tracks insmod/rmmod.
 
-LIST_HEAD(famez_active_list);
-DEFINE_SEMAPHORE(famez_active_sema);
+LIST_HEAD(famez_adapater_list);
+DEFINE_SEMAPHORE(famez_adapater_sema);
 
 //-------------------------------------------------------------------------
 // Called at insmod time and also at hotplug events (shouldn't be any).
@@ -84,19 +84,19 @@ static int famez_init_one(
 
 	// It's a keeper...unless it's already there.  Unlikely, but it's
 	// not paranoia when in the kernel.
-	ret = down_interruptible(&famez_active_sema);	// FIXME: deal with ret
+	ret = down_interruptible(&famez_adapater_sema);	// FIXME: deal with ret
 	ret = 0;
-	list_for_each_entry(cur, &famez_active_list, lister) {
+	list_for_each_entry(cur, &famez_adapater_list, lister) {
 		if (STREQ(CARDLOC(pdev), pci_resource_name(cur->pdev, 1))) {
 			ret = -EALREADY;
 			break;
 		}
 	}
 	if (!ret) {
-		list_add_tail(&adapter->lister, &famez_active_list);
+		list_add_tail(&adapter->lister, &famez_adapater_list);
 		PR_V1("adapter added to active list\n")
 	}
-	up(&famez_active_sema);
+	up(&famez_adapater_sema);
 	if (ret) {
 		pr_err(FZSP "This device is already in active list\n");
 		goto err_MSIX_teardown;
@@ -148,12 +148,12 @@ static void famez_remove_one(struct pci_dev *pdev)
 	if (atomic_read(&adapter->nr_users))
 		pr_err(FZSP "# users is non-zero, very interesting\n");
 	
-	ret = down_interruptible(&famez_active_sema);	// FIXME: deal with ret
-	list_for_each_entry_safe(cur, next, &famez_active_list, lister) {
+	ret = down_interruptible(&famez_adapater_sema);	// FIXME: deal with ret
+	list_for_each_entry_safe(cur, next, &famez_adapater_list, lister) {
 		if (STREQ(CARDLOC(cur->pdev), CARDLOC(pdev)))
 			list_del(&(cur->lister));
 	}
-	up(&famez_active_sema);
+	up(&famez_adapater_sema);
 
 	famez_adapter_destroy(adapter);
 }
