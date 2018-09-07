@@ -128,15 +128,13 @@ int genz_register_bridge(char *devname, unsigned CCE,
 
 	wrapper->genz_class = genz_class_getter(GENZ_CCE_DISCRETE_BRIDGE);
 	wrapper->mode = 0666;
+	wrapper->parent = &genz_dev_root;
 
 	if ((ret = cdev_add(&wrapper->cdev,
 			    wrapper->cdev.dev,
 			    wrapper->cdev.count))) {
 		goto up_and_out;
 	}
-
-	wrapper->parent = genz_bus.dev_root;
-	pr_info("device_create() parent @ 0x%p\n", wrapper->parent);
 		
 	// Final work: there's also plain "device_create()".  Driver
 	// bcomes "live" on success so insure data is ready.

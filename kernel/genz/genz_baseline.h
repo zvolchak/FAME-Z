@@ -73,6 +73,7 @@ struct genz_interface_structure {
 // genz_bus.c
 
 extern struct bus_type genz_bus;
+extern struct device genz_dev_root;
 
 //-------------------------------------------------------------------------
 // genz_class.c

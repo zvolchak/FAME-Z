@@ -131,7 +131,7 @@ struct bus_type genz_bus = {
 };
 
 // See use of "mci_pdev" in edac_mc_sysfs.c
-static struct device genz_pdev;
+struct device genz_dev_root;
 
 int __init genz_bus_init(void)
 {
@@ -150,7 +150,8 @@ int __init genz_bus_init(void)
 		pr_err("%s()->genz_devices_init() failed\n", __FUNCTION__);
 		goto early_done;
 	}
-	// Why am I doing this?  From net/dummy
+	// Why am I doing this?  From net/dummy.  Or is this the "genz0"
+	// thing I'm forcing below?
 	if ((ret = genz_init_one())) {
 		pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
 		goto early_done;
@@ -162,18 +163,18 @@ int __init genz_bus_init(void)
 	// the anchor purpose.  I'm not totally sure why this works, but it
 	// does what I want.  Order matters.  Enumeration of extra buses
 	// (cards) is left as an exercise for the reader.
-	genz_pdev.bus = &genz_bus;
-	device_initialize(&genz_pdev);
-	dev_set_name(&genz_pdev, "genz0");
-	genz_pdev.kobj.parent = NULL;
-	if ((ret = device_add(&genz_pdev))) {
-		pr_err("%s()->device_add(genz_pdev) failed\n", __FUNCTION__);
+	genz_dev_root.bus = &genz_bus;
+	device_initialize(&genz_dev_root);
+	dev_set_name(&genz_dev_root, "genz0");
+	genz_dev_root.kobj.parent = NULL;
+	if ((ret = device_add(&genz_dev_root))) {
+		pr_err("%s()->device_add(genz_dev_root) failed\n", __FUNCTION__);
 		goto early_done;
 	}
-	genz_bus.dev_root = &genz_pdev;		// What I really want, later
+	genz_bus.dev_root = NULL; 	// &genz_dev_root;
 
 early_done:
-	pr_info("%s() %s\n", __FUNCTION__, ret ? "passed" : "FAILED");
+	pr_info("%s() %s\n", __FUNCTION__, !ret ? "passed" : "FAILED");
 	if (ret)
 		bus_unregister(&genz_bus);
 	return ret;
