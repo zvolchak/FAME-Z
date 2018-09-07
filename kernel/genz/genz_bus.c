@@ -125,10 +125,13 @@ int genz_init_one(void)
 
 struct bus_type genz_bus = {
 	.name	= "genz",
+	.dev_name = "genz_dev_name",
 	.match = genz_match,
 	.num_vf = genz_num_vf,
 };
 
+// See use of "mci_pdev" in edac_mc_sysfs.c
+static struct device genz_pdev;
 
 int __init genz_bus_init(void)
 {
@@ -139,24 +142,41 @@ int __init genz_bus_init(void)
 		pr_err("%s()->bus_register() failed\n", __FUNCTION__);
 		return ret;
 	}
-	if ((ret = genz_init_one())) {
-		pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
-		bus_unregister(&genz_bus);
-		return ret;
-	}
 	if ((ret = genz_classes_init())) {
 		pr_err("%s()->genz_classes_init() failed\n", __FUNCTION__);
-		bus_unregister(&genz_bus);
-		return ret;
+		goto early_done;
 	}
 	if ((ret = genz_devices_init())) {
 		pr_err("%s()->genz_devices_init() failed\n", __FUNCTION__);
-		bus_unregister(&genz_bus);
-		return ret;
+		goto early_done;
+	}
+	// Why am I doing this?  From net/dummy
+	if ((ret = genz_init_one())) {
+		pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
+		goto early_done;
 	}
 
-	pr_info("%s() passed\n", __FUNCTION__);
-	return 0;
+	// LDD3:14 Device Model -> "Device Registration"; see also source for
+	// "subsys_register()".  Need a separate object from bus to form an
+	// anchor point; it's not a fully fleshed-out struct device but serves
+	// the anchor purpose.  I'm not totally sure why this works, but it
+	// does what I want.  Order matters.  Enumeration of extra buses
+	// (cards) is left as an exercise for the reader.
+	genz_pdev.bus = &genz_bus;
+	device_initialize(&genz_pdev);
+	dev_set_name(&genz_pdev, "genz0");
+	genz_pdev.kobj.parent = NULL;
+	if ((ret = device_add(&genz_pdev))) {
+		pr_err("%s()->device_add(genz_pdev) failed\n", __FUNCTION__);
+		goto early_done;
+	}
+	genz_bus.dev_root = &genz_pdev;		// What I really want, later
+
+early_done:
+	pr_info("%s() %s\n", __FUNCTION__, ret ? "passed" : "FAILED");
+	if (ret)
+		bus_unregister(&genz_bus);
+	return ret;
 }
 
 void genz_bus_exit(void)

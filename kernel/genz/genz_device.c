@@ -118,12 +118,6 @@ int genz_register_bridge(char *devname, unsigned CCE,
 	ret = -ENOMEM;
 	if (!(wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL)))
 		goto up_and_out;
-	if (devname)
-		kfree(devname);
-	if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
-			     GFP_KERNEL)))
-		goto up_and_out;
-
 
 	// This sets .fops, .list, and .kobj == ktype_cdev_default.
 	// Then add anything else.
@@ -140,13 +134,16 @@ int genz_register_bridge(char *devname, unsigned CCE,
 			    wrapper->cdev.count))) {
 		goto up_and_out;
 	}
+
+	wrapper->parent = genz_bus.dev_root;
+	pr_info("device_create() parent @ 0x%p\n", wrapper->parent);
 		
 	// Final work: there's also plain "device_create()".  Driver
 	// bcomes "live" on success so insure data is ready.
 	wrapper->file_private_data = file_private_data;
 	wrapper->this_device = device_create_with_groups(
 		wrapper->genz_class,
-		wrapper->parent,	// NULL for now
+		wrapper->parent,
 		wrapper->cdev.dev,
 		wrapper,		// drvdata: not sure where this goes
 		wrapper->attr_groups,
@@ -158,8 +155,6 @@ int genz_register_bridge(char *devname, unsigned CCE,
 	}
 
 up_and_out:
-	if (devname)
-		kfree(devname);
 	if (ret) {
 		pr_cont("FAILURE\n");
 		if (wrapper)
