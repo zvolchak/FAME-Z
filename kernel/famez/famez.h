@@ -92,7 +92,7 @@ struct famez_adapter {
 // and used as anchor in to_xxxx lookups.
 
 struct genz_char_device {		// FIXME: Move this to genz
-	void *drvdata;			// Unless I can stuff things elsewhere..
+	void *file_private_data;	// Extracted at first fops->open()
 	struct class *genz_class;	// Multi-purpose struct
 	struct cdev cdev;		// full structure, has
 					// kobject
@@ -118,14 +118,13 @@ struct genz_char_device {		// FIXME: Move this to genz
 	// list_head, because cdev has one
 };
 
-static inline struct famez_adapter *filp2adapter(struct file *file)
+static inline void *genz_char_drv_1stopen_private_data(struct file *file)
 {
-	struct cdev *encapsulated_cdev = file->private_data;	// FIXME
-	struct genz_char_device *lookup = container_of(
-		encapsulated_cdev,		// pointer to the member
-		struct genz_char_device,	// type of the container struct
-		cdev);				// name of the member
-	return lookup->drvdata;
+	struct genz_char_device *wrapper = container_of(
+		file->f_inode->i_cdev,		// member address
+		struct genz_char_device,	// container type
+		cdev);				// container member
+	return wrapper->file_private_data;
 }
 
 //-------------------------------------------------------------------------

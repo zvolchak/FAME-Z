@@ -92,8 +92,6 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
 				     GFP_KERNEL)))
 			goto up_and_out;
-		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
-			sizeof(adapter->core->Base_C_Class_str));
 
 		// Device file name is meant to be reminiscent of lspci output.
 		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
@@ -109,7 +107,6 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		lookup->mode = 0666;
 
 		// Finish init for teardown
-		lookup->drvdata = adapter;
 		adapter->teardown_lookup = lookup;
 
 		if ((ret = cdev_add(&lookup->cdev,
@@ -118,12 +115,14 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 			goto up_and_out;
 		}
 		
-		// Final work: there's also plain "device_create()"
+		// Final work: there's also plain "device_create()".  Driver
+		// bcomes "live" on success so insure data is ready.
+		lookup->file_private_data = adapter;
 		lookup->this_device = device_create_with_groups(
 			lookup->genz_class,
 			lookup->parent,		// NULL for now
 			lookup->cdev.dev,
-			lookup,			// void drvdata -> filp->private
+			lookup,			// Not sure where this goes
 			lookup->attr_groups,
 			"%s",
 			devname);
@@ -131,6 +130,12 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 			ret = PTR_ERR(lookup->this_device);
 			goto up_and_out;
 		}
+
+		// Now that all allocs have worked, change adapter.  Yes it's
+		// slightly after the "live" activation but REALLY?
+		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
+			sizeof(adapter->core->Base_C_Class_str));
+
 		pr_cont("success\n");
 		nbindings++;
 	}

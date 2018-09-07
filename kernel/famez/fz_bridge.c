@@ -47,15 +47,27 @@ MODULE_PARM_DESC(verbose, "increase amount of printk info (0)");
 DECLARE_WAIT_QUEUE_HEAD(bridge_reader_wait);
 
 //-------------------------------------------------------------------------
-// file->private is set to the miscdevice structure used in misc_register.
+// misc_register sets up a "hooking" fops for the first open call.  It
+// extracts its misdevice, puts it in file->private, then install the real
+// fops and calls open.  Duplicate the private extraction here.
 
-static int bridge_open(struct inode *inode, struct file *file)
+static int famez_bridge_open(struct inode *inode, struct file *file)
 {
-	struct famez_adapter *adapter = filp2adapter(file);
+	struct famez_adapter *adapter;
 	int n, ret;
 
+	// FAME-Z drivers must do this during open() whether they use
+	// the return value or not.  Later APIs need it.
+	adapter = file->private_data =
+		genz_char_drv_1stopen_private_data(file);
+
+	// pr_info("bridge_open() file->private_data @ 0x%p\n", adapter);
+
 	// FIXME: got to come up with more 'local module' support for this.
-	// Just keep it single user for now.
+	// Just keep it single user for now.  This code was from an earlier
+	// incantation, the "file->private_data" voodoo is another way to
+	// do single open.  I may need this later.
+
 	ret = 0;
 	if ((n = atomic_add_return(1, &adapter->nr_users) == 1)) {
 		struct bridge_buffers *buffers;
@@ -88,9 +100,9 @@ alldone:
 //-------------------------------------------------------------------------
 // At any close of a process fd
 
-static int bridge_flush(struct file *file, fl_owner_t id)
+static int famez_bridge_flush(struct file *file, fl_owner_t id)
 {
-	struct famez_adapter *adapter = filp2adapter(file);
+	struct famez_adapter *adapter = file->private_data;
 	int nr_users, f_count;
 
 	spin_lock(&file->f_lock);
@@ -111,9 +123,9 @@ static int bridge_flush(struct file *file, fl_owner_t id)
 //-------------------------------------------------------------------------
 // Only at the final close of the last process fd
 
-static int bridge_release(struct inode *inode, struct file *file)
+static int famez_bridge_release(struct inode *inode, struct file *file)
 {
-	struct famez_adapter *adapter = filp2adapter(file);
+	struct famez_adapter *adapter = file->private_data;
 	struct bridge_buffers *buffers = adapter->outgoing;
 	int nr_users, f_count;
 
@@ -135,10 +147,10 @@ static int bridge_release(struct inode *inode, struct file *file)
 // can sleep and returns the number of bytes that could NOT be copied or
 // -ERRNO.  Require both copies to work all the way.  
 
-static ssize_t bridge_read(struct file *file, char __user *buf,
-			   size_t buflen, loff_t *ppos)
+static ssize_t famez_bridge_read(struct file *file, char __user *buf,
+				 size_t buflen, loff_t *ppos)
 {
-	struct famez_adapter *adapter = filp2adapter(file);
+	struct famez_adapter *adapter = file->private_data;
 	struct famez_mailslot *sender;
 	int ret, n;
 	// SID is 28 bits or 10 decimal digits; CID is 16 bits or 5 digits
@@ -182,10 +194,10 @@ read_complete:	// Whether I used it or not, let everything go
 // Use many idiot checks.  Performance is not the issue here.  The data
 // might be binary (including unprintables and NULs), not just a C string.
 
-static ssize_t bridge_write(struct file *file, const char __user *buf,
-			    size_t buflen, loff_t *ppos)
+static ssize_t famez_bridge_write(struct file *file, const char __user *buf,
+				  size_t buflen, loff_t *ppos)
 {
-	struct famez_adapter *adapter = filp2adapter(file);
+	struct famez_adapter *adapter = file->private_data;
 	struct bridge_buffers *buffers = adapter->outgoing;
 	ssize_t successlen = buflen;
 	char *bufbody;
@@ -261,9 +273,9 @@ unlock_return:
 //-------------------------------------------------------------------------
 // Returning 0 will cause the caller (epoll/poll/select) to sleep.
 
-static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
+static uint famez_bridge_poll(struct file *file, struct poll_table_struct *wait)
 {
-	struct famez_adapter *adapter = filp2adapter(file);
+	struct famez_adapter *adapter = file->private_data;
 	uint ret = 0;
 
 	poll_wait(file, &bridge_reader_wait, wait);
@@ -274,14 +286,15 @@ static uint bridge_poll(struct file *file, struct poll_table_struct *wait)
 	return ret;
 }
 
+// Symbols show up in /proc/kallsyms so spell them out.
 static const struct file_operations bridge_fops = {
 	.owner =	THIS_MODULE,
-	.open =		bridge_open,
-	.flush =	bridge_flush,
-	.release =	bridge_release,
-	.read =		bridge_read,
-	.write =	bridge_write,
-	.poll =		bridge_poll,
+	.open =		famez_bridge_open,
+	.flush =	famez_bridge_flush,
+	.release =	famez_bridge_release,
+	.read =		famez_bridge_read,
+	.write =	famez_bridge_write,
+	.poll =		famez_bridge_poll,
 };
 
 //-------------------------------------------------------------------------
