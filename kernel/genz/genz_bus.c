@@ -5,6 +5,7 @@
 #include <linux/slab.h>
 
 #include "genz_baseline.h"
+#include "genz_device.h"
 
 //-------------------------------------------------------------------------
 // Boolean
@@ -145,6 +146,11 @@ int __init genz_bus_init(void)
 	}
 	if ((ret = genz_classes_init())) {
 		pr_err("%s()->genz_classes_init() failed\n", __FUNCTION__);
+		bus_unregister(&genz_bus);
+		return ret;
+	}
+	if ((ret = genz_devices_init())) {
+		pr_err("%s()->genz_devices_init() failed\n", __FUNCTION__);
 		bus_unregister(&genz_bus);
 		return ret;
 	}

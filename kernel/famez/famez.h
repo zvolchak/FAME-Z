@@ -3,7 +3,6 @@
 #ifndef FAMEZ_DOT_H
 #define FAMEZ_DOT_H
 
-#include <linux/cdev.h>
 #include <linux/list.h>
 #include <linux/pci.h>
 #include <linux/semaphore.h>
@@ -84,48 +83,6 @@ struct famez_adapter {
 
 	struct genz_core_structure *core;
 };
-
-// Composition pattern to realize all data needed to represent a device.
-// "misc" class devices get it all clearly spelled out in struct miscdevice.
-// and it's all populated by msic_register() in the core.  cdev is kept
-// as a full structure; it can be be pulled from the filp->f_inode->i_cdev
-// and used as anchor in to_xxxx lookups.
-
-struct genz_char_device {		// FIXME: Move this to genz
-	void *file_private_data;	// Extracted at first fops->open()
-	struct class *genz_class;	// Multi-purpose struct
-	struct cdev cdev;		// full structure, has
-					// kobject
-					// owner
-					// ops (fops)
-					// list_head
-					// dev_t (base maj/min)
-					// count (of minors)
-
-	// Copied from miscdevice, in active use
-	struct device *parent;		// set by caller, now to figure out WTF?
-	struct device *this_device;	// created on the fly.
-
-	// Copied from miscdevice, not used yet
-	umode_t mode;
-	const struct attribute_group **attr_groups;
-	const char *name;		// used in device_create[_with_groups]
-	const char *nodename;		// used in misc_class->devnode()
-					// callback to name...
-
-	// NOT copied from miscdevice
-	// minor, because cdev has a dev_t
-	// list_head, because cdev has one
-};
-
-static inline void *genz_char_drv_1stopen_private_data(struct file *file)
-{
-	struct genz_char_device *wrapper = container_of(
-		file->f_inode->i_cdev,		// member address
-		struct genz_char_device,	// container type
-		cdev);				// container member
-	return wrapper->file_private_data;
-}
 
 //-------------------------------------------------------------------------
 // famez_pci.c - insmod/rmmod handling with pci_register probe()/remove()

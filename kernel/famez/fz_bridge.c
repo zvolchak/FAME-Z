@@ -30,6 +30,7 @@
 
 #include <asm-generic/bug.h>	// yes after the others
 
+#include "genz_device.h"
 #include "famez.h"
 #include "fz_bridge.h"
 

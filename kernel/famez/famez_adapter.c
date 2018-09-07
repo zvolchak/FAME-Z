@@ -21,6 +21,7 @@
 #include <linux/utsname.h>
 
 #include "famez.h"
+#include "genz_device.h"	// core structure APIs FIXME move them
 
 //-------------------------------------------------------------------------
 // Slot 0 is the globals data, so disallow its use.  Server id currently
