@@ -85,23 +85,47 @@ struct famez_adapter {
 	struct genz_core_structure *core;
 };
 
-// https://stackoverflow.com/questions/39464028/device-specific-data-structure-with-platform-driver-and-character-device-interfa
-// A lookup table to take advantage of misc_register putting its argument
-// into file->private at open().  Fill in the blanks for each adapter and go.
+// Composition pattern to realize all data needed to represent a device.
+// "misc" class devices get it all clearly spelled out in struct miscdevice.
+// and it's all populated by msic_register() in the core.  cdev is kept
+// as a full structure; it can be be pulled from the filp->f_inode->i_cdev
+// and used as anchor in to_xxxx lookups.
 
-struct famez_char_device {		// And maybe a famez_net_device...
-	struct famez_adapter *adapter;	// what I want to recover
-	struct cdev cdev;		// full structure, not a ptr, passed to core
+struct genz_char_device {		// FIXME: Move this to genz
+	void *drvdata;			// Unless I can stuff things elsewhere..
+	struct class *genz_class;	// Multi-purpose struct
+	struct cdev cdev;		// full structure, has
+					// kobject
+					// owner
+					// ops (fops)
+					// list_head
+					// dev_t (base maj/min)
+					// count (of minors)
+
+	// Copied from miscdevice, in active use
+	struct device *parent;		// set by caller, now to figure out WTF?
+	struct device *this_device;	// created on the fly.
+
+	// Copied from miscdevice, not used yet
+	umode_t mode;
+	const struct attribute_group **attr_groups;
+	const char *name;		// used in device_create[_with_groups]
+	const char *nodename;		// used in misc_class->devnode()
+					// callback to name...
+
+	// NOT copied from miscdevice
+	// minor, because cdev has a dev_t
+	// list_head, because cdev has one
 };
 
 static inline struct famez_adapter *filp2adapter(struct file *file)
 {
 	struct cdev *encapsulated_cdev = file->private_data;	// FIXME
-	struct famez_char_device *lookup = container_of(
+	struct genz_char_device *lookup = container_of(
 		encapsulated_cdev,		// pointer to the member
-		struct famez_char_device,	// type of the container struct
+		struct genz_char_device,	// type of the container struct
 		cdev);				// name of the member
-	return lookup->adapter;
+	return lookup->drvdata;
 }
 
 //-------------------------------------------------------------------------

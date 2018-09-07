@@ -42,10 +42,10 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 {
 	struct famez_adapter *adapter;
 	struct pci_dev *pdev;
-	struct famez_char_device *lookup;
-	char *ownername, *devname;
+	struct genz_char_device *lookup;
+	char *ownername, *devname = NULL;	// use create_device() vararags
 	int ret, nbindings;
-	dev_t majmin;
+	dev_t base_dev_t;
 	uint64_t minor;
 
 	// pr_info("bitmask is %lu bytes\n", sizeof(famez_bridge_minor_bitmap));
@@ -63,11 +63,11 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		return -EDOM;
 	}
 	if (famez_bridge_major) {
-		majmin = MKDEV(famez_bridge_major, minor);
-		ret = register_chrdev_region(majmin, 1, ownername);
+		base_dev_t = MKDEV(famez_bridge_major, minor);
+		ret = register_chrdev_region(base_dev_t, 1, ownername);
 	} else {
-		if (!(ret = alloc_chrdev_region(&majmin, minor, 1, ownername)))
-			famez_bridge_major = MAJOR(majmin);
+		if (!(ret = alloc_chrdev_region(&base_dev_t, minor, 1, ownername)))
+			famez_bridge_major = MAJOR(base_dev_t);
 	}
 	if (ret) {
 		pr_err("Can't allocate chrdev_region: %d\n", ret);
@@ -87,11 +87,11 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		ret = -ENOMEM;
 		if (!(lookup = kzalloc(sizeof(*lookup), GFP_KERNEL)))
 			goto up_and_out;
+		if (devname)
+			kfree(devname);
 		if (!(devname = kzalloc(strlen(ownername) + 6,	// "_%02X
-				     GFP_KERNEL))) {
-			kfree(lookup);
+				     GFP_KERNEL)))
 			goto up_and_out;
-		}
 		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
 			sizeof(adapter->core->Base_C_Class_str));
 
@@ -99,19 +99,36 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
 
 		// This sets .fops, .list, and .kobj == ktype_cdev_default.
-		// Then add anything else.  FIXME: mode like that in miscdev?
+		// Then add anything else.
 		cdev_init(&lookup->cdev, fops);
+		lookup->cdev.dev = MKDEV(famez_bridge_major, minor);
+		lookup->cdev.count = 1;
 		kobject_set_name(&lookup->cdev.kobj, "%s", devname);
 
+		lookup->genz_class = genz_class_getter(GENZ_CCE_DISCRETE_BRIDGE);
+		lookup->mode = 0666;
+
 		// Finish init for teardown
-		lookup->adapter = adapter;
+		lookup->drvdata = adapter;
 		adapter->teardown_lookup = lookup;
 
 		if ((ret = cdev_add(&lookup->cdev,
-				    MKDEV(famez_bridge_major, minor),
-				    1))) {
-			kfree(devname);
-			kfree(lookup);
+				    lookup->cdev.dev,
+				    lookup->cdev.count))) {
+			goto up_and_out;
+		}
+		
+		// Final work: there's also plain "device_create()"
+		lookup->this_device = device_create_with_groups(
+			lookup->genz_class,
+			lookup->parent,		// NULL for now
+			lookup->cdev.dev,
+			lookup,			// void drvdata -> filp->private
+			lookup->attr_groups,
+			"%s",
+			devname);
+		if (IS_ERR(lookup->this_device)) {
+			ret = PTR_ERR(lookup->this_device);
 			goto up_and_out;
 		}
 		pr_cont("success\n");
@@ -120,8 +137,14 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 	ret = nbindings;
 
 up_and_out:
-	if (ret < 0)
+	if (devname)
+		kfree(devname);
+	if (ret < 0) {
 		pr_cont("FAILURE\n");
+		if (lookup)
+			kfree(lookup);
+		adapter->teardown_lookup = NULL;
+	}
 	up(&famez_adapter_sema);
 	return ret;
 }
@@ -134,7 +157,7 @@ EXPORT_SYMBOL(famez_register);
 int famez_deregister(const struct file_operations *fops)
 {
 	struct famez_adapter *adapter;
-	struct famez_char_device *lookup;
+	struct genz_char_device *lookup;
 	char *ownername;
 	int ret;
 	uint64_t minor;
@@ -146,9 +169,11 @@ int famez_deregister(const struct file_operations *fops)
 
 	// If I get them all it releases the major number automatically.
 	for (minor = 0; minor < MAXMINORS; minor++) {
+		dev_t base_dev_t;
+
 		if (test_bit(minor, famez_bridge_minor_bitmap)) {
-			unregister_chrdev_region(
-				MKDEV(famez_bridge_major, minor), 1);
+			base_dev_t = MKDEV(famez_bridge_major, minor);
+			unregister_chrdev_region(base_dev_t, 1);
 			// cdev_del(...
 			// free(devname in kobject_set_name?)
 		}
@@ -162,12 +187,12 @@ int famez_deregister(const struct file_operations *fops)
 
 		if ((lookup = adapter->teardown_lookup) &&
 		    (lookup->cdev.ops == fops)) {
-				// kfree(lookup->cdev.name);  FIXME, devname?
-				kfree(lookup);
-				adapter->teardown_lookup = NULL;
-				strcpy(adapter->core->Base_C_Class_str, FAMEZ_NAME);
-				ret++;
-				pr_cont("success\n");
+			device_destroy(lookup->genz_class, lookup->cdev.dev);
+			kfree(lookup);
+			adapter->teardown_lookup = NULL;
+			strcpy(adapter->core->Base_C_Class_str, FAMEZ_NAME);
+			ret++;
+			pr_cont("success\n");
 		} else
 			pr_cont("not actually bound\n");
 	}
