@@ -332,11 +332,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('d', 'dump'):
-            if self.SI.args.verbose:    # Blah blah blah
+            if self.SI.args.verbose > 1:
                 PRINT('')
                 for id, peer in self.SI.clients.items():
                     PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
-                    if self.SI.args.verbose > 1:
+                    if self.SI.args.verbose > 2:
                         PPRINT(vars(peer), stream=sys.stdout)
 
             # ASCII art switch: Print full left side, right justifed, into 30
@@ -344,7 +344,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             lfmt = '%s %s [%s,%s]'
             rfmt = '[%s,%s] %s %s'
             limit = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
-            N = 30
+            N = 34
             lspaces = ' ' * N
             PRINT('%s  _________' % lspaces)
             for i in range(1, limit + 1):
