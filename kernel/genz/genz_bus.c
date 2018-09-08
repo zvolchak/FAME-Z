@@ -31,8 +31,6 @@ static int genz_num_vf(struct device *dev)
 
 static int genz_dev_init(struct genz_device *dev)
 {
-	struct genz_private __unused *priv = kzalloc(sizeof(*priv), GFP_KERNEL);
-
 	pr_info("%s()\n", __FUNCTION__);
 
 	return 0;
@@ -52,7 +50,7 @@ static const struct genz_device_ops devops = {
 // This is a global common setup for all genz_devs, followed by a "personal"
 // customization callback.  See the dummy driver and alloc_netdev.
 
-struct genz_device *alloc_genzdev(int sizeof_priv, const char *namefmt,
+struct genz_device *alloc_genzdev(const char *namefmt,
 				  void (*customize_cb)(struct genz_device *))
 {
 	struct genz_device *genz_dev;
@@ -107,15 +105,13 @@ int genz_init_one(void)
 
 	pr_info("%s()\n", __FUNCTION__);
 
-	if (!(genz_dev = alloc_genzdev(sizeof(struct genz_private),
-				       "genz%02d", genz_device_customize))) {
+	if (!(genz_dev = alloc_genzdev("genz%02d", genz_device_customize))) {
 		pr_err("%s()->alloc_genzdev failed \n", __FUNCTION__);
 		return -ENOMEM;		// It had ONE job...
 	}
 
 	if ((ret = register_genzdev(genz_dev)))
 		pr_err("%s()->register_genzdev() failed\n", __FUNCTION__);
-		// FIXME memory leaks
 
 	return ret;
 }
@@ -142,20 +138,24 @@ int __init genz_bus_init(void)
 		pr_err("%s()->bus_register() failed\n", __FUNCTION__);
 		return ret;
 	}
+	genz_bus.dev_root = NULL; 	// &genz_dev_root;
+
 	if ((ret = genz_classes_init())) {
 		pr_err("%s()->genz_classes_init() failed\n", __FUNCTION__);
 		goto early_done;
 	}
+
 	if ((ret = genz_devices_init())) {
 		pr_err("%s()->genz_devices_init() failed\n", __FUNCTION__);
 		goto early_done;
 	}
+
 	// Why am I doing this?  From net/dummy.  Or is this the "genz0"
 	// thing I'm forcing below?
-	if ((ret = genz_init_one())) {
-		pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
-		goto early_done;
-	}
+	// if ((ret = genz_init_one())) {
+		// pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
+		// goto early_done;
+	// }
 
 	// LDD3:14 Device Model -> "Device Registration"; see also source for
 	// "subsys_register()".  Need a separate object from bus to form an
@@ -171,7 +171,6 @@ int __init genz_bus_init(void)
 		pr_err("%s()->device_add(genz_dev_root) failed\n", __FUNCTION__);
 		goto early_done;
 	}
-	genz_bus.dev_root = NULL; 	// &genz_dev_root;
 
 early_done:
 	pr_info("%s() %s\n", __FUNCTION__, !ret ? "passed" : "FAILED");

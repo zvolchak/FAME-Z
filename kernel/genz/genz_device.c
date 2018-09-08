@@ -31,20 +31,25 @@
 
 #define UNUSED __attribute__ ((unused))
 
-//-------------------------------------------------------------------------
-// MINORBITS is 20, which is 1M devices, which is cool, but it's 16k longs
-// in the bitmap, or 128k, which seems like uncool overkill.
+/**
+ * MINORBITS is 20, which is 1M devices, which is cool, but it's 16k longs
+ * in the bitmap, or 128k, which seems like uncool overkill.
+ */
 
-#define GENZ_MINORBITS	14			// 16k devices per class
-#define MAXMINORS	(1 << GENZ_MINORBITS)	// 2k space per bitmap
+#define GENZ_MINORBITS	14			/* 16k devices per class */
+#define MAXMINORS	(1 << GENZ_MINORBITS)	/* 2k space per bitmap */
 
 static DECLARE_BITMAP(bridge_minor_bitmap, MAXMINORS) = { 0 };
 static struct mutex bridge_mutex;
 
-static uint64_t bridge_major = 0;		// Until first allocation
+static uint64_t bridge_major = 0;		/* Until first allocation */
 
-//-------------------------------------------------------------------------
-// alloc is a bitfield directing which sub-structures to allocate.
+/**
+ * genz_core_structure_create - allocate and populate a Gen-Z Core Structure
+ * @alloc: a bitfield directing which sub-structures to allocate.
+ * 
+ * Create a semantically-complete Core Structure (not binary field-precise).
+ */
 
 struct genz_core_structure *genz_core_structure_create(uint64_t alloc)
 {
@@ -63,7 +68,6 @@ struct genz_core_structure *genz_core_structure_create(uint64_t alloc)
 }
 EXPORT_SYMBOL(genz_core_structure_create);
 
-//-------------------------------------------------------------------------
 void genz_core_structure_destroy(struct genz_core_structure *core)
 {
 	if (core->comp_dest_table) {
@@ -74,10 +78,15 @@ void genz_core_structure_destroy(struct genz_core_structure *core)
 }
 EXPORT_SYMBOL(genz_core_structure_destroy);
 
-//-------------------------------------------------------------------------
-// Following the style of misc_register().
-// CCE = Component Class Encoding, Gen-Z spec 1.0 Appendix C
-// Return 0 or -ESOMETHING
+/**
+ * genz_register_bridge - add a new bridge character device and driver
+ * @devname: string containing the device name to be used in sysfs
+ * @CCE: Component Class Encoding from the Gen-Z spec
+ * @fops: driver set for the device
+ * @file_private_data: to be attached as file->private_data in all fops
+ *
+ * Based on misc_register().  Returns 0 on success or -ESOMETHING.
+ */
 
 int genz_register_bridge(char *devname, unsigned CCE,
 			 const struct file_operations *fops,
@@ -88,6 +97,10 @@ int genz_register_bridge(char *devname, unsigned CCE,
 	struct genz_char_device *wrapper = NULL;
 	dev_t base_dev_t = 0;
 	uint64_t minor;
+
+	if (CCE < GENZ_CCE_DISCRETE_BRIDGE ||
+	    CCE > GENZ_CCE_INTEGRATED_BRIDGE)
+		return -EDOM;
 
 	mutex_lock(&bridge_mutex);
 

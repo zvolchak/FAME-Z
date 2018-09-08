@@ -13,18 +13,43 @@
 
 #define __unused __attribute__ ((unused))
 
-#define GENZ_CCE_DISCRETE_BRIDGE	0x14
+/**
+  * Gen-Z 1.0 Appendix C, Component Class Encodings.
+  * NB == Non-Bootable
+  * NC == Non-Coherent
+  */
 
-struct genz_private {			// Just following netdev
-	int junk;
+enum genz_component_class_encodings {
+	GENZ_CCE_RESERVED_SHALL_NOT_BE_USED = 0x0,
+	GENZ_CCE_MEMORY_P2P_CORE,
+	GENZ_CCE_MEMORY_EXPLICIT_OPCLASS,
+	GENZ_CCE_INTEGRATED_SWITCH,
+	GENZ_CCE_ENC_EXP_SWITCH,
+	GENZ_CCE_FABRIC_SWITCH,
+	GENZ_CCE_PROCESSOR,
+	GENZ_CCE_PROCESSOR_NB,
+	GENZ_CCE_ACCELERATOR_NB_NC = 0x8,
+	GENZ_CCE_ACCELERATOR_NB,
+	GENZ_CCE_ACCELERATOR_NC,
+	GENZ_CCE_ACCELERATOR,
+	GENZ_CCE_IO_NB_NC,
+	GENZ_CCE_IO_NB,
+	GENZ_CCE_IO_NC,
+	GENZ_CCE_IO,
+	GENZ_CCE_BLOCK_STORAGE = 0x10,
+	GENZ_CCE_BLOCK_STORAGE_NB,
+	GENZ_CCE_TRANSPARENT_ROUTER,
+	GENZ_CCE_MULTI_CLASS,
+	GENZ_CCE_DISCRETE_BRIDGE,
+	GENZ_CCE_INTEGRATED_BRIDGE = 0x15,
 };
 
 struct genz_device {
 	char namefmt[GZNAMFMTSIZ];
 	struct list_head lister;
 	uint64_t flags;
-	struct device dev;		// for to_genz_dev
-	struct genz_priv *priv;
+	struct device dev;
+	void *private_data;
 };
 #define to_genz_dev(pPp) container_of(pPp, struct genz_device, dev)
 
