@@ -53,8 +53,8 @@ As the famez_server.py was created, there is also a famez_client.py to supplant 
 
 1. Clone this repo
 1. Install python3 package :twisted"
-1. In one terminal window run './famez_server.py  --nSlots 8'.  This provides acceptance for six attached clients such as famez_client.c, ivshmem-client, or a properly-configured QEMU process.  By default this creates /tmp/ivshmsg_socket to which clients attach, and /dev/shm/famez_mailbox which is shared among all clients for messaging.
-1. In a second (or more) terminal window run 'ivshmem-client '.  You'll see them get added in the server log output.
+1. In one terminal window run './famez_server.py  --nClients 8'.  This provides acceptance for six attached clients such as famez_client.c, ivshmem-client, or a properly-configured QEMU process.  By default this creates /tmp/ivshmsg_socket to which clients attach, and /dev/shm/famez_mailbox which is shared among all clients for messaging.
+1. In a second (or more) terminal window run 'iivshmem-client -S /tmp/famez_socket'.  You'll see them get added in the server log output.
 1. In one of the clients, hit return, then type "help".  Play with sending messages to the other client(s) or the server.
 
 ## Connecting VMs
