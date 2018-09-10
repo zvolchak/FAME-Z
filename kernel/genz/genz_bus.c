@@ -7,6 +7,13 @@
 #include "genz_baseline.h"
 #include "genz_device.h"
 
+MODULE_LICENSE("GPL");
+MODULE_VERSION(DRV_VERSION);
+
+static unsigned auto0 = 1;
+module_param(auto0, uint, 0644);
+MODULE_PARM_DESC(auto0, "auto-create bus instance genz0 (1)");
+
 //-------------------------------------------------------------------------
 // Boolean
 
@@ -98,7 +105,7 @@ static void genz_device_customize(struct genz_device *genz_dev)
 	pr_info("%s()\n", __FUNCTION__);
 }
 
-int genz_init_one(void)
+int genz_init_one(struct device *dev)
 {
 	struct genz_device *genz_dev;
 	int ret = 0;
@@ -116,46 +123,53 @@ int genz_init_one(void)
 	return ret;
 }
 
-//-----------------------------------------------------------------------
-// Module wrapping.
+// static unsigned next_genz_bus = 0;
 
-struct bus_type genz_bus = {
-	.name	= "genz",
-	.dev_name = "genz_dev_name",
-	.match = genz_match,
-	.num_vf = genz_num_vf,
-};
+struct bus_type genz_bus;	// Only one directly in /sys/bus
 
-// See use of "mci_pdev" in edac_mc_sysfs.c
-struct device genz_dev_root;
+struct device genz_dev_root;	// Limited to one for now
+
+void genz_bus_exit(void)
+{
+	pr_info("%s()\n", __FUNCTION__);
+	bus_unregister(&genz_bus);
+	genz_classes_destroy();
+}
 
 int __init genz_bus_init(void)
 {
 	int ret = 0;
 
 	pr_info("%s()\n", __FUNCTION__);
-	if ((ret = bus_register(&genz_bus))) {
-		pr_err("%s()->bus_register() failed\n", __FUNCTION__);
-		return ret;
-	}
-	genz_bus.dev_root = NULL; 	// &genz_dev_root;
 
 	if ((ret = genz_classes_init())) {
 		pr_err("%s()->genz_classes_init() failed\n", __FUNCTION__);
-		goto early_done;
+		return ret;
+	}
+	genz_bus.name = "genz_bus";
+	genz_bus.dev_name = "genz_BUS%u";	// "subsystem enumeration"
+	genz_bus.dev_root = NULL;		// "Default parent device"
+	genz_bus.match = genz_match;		// Can driver handle device?
+	genz_bus.probe = genz_init_one;		// if match() call drv.probe
+	genz_bus.num_vf = genz_num_vf;
+
+	if ((ret = bus_register(&genz_bus))) {
+		pr_err("%s()->bus_register() failed\n", __FUNCTION__);
+		genz_classes_destroy();
+		return ret;
 	}
 
-	if ((ret = genz_devices_init())) {
-		pr_err("%s()->genz_devices_init() failed\n", __FUNCTION__);
-		goto early_done;
-	}
+	if (!auto0)
+		return 0;
 
-	// Why am I doing this?  From net/dummy.  Or is this the "genz0"
-	// thing I'm forcing below?
-	// if ((ret = genz_init_one())) {
-		// pr_err("%s()->genz_init_one() failed\n", __FUNCTION__);
-		// goto early_done;
-	// }
+	// FIXME: multiple steps to create enumerated buses correctly
+	// 1. Insure I like the layout of sysfs after the explicit code below
+	//    that forces creation of genz0.
+	// 2. Move this explicit code into .match/.probe (ie genz_init_one)
+	//    and call it directly.
+	// 3. Trigger genz_init_one() from insmod of famez.ko via an explicit
+	//    call.
+	// 4. Have famez.ko generate a "hotplug uevent" that triggers it all.
 
 	// LDD3:14 Device Model -> "Device Registration"; see also source for
 	// "subsys_register()".  Need a separate object from bus to form an
@@ -163,30 +177,18 @@ int __init genz_bus_init(void)
 	// the anchor purpose.  I'm not totally sure why this works, but it
 	// does what I want.  Order matters.  Enumeration of extra buses
 	// (cards) is left as an exercise for the reader.
+
+	// .parent = NULL lands at the top of /sys/devices, which seems good
 	genz_dev_root.bus = &genz_bus;
 	device_initialize(&genz_dev_root);
-	dev_set_name(&genz_dev_root, "genz0");
+	dev_set_name(&genz_dev_root, "genz0_dev_root");
 	genz_dev_root.kobj.parent = NULL;
 	if ((ret = device_add(&genz_dev_root))) {
 		pr_err("%s()->device_add(genz_dev_root) failed\n", __FUNCTION__);
-		goto early_done;
+		genz_bus_exit();
 	}
-
-early_done:
-	pr_info("%s() %s\n", __FUNCTION__, !ret ? "passed" : "FAILED");
-	if (ret)
-		bus_unregister(&genz_bus);
 	return ret;
-}
-
-void genz_bus_exit(void)
-{
-	pr_info("%s()\n", __FUNCTION__);
-	genz_classes_destroy();
-	bus_unregister(&genz_bus);
 }
 
 module_init(genz_bus_init);
 module_exit(genz_bus_exit);
-MODULE_LICENSE("GPL");
-MODULE_VERSION(DRV_VERSION);

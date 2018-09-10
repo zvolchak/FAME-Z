@@ -66,10 +66,14 @@ struct genz_device_ops {
 
 // Gen-Z 1.0 "8.14 Core Structure"
 
-#define GENZ_CORE_STRUCTURE_ALLOC_COMP_DEST_TABLE	0x0001
-#define GENZ_CORE_STRUCTURE_ALLOC_ALL			0xffff
+enum genz_core_structure_optional_substructures {
+	GENZ_CORE_STRUCTURE_ALLOC_COMP_DEST_TABLE =	1 << 0,
+	GENZ_CORE_STRUCTURE_ALLOC_XYZZY_TABLE =		1 << 1,
+	GENZ_CORE_STRUCTURE_ALLOC_ALL =			(1 << 2) - 1
+};
 
 struct genz_core_structure {
+	unsigned CCE;
 	char Base_C_Class_str[32];
 	int32_t CID0, SID0,	// 0 if unassigned, -1 if unused
 	    PMCID,		// If I am the fabric manager

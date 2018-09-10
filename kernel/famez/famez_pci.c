@@ -93,6 +93,11 @@ static int famez_init_one(
 		}
 	}
 	if (!ret) {
+		if (pdev->slot) {	// When does this go live?
+			pr_info("Slot name = %s\n", pci_slot_name(pdev->slot));
+			ret = kobject_rename(&pdev->slot->kobj, FAMEZ_NAME);
+			ret = 0;	// __must_check, but __dont_care
+		}
 		list_add_tail(&adapter->lister, &famez_adapter_list);
 		PR_V1("adapter added to active list\n")
 	}
@@ -101,6 +106,7 @@ static int famez_init_one(
 		pr_err(FZSP "This device is already in active list\n");
 		goto err_MSIX_teardown;
 	}
+
 
 	// Get peer-attributes from famez_server.  This message will also
 	// trigger the server to read my hostname from the mailbox.  The

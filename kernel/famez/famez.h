@@ -12,11 +12,11 @@
 
 #define FAMEZ_DEBUG			// See "Debug assistance" below
 
-#define FAMEZ_NAME	"FAME-Z_adapter"
+#define FAMEZ_NAME	"FAME-Z"
 #define FZ		"famez: "	// pr_xxxx header
 #define FZSP		"       "	// pr_xxxx header same length indent
 
-#define FAMEZ_VERSION	FAMEZ_NAME " v0.8.2: modular w/bridge"
+#define FAMEZ_VERSION	FAMEZ_NAME " v0.9.0: using Gen-Z subsystem"
 
 struct ivshmem_registers {		// BAR 0
 	uint32_t	Rev1Reserved1,	// Rev 0: Interrupt mask

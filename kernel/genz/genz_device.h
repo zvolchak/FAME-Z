@@ -38,15 +38,12 @@ struct genz_char_device {		// FIXME: Move this to genz
 
 static inline void *genz_char_drv_1stopen_private_data(struct file *file)
 {
-	struct genz_char_device *wrapper = container_of(
+	struct genz_char_device *container = container_of(
 		file->f_inode->i_cdev,		// member address
 		struct genz_char_device,	// container type
 		cdev);				// container member
-	return wrapper->file_private_data;
+	return container->file_private_data;
 }
-
-int genz_devices_init(void);
-void genz_devices_destroy(void);
 
 // EXPORTed
 

@@ -31,16 +31,17 @@
 
 #define UNUSED __attribute__ ((unused))
 
-/**
- * MINORBITS is 20, which is 1M devices, which is cool, but it's 16k longs
+/*
+ * MINORBITS is 20, which is 1M components, which is cool, but it's 16k longs
  * in the bitmap, or 128k, which seems like uncool overkill.
  */
 
-#define GENZ_MINORBITS	14			/* 16k devices per class */
+#define GENZ_MINORBITS	14			/* 16k components per class */
 #define MAXMINORS	(1 << GENZ_MINORBITS)	/* 2k space per bitmap */
 
+static DEFINE_MUTEX(bridge_mutex);
 static DECLARE_BITMAP(bridge_minor_bitmap, MAXMINORS) = { 0 };
-static struct mutex bridge_mutex;
+static LIST_HEAD(bridge_list);
 
 static uint64_t bridge_major = 0;		/* Until first allocation */
 
@@ -125,19 +126,20 @@ int genz_register_bridge(char *devname, unsigned CCE,
 		goto up_and_out;
 	}
 	set_bit(minor, bridge_minor_bitmap);
-	pr_info("%s is major minor %llu %llu\n",
-		ownername, bridge_major, minor);
+	pr_info("%s dev_t = %llu:%llu\n", ownername, bridge_major, minor);
 
-	ret = -ENOMEM;
-	if (!(wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL)))
+	if (!(wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL))) {
+		ret = -ENOMEM;
 		goto up_and_out;
+	}
 
 	// This sets .fops, .list, and .kobj == ktype_cdev_default.
 	// Then add anything else.
 	cdev_init(&wrapper->cdev, fops);
 	wrapper->cdev.dev = MKDEV(bridge_major, minor);
 	wrapper->cdev.count = 1;
-	kobject_set_name(&wrapper->cdev.kobj, "%s", devname);
+	if ((ret = kobject_set_name(&wrapper->cdev.kobj, "%s", devname)))
+		goto up_and_out;
 
 	wrapper->genz_class = genz_class_getter(GENZ_CCE_DISCRETE_BRIDGE);
 	wrapper->mode = 0666;
@@ -175,37 +177,3 @@ up_and_out:
 	return ret;
 }
 EXPORT_SYMBOL(genz_register_bridge);
-
-//-------------------------------------------------------------------------
-// Because there are no mutex initializers
-
-int genz_devices_init() {
-	pr_info("%s()\n", __FUNCTION__);
-	mutex_init(&bridge_mutex);
-	return 0;
-}
-
-void genz_devices_destroy() {
-	pr_info("%s()\n", __FUNCTION__);
-}
-
-//-------------------------------------------------------------------------
-#ifdef DEVICE_REGISTER_PARENT
-
-static void release_famez_parent(struct device *dev)
-{
-	pr_info("%s()\n", __FUNCTION__);
-}
-
-static struct device UNUSED famez_parent = {
-	.init_name	= "FAME-Z_adapter",
-	.bus		= &genz_bus,
-	.release	= release_famez_parent,
-};
-	if ((ret = device_register(&famez_parent))) {
-		pr_err("Registering parent device failed\n");
-		bus_unregister(&genz_bus);
-		return ret;
-	}
-#endif
-
