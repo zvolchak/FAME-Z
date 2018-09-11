@@ -32,7 +32,6 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		   const struct file_operations *fops)
 {
 	struct famez_adapter *adapter;
-	struct pci_dev *pdev;
 	char *ownername, devname[64];
 	int ret, nbindings;
 
@@ -43,15 +42,17 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 	ownername = fops->owner->name;	
 	nbindings = 0;
 	list_for_each_entry(adapter, &famez_adapter_list, lister) {
+		struct pci_dev *pdev;
 
 		pdev = adapter->pdev;
 		// Device file name is meant to be reminiscent of lspci output.
 		pr_info(FZ "binding %s to %s: ",
 			ownername, pci_resource_name(pdev, 1));
-		sprintf(devname, "%s_%02x", ownername, pdev->devfn >> 3);
+		sprintf(devname, "%s_%02x", ownername, adapter->slot);
 
 		if ((ret = genz_register_bridge(
-			devname, GENZ_CCE_DISCRETE_BRIDGE, fops, adapter)))
+			devname, GENZ_CCE_DISCRETE_BRIDGE, fops,
+			adapter, adapter->slot)))
 				goto up_and_out;
 
 		// Now that all allocs have worked, change adapter.  Yes it's

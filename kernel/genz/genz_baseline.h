@@ -51,7 +51,7 @@ struct genz_device {
 	struct device dev;
 	void *private_data;
 };
-#define to_genz_dev(pPp) container_of(pPp, struct genz_device, dev)
+#define to_genz_dev(pDeV) container_of(pDeV, struct genz_device, dev)
 
 struct genz_device_ops {
 	int (*init)(struct genz_device *genz_dev);
@@ -101,8 +101,7 @@ struct genz_interface_structure {
 //-------------------------------------------------------------------------
 // genz_bus.c
 
-extern struct bus_type genz_bus;
-extern struct device genz_dev_root;
+struct device *genz_find_me_a_bus_device(int);
 
 //-------------------------------------------------------------------------
 // genz_class.c

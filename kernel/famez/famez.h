@@ -59,6 +59,7 @@ struct famez_adapter {
 	struct list_head lister;
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
+	int slot;					// pdev->devfn >> 3
 	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_buflen;
 	uint16_t my_id;					// match ringer field

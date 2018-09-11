@@ -143,6 +143,7 @@ struct famez_adapter *famez_adapter_create(struct pci_dev *pdev)
 	pci_set_drvdata(pdev, adapter);		// Just pass around pdev.
 	dev_set_drvdata(&pdev->dev, adapter);	// Never hurts to go deep.
 	adapter->pdev = pdev;			// Reverse pointers never hurt.
+	adapter->slot = pdev->devfn >> 3;	// Needed in a few places
 
 	// Simple fields.
 	init_waitqueue_head(&(adapter->incoming_slot_wqh));

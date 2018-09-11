@@ -91,7 +91,8 @@ EXPORT_SYMBOL(genz_core_structure_destroy);
 
 int genz_register_bridge(char *devname, unsigned CCE,
 			 const struct file_operations *fops,
-			 void *file_private_data)
+			 void *file_private_data,
+			 int slot)
 {
 	int ret = 0;
 	char *ownername = NULL;
@@ -143,7 +144,7 @@ int genz_register_bridge(char *devname, unsigned CCE,
 
 	wrapper->genz_class = genz_class_getter(GENZ_CCE_DISCRETE_BRIDGE);
 	wrapper->mode = 0666;
-	wrapper->parent = &genz_dev_root;
+	wrapper->parent = genz_find_me_a_bus_device(slot);
 
 	if ((ret = cdev_add(&wrapper->cdev,
 			    wrapper->cdev.dev,

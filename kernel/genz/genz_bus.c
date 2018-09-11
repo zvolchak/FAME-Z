@@ -123,15 +123,91 @@ int genz_init_one(struct device *dev)
 	return ret;
 }
 
-// static unsigned next_genz_bus = 0;
+struct bus_type genz_bus = {		// Only one directly in /sys/bus
+	.name = "genz",
+	.dev_name = "genz%u",		// "subsystem enumeration"
+	.dev_root = NULL,		// "Default parent device"
+	.match = genz_match,		// Verify driver<->device permutations
+	.probe = genz_init_one,		// if match() call drv.probe
+	.num_vf = genz_num_vf,
+};
 
-struct bus_type genz_bus;	// Only one directly in /sys/bus
+#define MAXBUSES	254		// Fit into "0x%02x" format
+#define POTPOURRID	(MAXBUSES + 1)	// The "first available" potpourri bus
 
-struct device genz_dev_root;	// Limited to one for now
+static DEFINE_MUTEX(bus_mutex);
+static LIST_HEAD(bus_list);
+
+struct genz_bus_entry {
+	struct list_head bus_lister;
+	unsigned id;		// derived from slot of requester
+	struct device bus_dev;
+};
+
+#define to_genz_bus(pDeV) container_of(pDeV, struct genz_bus_entry, bus_dev);
+
+struct device *genz_find_me_a_bus_device(int desired)
+{
+	struct genz_bus_entry *foundit;
+
+	if (desired > MAXBUSES)
+		return NULL;
+	if (desired < 0)
+		desired = POTPOURRID;
+
+	mutex_lock(&bus_mutex);
+
+	foundit = NULL;
+	list_for_each_entry(foundit, &bus_list, bus_lister) {
+		if (desired == foundit->id)
+			break;
+	}
+	if (!foundit) {
+		pr_info("FINDME: creating a new genz_bus_entry %d\n", desired);
+		if (!(foundit = kzalloc(sizeof(*foundit), GFP_KERNEL)))
+			goto all_done;
+		foundit->id = desired;
+		INIT_LIST_HEAD(&foundit->bus_lister);
+
+	// LDD3:14 Device Model -> "Device Registration"; see also source for
+	// "subsys_register()".  Need a separate object from bus to form an
+	// anchor point; it's not a fully fleshed-out struct device but serves
+	// the anchor purpose.  device_register() does both of these but I
+	// want to change the bus and name, so do it in two pieces.
+	// .parent = NULL (ie, after kzalloc) lands at the top of /sys/devices
+	// which seems good.  Start with the lists/mutex/kobj of struct device.
+
+		pr_info("FINDME: device_initialize\n");
+		device_initialize(&(foundit->bus_dev));
+		foundit->bus_dev.bus = &genz_bus;
+		dev_set_name(&foundit->bus_dev, "genz%02x", foundit->id);
+		if (device_add(&foundit->bus_dev)) {
+			pr_err("%s()->device_add(0x%02x) failed\n",
+				__FUNCTION__, foundit->id);
+			kfree(foundit);
+			foundit = NULL;
+			goto all_done;
+		}
+		list_add_tail(&foundit->bus_lister, &bus_list);
+	}
+
+all_done:
+	mutex_unlock(&bus_mutex);
+
+	return foundit ? &foundit->bus_dev : NULL;
+}
 
 void genz_bus_exit(void)
 {
+	struct genz_bus_entry *bus, *tmp;
+
 	pr_info("%s()\n", __FUNCTION__);
+	list_for_each_entry_safe(bus, tmp, &bus_list, bus_lister) {
+		// if device_add() was called, must use this
+		device_del(&bus->bus_dev);	
+		put_device(&bus->bus_dev);
+		kfree(bus);
+	}
 	bus_unregister(&genz_bus);
 	genz_classes_destroy();
 }
@@ -146,13 +222,6 @@ int __init genz_bus_init(void)
 		pr_err("%s()->genz_classes_init() failed\n", __FUNCTION__);
 		return ret;
 	}
-	genz_bus.name = "genz_bus";
-	genz_bus.dev_name = "genz_BUS%u";	// "subsystem enumeration"
-	genz_bus.dev_root = NULL;		// "Default parent device"
-	genz_bus.match = genz_match;		// Can driver handle device?
-	genz_bus.probe = genz_init_one;		// if match() call drv.probe
-	genz_bus.num_vf = genz_num_vf;
-
 	if ((ret = bus_register(&genz_bus))) {
 		pr_err("%s()->bus_register() failed\n", __FUNCTION__);
 		genz_classes_destroy();
@@ -162,31 +231,6 @@ int __init genz_bus_init(void)
 	if (!auto0)
 		return 0;
 
-	// FIXME: multiple steps to create enumerated buses correctly
-	// 1. Insure I like the layout of sysfs after the explicit code below
-	//    that forces creation of genz0.
-	// 2. Move this explicit code into .match/.probe (ie genz_init_one)
-	//    and call it directly.
-	// 3. Trigger genz_init_one() from insmod of famez.ko via an explicit
-	//    call.
-	// 4. Have famez.ko generate a "hotplug uevent" that triggers it all.
-
-	// LDD3:14 Device Model -> "Device Registration"; see also source for
-	// "subsys_register()".  Need a separate object from bus to form an
-	// anchor point; it's not a fully fleshed-out struct device but serves
-	// the anchor purpose.  I'm not totally sure why this works, but it
-	// does what I want.  Order matters.  Enumeration of extra buses
-	// (cards) is left as an exercise for the reader.
-
-	// .parent = NULL lands at the top of /sys/devices, which seems good
-	genz_dev_root.bus = &genz_bus;
-	device_initialize(&genz_dev_root);
-	dev_set_name(&genz_dev_root, "genz0_dev_root");
-	genz_dev_root.kobj.parent = NULL;
-	if ((ret = device_add(&genz_dev_root))) {
-		pr_err("%s()->device_add(genz_dev_root) failed\n", __FUNCTION__);
-		genz_bus_exit();
-	}
 	return ret;
 }
 

@@ -51,6 +51,6 @@ extern struct genz_core_structure *genz_core_structure_create(uint64_t);
 extern void genz_core_structure_destroy(struct genz_core_structure *);
 
 extern int genz_register_bridge(
-	char *, unsigned, const struct file_operations *, void *);
+	char *, unsigned, const struct file_operations *, void *, int);
 
 #endif
