@@ -99,7 +99,6 @@ static int famez_init_one(
 			ret = 0;	// __must_check, but __dont_care
 		}
 		list_add_tail(&adapter->lister, &famez_adapter_list);
-		PR_V1("adapter added to active list\n")
 	}
 	up(&famez_adapter_sema);
 	if (ret) {

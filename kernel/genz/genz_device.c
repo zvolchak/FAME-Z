@@ -127,7 +127,8 @@ int genz_register_bridge(char *devname, unsigned CCE,
 		goto up_and_out;
 	}
 	set_bit(minor, bridge_minor_bitmap);
-	pr_info("%s dev_t = %llu:%llu\n", ownername, bridge_major, minor);
+	pr_info("%s(%s) dev_t = %llu:%llu\n", __FUNCTION__, ownername,
+		bridge_major, minor);
 
 	if (!(wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL))) {
 		ret = -ENOMEM;
@@ -144,8 +145,10 @@ int genz_register_bridge(char *devname, unsigned CCE,
 
 	wrapper->genz_class = genz_class_getter(GENZ_CCE_DISCRETE_BRIDGE);
 	wrapper->mode = 0666;
-	wrapper->parent = genz_find_me_a_bus_device(slot);
-
+	if (!(wrapper->parent = genz_find_me_a_bus_device(slot))) {
+		ret = -ENODEV;
+		goto up_and_out;
+	}
 	if ((ret = cdev_add(&wrapper->cdev,
 			    wrapper->cdev.dev,
 			    wrapper->cdev.count))) {
@@ -157,7 +160,7 @@ int genz_register_bridge(char *devname, unsigned CCE,
 	wrapper->file_private_data = file_private_data;
 	wrapper->this_device = device_create_with_groups(
 		wrapper->genz_class,
-		wrapper->parent,
+		wrapper->parent,	// ugly croakage if this is NULL
 		wrapper->cdev.dev,
 		wrapper,		// drvdata: not sure where this goes
 		wrapper->attr_groups,

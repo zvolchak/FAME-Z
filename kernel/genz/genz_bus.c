@@ -10,10 +10,6 @@
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
 
-static unsigned auto0 = 1;
-module_param(auto0, uint, 0644);
-MODULE_PARM_DESC(auto0, "auto-create bus instance genz0 (1)");
-
 //-------------------------------------------------------------------------
 // Boolean
 
@@ -148,7 +144,7 @@ struct genz_bus_entry {
 
 struct device *genz_find_me_a_bus_device(int desired)
 {
-	struct genz_bus_entry *foundit;
+	struct genz_bus_entry *tmp, *foundit = NULL;
 
 	if (desired > MAXBUSES)
 		return NULL;
@@ -158,12 +154,13 @@ struct device *genz_find_me_a_bus_device(int desired)
 	mutex_lock(&bus_mutex);
 
 	foundit = NULL;
-	list_for_each_entry(foundit, &bus_list, bus_lister) {
-		if (desired == foundit->id)
+	list_for_each_entry(tmp, &bus_list, bus_lister) {
+		if (desired == tmp->id) {
+			foundit = tmp;
 			break;
+		}
 	}
 	if (!foundit) {
-		pr_info("FINDME: creating a new genz_bus_entry %d\n", desired);
 		if (!(foundit = kzalloc(sizeof(*foundit), GFP_KERNEL)))
 			goto all_done;
 		foundit->id = desired;
@@ -177,7 +174,6 @@ struct device *genz_find_me_a_bus_device(int desired)
 	// .parent = NULL (ie, after kzalloc) lands at the top of /sys/devices
 	// which seems good.  Start with the lists/mutex/kobj of struct device.
 
-		pr_info("FINDME: device_initialize\n");
 		device_initialize(&(foundit->bus_dev));
 		foundit->bus_dev.bus = &genz_bus;
 		dev_set_name(&foundit->bus_dev, "genz%02x", foundit->id);
@@ -194,7 +190,7 @@ struct device *genz_find_me_a_bus_device(int desired)
 all_done:
 	mutex_unlock(&bus_mutex);
 
-	return foundit ? &foundit->bus_dev : NULL;
+	return foundit ? &(foundit->bus_dev) : NULL;
 }
 
 void genz_bus_exit(void)
@@ -227,10 +223,6 @@ int __init genz_bus_init(void)
 		genz_classes_destroy();
 		return ret;
 	}
-
-	if (!auto0)
-		return 0;
-
 	return ret;
 }
 
