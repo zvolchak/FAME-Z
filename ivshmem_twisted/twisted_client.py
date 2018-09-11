@@ -338,10 +338,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.place_and_go(dest, msg)
             return True
 
-        if cmd in ('i', 'int'):     # Legacy from QEMU ivshmem-client
-            assert len(args) >= 2, 'Missing dest and/or src'
-            dest = args.pop(0)
+        if cmd in ('sp', 'spoof'):     # Like send but specify a src
+            assert len(args) >= 2, 'Missing src and/or dest'
             src = args.pop(0)
+            dest = args.pop(0)
             msg = ' '.join(args)   # Empty list -> empty string
             self.place_and_go(dest, msg, src)
             return True
@@ -373,11 +373,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('p[ing] dest\n\tShorthand for "send dest ping"')
             print('q[uit]\n\tJust do it')
             print('r[fc]\n\tSend "Link RFC ..." to the server')
-            print('s[end] dest [text...]\n\tLike "int" where src=me')
+            print('s[end] dest [text...]\n\tSend text from this client')
+            print('sp[oof] src dest [text...]\n\tLike send but fake the src')
             print('w[ho]\n\tList all peers')
-
-            print('\nLegacy commands from QEMU "ivshmem-client":\n')
-            print('i[nt] dest src [text...]\n\tCan spoof src')
             return True
 
         if cmd in ('w', 'who'):
