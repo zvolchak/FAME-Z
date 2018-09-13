@@ -25,6 +25,7 @@ from time import time as NOW
 from os.path import stat as STAT    # for constants
 from pdb import set_trace
 
+
 class FAMEZ_MailBox(object):
 
     # QEMU rules: file size (product of first two) must be a power of two.
@@ -124,7 +125,7 @@ class FAMEZ_MailBox(object):
         self.filesize = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
 
         if args is None:
-            assert fd > 0 and client_id > 0 and isinstance(nodename, str), \
+            assert fd >= 0 and client_id > 0 and isinstance(nodename, str), \
                 'Bad call, ump!'
             self.__class__.fd = fd
             self.nodename = nodename
@@ -261,6 +262,9 @@ class FAMEZ_MailBox(object):
              cls.server_id) = struct.unpack(
                 'QQQ',
                 cls.mm[cls.G_NCLIENTS_off:cls.G_NCLIENTS_off + 24])
+
+        if id > cls.server_id:  # Probably a test run
+            return
 
         # mailbox slot starts with nodename
         cls.clear_mailslot(id, nodenamebytes=nodename.encode())
