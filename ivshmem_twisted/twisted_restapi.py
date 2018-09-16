@@ -41,19 +41,15 @@ class MailBoxReSTAPI(object):
         ))
         for id in range(1, cls.nClients + 1):
             offset = id * cls.mb.MAILBOX_SLOTSIZE
-            print('id=%d, offset=%d' % (id, offset), file=sys.stderr)
             # unpack produces a tuple.
             this = cls.nodes[id]
-            (nodename,) = struct.unpack('32s', cls.mm[offset:offset+32])
+            (nodename, cclass) = struct.unpack('32s32s',
+                cls.mm[offset:offset+64])
 
-            # Nodename is padded out with nulls.
+            # Strings are padded out with nulls.
             this.nodename = nodename.split(b'\0', 1)[0].decode()
+            this.cclass = cclass.split(b'\0', 1)[0].decode()
             this.id = id
-            if this.nodename:
-                this.hardware = 'Debugger' if this.nodename[0] == 'z' else 'QEMU'
-            else:
-                this.hardware = ''
-            print(this.nodename, file=sys.stderr)
 
         thedict['nodes'] = [ vars(n) for n in cls.nodes ]
         return thedict
@@ -72,7 +68,8 @@ class MailBoxReSTAPI(object):
     def home(self, request):
         # print('Received "%s"' % request.uri.decode(), file=sys.stderr)
         reqhdrs = dict(request.requestHeaders.getAllRawHeaders())
-        return reqhdrs.get('Use /gimme\n')
+        return '<PRE>\n%s\nUse /gimme\n</PRE>' % '\n'.join(
+            sorted([k.decode() for k in reqhdrs.keys()]))
 
     # Must come after all Klein dependencies and @decorators
     def __init__(self, already_initialized_FAMEZ_mailbox, port=1991):

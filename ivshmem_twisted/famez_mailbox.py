@@ -19,6 +19,7 @@
 import mmap
 import os
 import struct
+import sys
 from time import sleep
 from time import time as NOW
 
@@ -44,18 +45,22 @@ class FAMEZ_MailBox(object):
 
     # Datum 1: 4 longs == up to 31 chars of NUL-terminated C string
     MS_NODENAME_off = 0
-    MS_NODENAME_SIZE = 32
+    MS_NODENAME_sz = 32
 
-    # Datum 2: 1 long
-    MS_MSGLEN_off = MS_NODENAME_SIZE
+    # Datum 2: 4 longs == up to 31 chars of NUL-terminated C string
+    MS_BASE_CCLASS_off = MS_NODENAME_off + MS_NODENAME_sz
+    MS_BASE_CCLASS_sz = 32
 
     # Datum 3: 1 long
-    MS_PEER_ID_off = MS_MSGLEN_off + 8
+    MS_MSGLEN_off = MS_BASE_CCLASS_off + MS_BASE_CCLASS_sz
 
     # Datum 4: 1 long
+    MS_PEER_ID_off = MS_MSGLEN_off + 8
+
+    # Datum 5: 1 long
     MS_LAST_RESPONDER_off = MS_PEER_ID_off + 8
 
-    # 9 longs of padding == 12 longs after char[32] and finally...
+    # 5 longs of padding == 12 longs after 2nd char[32] and finally...
 
     MS_MSG_off = 128
     MS_MAX_MSGLEN = 384
@@ -65,6 +70,14 @@ class FAMEZ_MailBox(object):
     nClients = None
     nEvents = None
     server_id = None
+
+    #-----------------------------------------------------------------------
+    # mm/C "strings" are null-padded byte arrays.  Undo it.
+
+
+    @staticmethod
+    def bytes2str(inbytes):
+        return inbytes.split(b'\0', 1)[0].decode()
 
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
@@ -122,6 +135,8 @@ class FAMEZ_MailBox(object):
 
         assert (self.MS_MSG_off + self.MS_MAX_MSGLEN
             == self.MAILBOX_SLOTSIZE), 'Fix this NOW'
+        assert self.MS_LAST_RESPONDER_off + 8 <= self.MS_MSG_off, \
+            'Fix this too'
         self.filesize = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
 
         if args is None:
@@ -182,11 +197,14 @@ class FAMEZ_MailBox(object):
         assert 1 <= peer_id <= cls.server_id, \
             'Slotnum is out of domain 1 - %d' % (cls.server_id)
         index = peer_id * cls.MAILBOX_SLOTSIZE     # start of nodename
-        nodename, msglen = struct.unpack('32sQ', cls.mm[index:index + 40])
-        nodename = nodename.split(b'\0', 1)[0].decode()
+        thislen = cls.MS_NODENAME_sz + cls.MS_BASE_CCLASS_sz + 8
+        nodename, cclass, msglen = struct.unpack('32s32sQ',
+            cls.mm[index:index + thislen])
+        nodename = cls.bytes2str(nodename)
+        cclass = cls.bytes2str(cclass)
         index += cls.MS_MSG_off
         fmt = '%ds' % msglen
-        msg = struct.unpack(fmt, cls.mm[index:index + msglen])
+        msg = struct.unpack(fmt, cls.mm[index:index + msglen])[0]
 
         # The message is copied so mark the mailslot length zero as handshake
         # to the requester that its mailbox has been emptied.
@@ -197,8 +215,7 @@ class FAMEZ_MailBox(object):
 
         # Clean up the message copyout, which is a single element tuple
         # that has a NUL at msglen.
-        # msg = msg[0].split(b'\0', 1)[0] # only valid for pure stringsA
-        msg = msg[0][:msglen]
+        msg = msg[:msglen]
         if not asbytes:
             msg = msg.decode()
         return nodename, msg
@@ -241,10 +258,10 @@ class FAMEZ_MailBox(object):
     def clear_mailslot(cls, id, nodenamebytes=None):
         assert 1 <= id <= cls.server_id, 'slot is bad: %d' % id
         index = id * cls.MAILBOX_SLOTSIZE
-        zeros = b'\0' * cls.MS_NODENAME_SIZE
+        zeros = b'\0' * (cls.MS_NODENAME_sz + cls.MS_BASE_CCLASS_sz)
         cls.mm[index:index + len(zeros)] = zeros
         if nodenamebytes:
-            assert len(nodenamebytes) < cls.MS_NODENAME_SIZE
+            assert len(nodenamebytes) < cls.MS_NODENAME_sz
             cls.mm[index:index + len(nodenamebytes)] = nodenamebytes
 
     #----------------------------------------------------------------------
