@@ -41,12 +41,20 @@ class MailBoxReSTAPI(object):
         ))
         for id in range(1, cls.nClients + 1):
             offset = id * cls.mb.MAILBOX_SLOTSIZE
+            print('id=%d, offset=%d' % (id, offset), file=sys.stderr)
             # unpack produces a tuple.
+            this = cls.nodes[id]
             (nodename,) = struct.unpack('32s', cls.mm[offset:offset+32])
 
             # Nodename is padded out with nulls.
-            cls.nodes[id].nodename = nodename.split(b'\0', 1)[0].decode()
-            print(cls.nodes[id].nodename, file=sys.stderr)
+            this.nodename = nodename.split(b'\0', 1)[0].decode()
+            this.id = id
+            if this.nodename:
+                this.hardware = 'Debugger' if this.nodename[0] == 'z' else 'QEMU'
+            else:
+                this.hardware = ''
+            print(this.nodename, file=sys.stderr)
+
         thedict['nodes'] = [ vars(n) for n in cls.nodes ]
         return thedict
 
@@ -77,7 +85,7 @@ class MailBoxReSTAPI(object):
         cls.nEvents = cls.mb.nEvents
         cls.server_id = cls.mb.server_id
         # Clients/ports are enumerated 1-nClients inclusive
-        cls.nodes = list((cls.N(), ) * (cls.nClients + 1))   # skip [0]
+        cls.nodes = [ cls.N() for _ in range(cls.nClients + 2) ]
 
         # Instead of this.app.run(), break it open and wait for
         # twister_server.py to finally invoke TIreactor.run() as all these
