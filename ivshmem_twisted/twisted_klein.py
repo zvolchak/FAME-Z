@@ -6,11 +6,13 @@ import json
 import os
 import sys
 
+from collections import defaultdict
 from pdb import set_trace
 from pprint import pformat, pprint
 
 from klein import Klein     # Uses default reactor
 
+from twisted.internet import reactor as TIreactor
 from twisted.web import server as TWserver
 
 class MailBoxReSTAPI(object):
@@ -26,11 +28,17 @@ class MailBoxReSTAPI(object):
     server_id = None
     clients = None
 
+    @app.route('/gimme')
+    def gimme(self, request):
+        return 'Not yet\n'
+
     @app.route('/')
     def home(self, request):
         # print('Received "%s"' % request.uri.decode(), file=sys.stderr)
-        return str(pformat(vars(request)))
-        if not request.requestHeaders['apiversion']:
+        reqhdrs = dict(request.requestHeaders.getAllRawHeaders())
+        return reqhdrs.get('asdf', 'eat me\n')
+        return str(request.requestHeaders.getRawHeaders('asdf'))
+        if not request.requestHeaders.hasHeader('apiversion'):
             return "HTML sure"
         return str(pformat(vars(request)))
 
@@ -47,22 +55,18 @@ class MailBoxReSTAPI(object):
         # Clients/ports are enumerated 1-nClients inclusive
         cls.clients = list((None, ) * (cls.nClients + 1))   # skip [0]
 
-        # def proxystart(apiobj, port=1991):
         # Instead of this.app.run(), break it open and wait for reactor.run()
         # /usr/lib/python3/dist-packages/klein/app.py::run()
-        # s = TWserver.Site(apiobj.app.resource())
         s = TWserver.Site(self.app.resource())
         TIreactor.listenTCP(port, s)
 
 if __name__ == '__main__':
 
     from famez_mailbox import FAMEZ_MailBox
-    from twisted.internet import reactor as TIreactor
 
     fd = os.open(sys.argv[1], os.O_RDWR)
     mb = FAMEZ_MailBox(fd=fd, client_id=99, nodename='ReSTAPItest')
     tmp = MailBoxReSTAPI(mb)
-    # proxystart(tmp)
 
-    # This is done elsewhere in primary app
+    # This is done elsewhere in real Twisted famez_server app
     TIreactor.run()
