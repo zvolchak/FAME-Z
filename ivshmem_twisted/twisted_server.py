@@ -36,7 +36,7 @@ try:
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
-    from twisted_klein import MailBoxReSTAPI
+    from twisted_restapi import MailBoxReSTAPI
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox
@@ -44,7 +44,7 @@ except ImportError as e:
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
-    from .twisted_klein import MailBoxReSTAPI
+    from .twisted_restapi import MailBoxReSTAPI
 
 # Don't use peer ID 0, certain docs imply it's reserved.  Put the clients
 # from 1 - nClients, and the server goes at nClients + 1.  Then use slot
