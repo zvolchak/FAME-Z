@@ -43,13 +43,9 @@ class MailBoxReSTAPI(object):
             offset = id * cls.mb.MAILBOX_SLOTSIZE
             # unpack produces a tuple.
             this = cls.nodes[id]
-            (nodename, cclass) = struct.unpack('32s32s',
-                cls.mm[offset:offset+64])
-
-            # Strings are padded out with nulls.
-            this.nodename = nodename.split(b'\0', 1)[0].decode()
-            this.cclass = cclass.split(b'\0', 1)[0].decode()
             this.id = id
+            this.nodename = cls.mb.nodename(id)
+            this.cclass = cls.mb.cclass(id)
 
         thedict['nodes'] = [ vars(n) for n in cls.nodes ]
         return thedict

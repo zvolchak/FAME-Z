@@ -79,6 +79,12 @@ class FAMEZ_MailBox(object):
     def bytes2str(inbytes):
         return inbytes.split(b'\0', 1)[0].decode()
 
+
+    @classmethod
+    def nodename(cls, id):
+        index = id * cls.MAILBOX_SLOTSIZE
+
+
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
     # Each slot (1 through nClients) has a peer_id.
