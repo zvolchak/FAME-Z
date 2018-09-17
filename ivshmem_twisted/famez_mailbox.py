@@ -48,11 +48,11 @@ class FAMEZ_MailBox(object):
     MS_NODENAME_sz = 32
 
     # Datum 2: 4 longs == up to 31 chars of NUL-terminated C string
-    MS_BASE_CCLASS_off = MS_NODENAME_off + MS_NODENAME_sz
-    MS_BASE_CCLASS_sz = 32
+    MS_CCLASS_off = MS_NODENAME_off + MS_NODENAME_sz
+    MS_CCLASS_sz = 32
 
     # Datum 3: 1 long
-    MS_MSGLEN_off = MS_BASE_CCLASS_off + MS_BASE_CCLASS_sz
+    MS_MSGLEN_off = MS_CCLASS_off + MS_CCLASS_sz
 
     # Datum 4: 1 long
     MS_PEER_ID_off = MS_MSGLEN_off + 8
@@ -79,11 +79,24 @@ class FAMEZ_MailBox(object):
     def bytes2str(inbytes):
         return inbytes.split(b'\0', 1)[0].decode()
 
+    @classmethod
+    def _pullstring(cls, id, offset, size):
+        assert 1 <= id <= cls.server_id, 'slot is bad: %d' % id
+        index = id * cls.MAILBOX_SLOTSIZE + offset
+        fmt = '%ds' % size
+        tmp = struct.unpack(fmt, cls.mm[index:index + size])[0]
+        return cls.bytes2str(tmp)
+
+    @classmethod
+    def _pullblob(cls, index, fmt):
+        return struct.unpack(fmt, cls.mm[index:index + struct.calcsize(fmt)])
 
     @classmethod
     def nodename(cls, id):
-        index = id * cls.MAILBOX_SLOTSIZE
+        return cls._pullstring(id, cls.MS_NODENAME_off, cls.MS_NODENAME_sz)
 
+    def cclass(cls, id):
+        return cls._pullstring(id, cls.MS_CCLASS_off, cls.MS_CCLASS_sz)
 
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
@@ -203,14 +216,12 @@ class FAMEZ_MailBox(object):
         assert 1 <= peer_id <= cls.server_id, \
             'Slotnum is out of domain 1 - %d' % (cls.server_id)
         index = peer_id * cls.MAILBOX_SLOTSIZE     # start of nodename
-        thislen = cls.MS_NODENAME_sz + cls.MS_BASE_CCLASS_sz + 8
-        nodename, cclass, msglen = struct.unpack('32s32sQ',
-            cls.mm[index:index + thislen])
+        nodename, cclass, msglen = cls._pullblob(index, '32s32sQ')
         nodename = cls.bytes2str(nodename)
         cclass = cls.bytes2str(cclass)
         index += cls.MS_MSG_off
         fmt = '%ds' % msglen
-        msg = struct.unpack(fmt, cls.mm[index:index + msglen])[0]
+        msg = cls._pullblob(index, fmt)[0]
 
         # The message is copied so mark the mailslot length zero as handshake
         # to the requester that its mailbox has been emptied.
@@ -245,7 +256,7 @@ class FAMEZ_MailBox(object):
         # has pulled the message out of the sender's mailbox.
         index = sender_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSGLEN_off
         stop = NOW() + 1.05
-        while NOW() < stop and struct.unpack('Q', cls.mm[index:index+8])[0]:
+        while NOW() < stop and cls._pullblob(index, 'Q')[0]:
             sleep(0.1)
         if NOW() >= stop:
             print('pseudo-HW not ready to receive timeout: now stomping')
@@ -264,7 +275,7 @@ class FAMEZ_MailBox(object):
     def clear_mailslot(cls, id, nodenamebytes=None):
         assert 1 <= id <= cls.server_id, 'slot is bad: %d' % id
         index = id * cls.MAILBOX_SLOTSIZE
-        zeros = b'\0' * (cls.MS_NODENAME_sz + cls.MS_BASE_CCLASS_sz)
+        zeros = b'\0' * (cls.MS_NODENAME_sz + cls.MS_CCLASS_sz)
         cls.mm[index:index + len(zeros)] = zeros
         if nodenamebytes:
             assert len(nodenamebytes) < cls.MS_NODENAME_sz
@@ -282,9 +293,7 @@ class FAMEZ_MailBox(object):
             cls.mm = mmap.mmap(cls.fd, 0)
             (cls.nClients,
              cls.nEvents,
-             cls.server_id) = struct.unpack(
-                'QQQ',
-                cls.mm[cls.G_NCLIENTS_off:cls.G_NCLIENTS_off + 24])
+             cls.server_id) = cls._pullblob(cls.G_NCLIENTS_off, 'QQQ')
 
         if id > cls.server_id:  # Probably a test run
             return
