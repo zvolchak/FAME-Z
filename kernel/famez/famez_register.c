@@ -56,9 +56,11 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 				goto up_and_out;
 
 		// Now that all allocs have worked, change adapter.  Yes it's
-		// slightly after the "live" activation but REALLY?
+		// slightly after the "live" activation, get over it.
 		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
-			sizeof(adapter->core->Base_C_Class_str));
+			sizeof(adapter->core->Base_C_Class_str) - 1);
+		strncpy(adapter->my_slot->cclass, Base_C_Class_str,
+			sizeof(adapter->my_slot->cclass) - 1);
 
 		pr_cont("success\n");
 		nbindings++;
@@ -114,7 +116,10 @@ int famez_deregister(const struct file_operations *fops)
 			device_destroy(lookup->genz_class, lookup->cdev.dev);
 			kfree(lookup);
 			adapter->teardown_lookup = NULL;
-			strcpy(adapter->core->Base_C_Class_str, FAMEZ_NAME);
+			strncpy(adapter->my_slot->cclass, DEFAULT_CCLASS,
+				sizeof(adapter->my_slot->cclass) - 1);
+			strncpy(adapter->core->Base_C_Class_str, DEFAULT_CCLASS,
+				sizeof(adapter->core->Base_C_Class_str) - 1);
 			ret++;
 			pr_cont("success\n");
 		} else

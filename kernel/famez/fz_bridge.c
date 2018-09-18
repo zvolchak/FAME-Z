@@ -312,7 +312,7 @@ int __init fzbridge_init(void)
 	pr_info(FZSP "verbose = %d\n", verbose);
 
 	_nbindings = 0;
-	if ((ret = famez_register("Bridge", "br", &bridge_fops)) < 0)
+	if ((ret = famez_register("DiscreteBridge", "br", &bridge_fops)) < 0)
 		return ret;
 	_nbindings = ret;
 	pr_info(FZBR "%d bindings made\n", _nbindings);

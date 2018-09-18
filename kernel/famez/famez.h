@@ -15,6 +15,7 @@
 #define FAMEZ_NAME	"FAME-Z"
 #define FZ		"famez: "	// pr_xxxx header
 #define FZSP		"       "	// pr_xxxx header same length indent
+#define DEFAULT_CCLASS	"FAME-Zadapter"	// no spaces
 
 #define FAMEZ_VERSION	FAMEZ_NAME " v0.9.0: using Gen-Z subsystem"
 
@@ -45,12 +46,13 @@ struct famez_globals {			// BAR 2: Start of IVSHMEM
 // od -Ad -w32 -c -tx8 /dev/shm/famez_mailbox
 struct __attribute__ ((packed)) famez_mailslot {
 	char nodename[32];		// off  0: of the owning client
-	uint64_t buflen,		// off 32:
-		 peer_id,		// off 40: Convenience; set by server
-		 last_responder,	// off 48: To assist stale stompage
-		 peer_SID,		// off 56: Calculated in MSI-X...
-		 peer_CID,		// off 64: ...from last_responder
-		 pad[7];		// off 72
+	char cclass[32];		// off 32: of the owning client
+	uint64_t buflen,		// off 64:
+		 peer_id,		// off 72: Convenience; set by server
+		 last_responder,	// off 80: To assist stale stompage
+		 peer_SID,		// off 88: Calculated in MSI-X...
+		 peer_CID,		// off 96: ...from last_responder
+		 pad[3];		// off 104
 	char buf[];			// off 128 == globals->buf_offset
 };
 

@@ -137,7 +137,6 @@ struct famez_adapter *famez_adapter_create(struct pci_dev *pdev)
 		kfree(adapter);
 		return ERR_PTR(-ENOMEM);
 	}
-	strcpy(adapter->core->Base_C_Class_str, "FAME-Z Adapter");
 
 	// Lots of backpointers.
 	pci_set_drvdata(pdev, adapter);		// Just pass around pdev.
@@ -172,14 +171,18 @@ struct famez_adapter *famez_adapter_create(struct pci_dev *pdev)
 	adapter->my_id = adapter->regs->IVPosition;
 
 	// All the needed parameters are set to finish this off.
-
-	// My slot and message pointers.
 	if (!(adapter->my_slot = calculate_mailslot(adapter, adapter->my_id)))
 		goto err_kfree;
+	
+	// Leave room for the NUL in strings.
 	memset(adapter->my_slot, 0, adapter->globals->slotsize);
 	snprintf(adapter->my_slot->nodename,
 		 sizeof(adapter->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, adapter->pdev->devfn >> 3);
+	strncpy(adapter->my_slot->cclass, DEFAULT_CCLASS,
+		sizeof(adapter->my_slot->cclass) - 1);
+	strncpy(adapter->core->Base_C_Class_str, DEFAULT_CCLASS,
+		sizeof(adapter->core->Base_C_Class_str) - 1);
 
 	PR_V1(FZSP "mailslot size=%llu, buf offset=%llu, server=%llu\n",
 		adapter->globals->slotsize,
