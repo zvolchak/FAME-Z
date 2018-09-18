@@ -39,15 +39,29 @@ class MailBoxReSTAPI(object):
             ('nClients', cls.nClients),
             ('server_id', cls.server_id),
         ))
-        for id in range(1, cls.nClients + 1):
+        for id in range(1, cls.server_id + 1):
             offset = id * cls.mb.MAILBOX_SLOTSIZE
-            # unpack produces a tuple.
             this = cls.nodes[id]
             this.id = id
             this.nodename = cls.mb.get_nodename(id)
             this.cclass = cls.mb.get_cclass(id)
+        thedict['nodes'] = [ vars(n) for n in cls.nodes[1:] ]   # 0 == noop
 
-        thedict['nodes'] = [ vars(n) for n in cls.nodes ]
+        links = []
+        for node in thedict['nodes']:
+            id = node['id']
+            if id != cls.server_id and node['nodename']:
+                try:
+                    # QEMU nodes have the card number as part of the name.
+                    # FIXME: embed port number in the mailslot.
+                    port = node['nodename'].split('.')[1]
+                except IndexError as e:
+                    port = '0'
+                links.append((
+                    '%d.%s' % (id, port),
+                    '%d.%d' % (cls.server_id, id)       # cuz that's the rule
+                ))
+        thedict['links'] = links
         return thedict
 
     @app.route('/gimme')
@@ -79,7 +93,7 @@ class MailBoxReSTAPI(object):
         cls.nEvents = cls.mb.nEvents
         cls.server_id = cls.mb.server_id
         # Clients/ports are enumerated 1-nClients inclusive
-        cls.nodes = [ cls.N() for _ in range(cls.nClients + 2) ]
+        cls.nodes = [ cls.N() for _ in range(cls.server_id + 1) ]
 
         # Instead of this.app.run(), break it open and wait for
         # twister_server.py to finally invoke TIreactor.run() as all these
@@ -93,9 +107,14 @@ if __name__ == '__main__':
 
     from famez_mailbox import FAMEZ_MailBox
 
-    fd = os.open(sys.argv[1], os.O_RDWR)
-    mb = FAMEZ_MailBox(fd=fd, client_id=99, nodename='ReSTAPItest')
+    # These things are done explicitly in twisted_server.py
+    fname = '/dev/shm/famez_mailbox' if len(sys.argv) < 2 else sys.argv[1]
+    if not fname or fname[0] == '-':
+        raise SystemExit('usage: %s [ /path/to/mailbox ]' % sys.argv[0])
+    print('Opening', fname)
+    fd = os.open(fname, os.O_RDWR)
+    mb = FAMEZ_MailBox(fd=fd, client_id=99)
     tmp = MailBoxReSTAPI(mb)
 
-    # This is done elsewhere in real Twisted famez_server app
+    # This is done implicitly after protocol registration
     TIreactor.run()
