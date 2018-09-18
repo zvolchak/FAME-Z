@@ -219,6 +219,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         else:
             txt = 'Clean'
         self.SI.logmsg('%s disconnect from peer id %d' % (txt, self.id))
+        # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
+        FAMEZ_MailBox.clear_mailslot(self.id)
+
         if self.id in self.SI.clients:     # Only if everything was completed
             del self.SI.clients[self.id]
         if self.SI.args.recycle:
@@ -231,9 +234,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
             for EN in self.EN_list:
                 EN.cleanup()
-
-            # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
-            FAMEZ_MailBox.clear_mailslot(self.id)
 
         except Exception as e:
             self.SI.logmsg('Closing peer transports failed: %s' % str(e))
