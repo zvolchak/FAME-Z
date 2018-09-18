@@ -37,30 +37,31 @@ class MailBoxReSTAPI(object):
     def mb2dict(cls):
         thedict = OrderedDict((
             ('nClients', cls.nClients),
-            ('server_id', cls.server_id),
+            ('server_famez_id', cls.server_famez_id),
         ))
-        for id in range(1, cls.server_id + 1):
-            offset = id * cls.mb.MAILBOX_SLOTSIZE
-            this = cls.nodes[id]
-            this.id = id
-            this.nodename = cls.mb.get_nodename(id)
-            this.cclass = cls.mb.get_cclass(id)
-        thedict['nodes'] = [ vars(n) for n in cls.nodes[1:] ]   # 0 == noop
+
+        # The D3 Javascript framework refers to a node's name as its "id".
+        for famez_id in range(1, cls.server_famez_id + 1):
+            offset = famez_id * cls.mb.MAILBOX_SLOTSIZE
+            this = cls.nodes[famez_id]
+            this.famez_id = famez_id
+            this.id = cls.mb.get_nodename(famez_id)
+            this.cclass = cls.mb.get_cclass(famez_id)
+            this.group = 'default'
+
+            # this.CID = 0        # Later
+            # this.SID = 0
+            # this.TXpackets = 0
+            # this.RXpackets = 0
+            # this.port = 0
+        thedict['nodes'] = [ vars(n) for n in cls.nodes[1:] if n.id ]
 
         links = []
+        server_id = cls.nodes[cls.server_famez_id].id    # a string
         for node in thedict['nodes']:
-            id = node['id']
-            if id != cls.server_id and node['nodename']:
-                try:
-                    # QEMU nodes have the card number as part of the name.
-                    # FIXME: embed port number in the mailslot.
-                    port = node['nodename'].split('.')[1]
-                except IndexError as e:
-                    port = '0'
-                links.append((
-                    '%d.%s' % (id, port),
-                    '%d.%d' % (cls.server_id, id)       # cuz that's the rule
-                ))
+            id = node['id']             # also a string
+            if id and id != server_id:
+                links.append({'source': id, 'target': server_id})
         thedict['links'] = links
         return thedict
 
@@ -91,9 +92,9 @@ class MailBoxReSTAPI(object):
         cls.mm = cls.mb.mm
         cls.nClients = cls.mb.nClients
         cls.nEvents = cls.mb.nEvents
-        cls.server_id = cls.mb.server_id
+        cls.server_famez_id = cls.mb.server_id      # see mb2dict
         # Clients/ports are enumerated 1-nClients inclusive
-        cls.nodes = [ cls.N() for _ in range(cls.server_id + 1) ]
+        cls.nodes = [ cls.N() for _ in range(cls.server_famez_id + 1) ]
 
         # Instead of this.app.run(), break it open and wait for
         # twister_server.py to finally invoke TIreactor.run() as all these
