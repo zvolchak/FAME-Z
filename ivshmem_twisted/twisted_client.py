@@ -69,8 +69,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     id2EN_list = OrderedDict()     # Generated from fd_list
 
     def __init__(self, cmdlineargs):
-        try:                    # twisted causes blindness
-            if self.SI is None:
+        try:                        # twisted causes blindness
+            if self.SI is None:     # singleton class variables
                 self.__class__.SI = ServerInvariant()
                 self.SI.args = cmdlineargs
                 self.SI.C_Class = 'Debugger'
@@ -80,7 +80,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.peerattrs = {}
             self.SID0 = 0
             self.CID0 = 0
-            self.nodename = None   # Generate it for self, retrieve for peers
+            self.nodename = None
+            self.cclass = None
             self.afterACK = []
             # The state machine major decisions about the semantics of blocks
             # of data have one predicate.   While technically unecessary,
@@ -99,7 +100,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def get_nodenames(cls):
         cls.id2nodename = OrderedDict()
         for peer_id in sorted(cls.id2fd_list):  # keys() are integer IDs
-            nodename, _ = FAMEZ_MailBox.retrieve(peer_id, clear=False)
+            nodename = FAMEZ_MailBox.get_nodename(peer_id)
             cls.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
@@ -163,6 +164,26 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         self._latest_fd = latest_fd     # See the next property
 
     @property
+    def nodename(self):
+        return self._nodename
+
+    @nodename.setter
+    def nodename(self, name):
+        self._nodename = name
+        if name:
+            FAMEZ_MailBox.set_nodename(self.id, name)
+
+    @property
+    def cclass(self):
+        return self._cclass
+
+    @cclass.setter
+    def cclass(self, name):
+        self._cclass = name
+        if name:
+            FAMEZ_MailBox.set_cclass(self.id, name)
+
+    @property
     def latest_fd(self):
         '''This is NOT idempotent!'''
         tmp = self._latest_fd
@@ -182,20 +203,21 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             'Unxpected protocol version %d' % version
         assert minusone == -1, \
             'Expected -1 with mailbox fd, got %d' % minuseone
-        assert 1 <= self.id, 'My ID is bad: %d' % self.id
-        self.nodename = 'z%02d' % self.id
-        print('This ID = %2d (%s)' % (self.id, self.nodename))
 
         # Initialize my mailbox slot.  Get other parameters from the
         # globals because the IVSHMSG protocol doesn't allow values
         # beyond the intial three.  The constructor does some work
         # then returns a few attributes pulled out of the globals,
         # but work is only actually done on the first call.
-        mailbox = FAMEZ_MailBox(
-            fd=mailbox_fd, client_id=self.id, nodename=self.nodename)
+        mailbox = FAMEZ_MailBox(fd=mailbox_fd, client_id=self.id)
         self.SI.nClients = mailbox.nClients
         self.SI.nEvents = mailbox.nEvents
         self.SI.server_id = mailbox.server_id
+
+        # Gotta wait for initialized mailbox
+        self.nodename = 'z%02d' % self.id
+        self.cclass = self.SI.C_Class   # FIXME: only need one
+        print('This ID = %2d (%s)' % (self.id, self.nodename))
 
     # Called multiple times so keep state info about previous calls.
     def dataReceived(self, data):
@@ -311,7 +333,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     @staticmethod
     def ClientCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
+        requester_name = FAMEZ_MailBox.get_nodename(requester_id)
+        request = FAMEZ_MailBox.retrieve(requester_id)
         responder = vectorobj.cbdata
 
         # Need to be set each time because of spoof cabability, especiall

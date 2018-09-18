@@ -75,7 +75,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
             SI = self.SI
-            SI.C_Class = 'Switch'
+            SI.C_Class = 'FabricSwitch'
             self.__class__.responder_id = SI.server_id  # THE MARK OF THE BEAST
 
             # Non-standard addition to IVSHMEM server role: this server can be
@@ -262,7 +262,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 self.id = (sorted(available_ids))[0]
 
         # FIXME: This should have been set up before socket connection made?
-        self.nodename, _ = FAMEZ_MailBox.retrieve(self.id, clear=False)
+        self.nodename = FAMEZ_MailBox.get_nodename(self.id)
+        self.cclass = FAMEZ_MailBox.get_cclass(self.id)
         if self.SI.args.smart:
             self.SID0 = self.SI.default_SID
             self.CID0 = self.id * 100
@@ -305,7 +306,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     @staticmethod
     def ServerCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name, request = FAMEZ_MailBox.retrieve(requester_id)
+        requester_name = FAMEZ_MailBox.get_nodename(requester_id)
+        request = FAMEZ_MailBox.retrieve(requester_id)
         SI = vectorobj.cbdata
 
         # The requester can die between its request and this callback.

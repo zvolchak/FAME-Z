@@ -44,17 +44,18 @@ class MailBoxReSTAPI(object):
             # unpack produces a tuple.
             this = cls.nodes[id]
             this.id = id
-            this.nodename = cls.mb.nodename(id)
-            this.cclass = cls.mb.cclass(id)
+            this.nodename = cls.mb.get_nodename(id)
+            this.cclass = cls.mb.get_cclass(id)
 
         thedict['nodes'] = [ vars(n) for n in cls.nodes ]
         return thedict
 
     @app.route('/gimme')
     def gimme(self, request):
-        reqhdrs = dict(request.requestHeaders.getAllRawHeaders())
         thedict = self.mb2dict()
-        # Twisted "fixes" the case of headers.  And uses bytearrays.
+
+        # Twisted "fixes" the case of headers and uses bytearrays.
+        reqhdrs = dict(request.requestHeaders.getAllRawHeaders())
         # print(reqhdrs, file=sys.stderr)
         if b'Apiversion' in reqhdrs:
             return json.dumps(thedict)
