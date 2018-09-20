@@ -133,9 +133,8 @@ void famez_ISR_teardown(struct pci_dev *);
 // famez_register.c - accept end-driver requests to use FAME-Z.
 
 // EXPORTed
-extern int famez_register(const char *, const char *,
-			  const struct file_operations *);
-extern int famez_deregister(const struct file_operations *);
+extern int famez_register(unsigned, const struct file_operations *);
+extern int famez_unregister(const struct file_operations *);
 
 //-------------------------------------------------------------------------
 // Legibility assistance

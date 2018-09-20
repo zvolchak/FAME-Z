@@ -28,12 +28,12 @@
 
 //-------------------------------------------------------------------------
 
-int famez_register(const char *Base_C_Class_str, const char *basename,
-		   const struct file_operations *fops)
+int famez_register(unsigned CCE, const struct file_operations *fops)
 {
 	struct famez_adapter *adapter;
-	char *ownername, devname[64];
+	char *ownername;
 	int ret, nbindings;
+	const char * cclass;
 
 	// pr_info("bitmask is %lu bytes\n", sizeof(famez_bridge_minor_bitmap));
 
@@ -48,18 +48,18 @@ int famez_register(const char *Base_C_Class_str, const char *basename,
 		// Device file name is meant to be reminiscent of lspci output.
 		pr_info(FZ "binding %s to %s: ",
 			ownername, pci_resource_name(pdev, 1));
-		sprintf(devname, "%s_%02x", ownername, adapter->slot);
 
-		if ((ret = genz_register_bridge(
-			devname, GENZ_CCE_DISCRETE_BRIDGE, fops,
-			adapter, adapter->slot)))
-				goto up_and_out;
+		cclass = genz_register_bridge(CCE, fops, adapter, adapter->slot);
+		if (IS_ERR(cclass)) {
+			ret = PTR_ERR(cclass);
+			goto up_and_out;
+		}
 
 		// Now that all allocs have worked, change adapter.  Yes it's
 		// slightly after the "live" activation, get over it.
-		strncpy(adapter->core->Base_C_Class_str, Base_C_Class_str,
+		strncpy(adapter->core->Base_C_Class_str, cclass,
 			sizeof(adapter->core->Base_C_Class_str) - 1);
-		strncpy(adapter->my_slot->cclass, Base_C_Class_str,
+		strncpy(adapter->my_slot->cclass, cclass,
 			sizeof(adapter->my_slot->cclass) - 1);
 
 		pr_cont("success\n");
@@ -77,7 +77,7 @@ EXPORT_SYMBOL(famez_register);
 // In the monolithic driver this was famez_bridge_teardown().  Return the
 // count of bindings broken or -ERRNO.
 
-int famez_deregister(const struct file_operations *fops)
+int famez_unregister(const struct file_operations *fops)
 {
 	return 0;
 
@@ -129,4 +129,4 @@ int famez_deregister(const struct file_operations *fops)
 	return ret;
 #endif
 }
-EXPORT_SYMBOL(famez_deregister);
+EXPORT_SYMBOL(famez_unregister);

@@ -3,6 +3,8 @@
 
 #include <linux/cdev.h>
 
+#include "genz_baseline.h"
+
 // Composition pattern to realize all data needed to represent a device.
 // "misc" class devices get it all clearly spelled out in struct miscdevice.
 // and it's all populated by msic_register() in the core.  cdev is kept
@@ -45,12 +47,14 @@ static inline void *genz_char_drv_1stopen_private_data(struct file *file)
 	return container->file_private_data;
 }
 
+extern const char * const genz_component_class_str[];
+
 // EXPORTed
 
 extern struct genz_core_structure *genz_core_structure_create(uint64_t);
 extern void genz_core_structure_destroy(struct genz_core_structure *);
 
-extern int genz_register_bridge(
-	char *, unsigned, const struct file_operations *, void *, int);
+extern const char * const genz_register_bridge(
+	unsigned, const struct file_operations *, void *, int);
 
 #endif

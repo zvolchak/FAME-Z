@@ -30,14 +30,16 @@
 
 #include <asm-generic/bug.h>	// yes after the others
 
+#include "genz_baseline.h"
 #include "genz_device.h"
+
 #include "famez.h"
 #include "fz_bridge.h"
 
 MODULE_LICENSE("GPL");
 MODULE_VERSION(FAMEZ_VERSION);
 MODULE_AUTHOR("Rocky Craig <rocky.craig@hpe.com>");
-MODULE_DESCRIPTION("Base subsystem for FAME-Z project.");
+MODULE_DESCRIPTION("Emulated bridge driver for FAME-Z project.");
 
 // module parameters are global
 
@@ -312,7 +314,7 @@ int __init fzbridge_init(void)
 	pr_info(FZSP "verbose = %d\n", verbose);
 
 	_nbindings = 0;
-	if ((ret = famez_register("DiscreteBridge", "br", &bridge_fops)) < 0)
+	if ((ret = famez_register(GENZ_CCE_DISCRETE_BRIDGE, &bridge_fops)) < 0)
 		return ret;
 	_nbindings = ret;
 	pr_info(FZBR "%d bindings made\n", _nbindings);
@@ -326,7 +328,7 @@ module_init(fzbridge_init);
 
 void fzbridge_exit(void)
 {
-	int ret = famez_deregister(&bridge_fops);
+	int ret = famez_unregister(&bridge_fops);
 	if (ret >= 0)
 		pr_info(FZBR "%d/%d bindings released\n", ret, _nbindings);
 	else

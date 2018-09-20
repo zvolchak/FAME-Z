@@ -42,6 +42,7 @@ enum genz_component_class_encodings {
 	GENZ_CCE_MULTI_CLASS,
 	GENZ_CCE_DISCRETE_BRIDGE,
 	GENZ_CCE_INTEGRATED_BRIDGE = 0x15,
+	GENZ_CCE_TOO_BIG,
 };
 
 struct genz_device {

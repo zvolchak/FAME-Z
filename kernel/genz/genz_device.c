@@ -39,6 +39,32 @@
 #define GENZ_MINORBITS	14			/* 16k components per class */
 #define MAXMINORS	(1 << GENZ_MINORBITS)	/* 2k space per bitmap */
 
+const char * const genz_component_class_str[] = {
+	"BAD HACKER. BAD!",
+	"MemoryP2PCore",
+	"MemoryExplicitOpClass",
+	"IntegratedSwitch",
+	"EnclosureExpansionSwitch",
+	"FabricSwitch",
+	"Processor",
+	"Processor_NB",
+	"Accelerator_NB_NC",
+	"Accelerator_NB",
+	"Accelerator_NC",
+	"Accelerator",
+	"IO_NB_NC",
+	"IO_NB",
+	"IO_NC",
+	"IO",
+	"BlockStorage",
+	"BlockStorage_NB",
+	"TransparentRouter",
+	"MultiClass",
+	"DiscreteBridge",
+	"IntegratedBridge",
+	NULL
+};
+
 static DEFINE_MUTEX(bridge_mutex);
 static DECLARE_BITMAP(bridge_minor_bitmap, MAXMINORS) = { 0 };
 static LIST_HEAD(bridge_list);
@@ -81,18 +107,19 @@ EXPORT_SYMBOL(genz_core_structure_destroy);
 
 /**
  * genz_register_bridge - add a new bridge character device and driver
- * @devname: string containing the device name to be used in sysfs
  * @CCE: Component Class Encoding from the Gen-Z spec
+ *	 Must be one of the two bridge types
  * @fops: driver set for the device
  * @file_private_data: to be attached as file->private_data in all fops
- *
+ * @instance: an integer whose semantic value differentiates multiple slots
  * Based on misc_register().  Returns 0 on success or -ESOMETHING.
  */
 
-int genz_register_bridge(char *devname, unsigned CCE,
-			 const struct file_operations *fops,
-			 void *file_private_data,
-			 int slot)
+const char * const genz_register_bridge(
+	unsigned CCE,
+	const struct file_operations *fops,
+	void *file_private_data,
+	int instance)
 {
 	int ret = 0;
 	char *ownername = NULL;
@@ -102,12 +129,12 @@ int genz_register_bridge(char *devname, unsigned CCE,
 
 	if (CCE < GENZ_CCE_DISCRETE_BRIDGE ||
 	    CCE > GENZ_CCE_INTEGRATED_BRIDGE)
-		return -EDOM;
-
-	mutex_lock(&bridge_mutex);
+		return ERR_PTR(-EDOM);
 
 	ownername = fops->owner->name;
+	// pr_info("%s: devname, ownername = %s, %s\n", __FUNCTION__, devname, ownername);
 
+	mutex_lock(&bridge_mutex);
 	minor = find_first_zero_bit(bridge_minor_bitmap, GENZ_MINORBITS);
 	if (minor >= GENZ_MINORBITS) {
 		pr_err("Exhausted all minor numbers for major %llu (%s)\n",
@@ -140,12 +167,13 @@ int genz_register_bridge(char *devname, unsigned CCE,
 	cdev_init(&wrapper->cdev, fops);
 	wrapper->cdev.dev = MKDEV(bridge_major, minor);
 	wrapper->cdev.count = 1;
-	if ((ret = kobject_set_name(&wrapper->cdev.kobj, "%s", devname)))
+	if ((ret = kobject_set_name(&wrapper->cdev.kobj,
+				    "%s_%02x", ownername, instance)))
 		goto up_and_out;
 
-	wrapper->genz_class = genz_class_getter(GENZ_CCE_DISCRETE_BRIDGE);
+	wrapper->genz_class = genz_class_getter(CCE);
 	wrapper->mode = 0666;
-	if (!(wrapper->parent = genz_find_me_a_bus_device(slot))) {
+	if (!(wrapper->parent = genz_find_me_a_bus_device(instance))) {
 		ret = -ENODEV;
 		goto up_and_out;
 	}
@@ -164,20 +192,21 @@ int genz_register_bridge(char *devname, unsigned CCE,
 		wrapper->cdev.dev,
 		wrapper,		// drvdata: not sure where this goes
 		wrapper->attr_groups,
-		"%s",
-		devname);
+		"%s_%02x",
+		ownername, instance);
 	if (IS_ERR(wrapper->this_device)) {
 		ret = PTR_ERR(wrapper->this_device);
 		goto up_and_out;
 	}
 
 up_and_out:
+	mutex_unlock(&bridge_mutex);
 	if (ret) {
 		pr_cont("FAILURE\n");
 		if (wrapper)
 			kfree(wrapper);
+		return ERR_PTR(ret);
 	}
-	mutex_unlock(&bridge_mutex);
-	return ret;
+	return genz_component_class_str[CCE];
 }
 EXPORT_SYMBOL(genz_register_bridge);
