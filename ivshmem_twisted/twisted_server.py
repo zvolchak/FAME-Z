@@ -104,6 +104,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             'SID0': '0',
             'C-Class': 'Driverless QEMU'
         }
+        FAMEZ_MailBox.set_cclass(self.id, 'Driverless QEMU')
 
     @property
     def promptname(self):
@@ -347,26 +348,29 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             clients = self.SI.clients
             lfmt = '%s %s [%s,%s]'
             rfmt = '[%s,%s] %s %s'
-            limit = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
+            half = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
             N = 34
             lspaces = ' ' * N
             PRINT('%s  _________' % lspaces)
-            for i in range(1, limit + 1):
+            get_cclass = FAMEZ_MailBox.get_cclass
+            for i in range(1, half + 1):
                 left = i
-                right = left + limit
+                right = left + half
                 try:
                     ldesc = lspaces
                     c = clients[left]
                     pa = c.peerattrs
                     ldesc += lfmt % (
-                        pa['C-Class'], c.nodename, pa['CID0'], pa['SID0'])
+                        # pa['C-Class'], c.nodename, pa['CID0'], pa['SID0'])
+                        get_cclass(left), c.nodename, pa['CID0'], pa['SID0'])
                 except KeyError as e:
                     pass
                 try:
                     c = clients[right]
                     pa = c.peerattrs
                     rdesc = rfmt % (
-                        pa['CID0'], pa['SID0'], pa['C-Class'], c.nodename)
+                        # pa['CID0'], pa['SID0'], pa['C-Class'], c.nodename)
+                        pa['CID0'], pa['SID0'], get_cclass(right), c.nodename)
                 except KeyError as e:
                     rdesc = ''
                 PRINT('%-s -|%1d    %2d|- %s' % (
