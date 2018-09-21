@@ -46,8 +46,11 @@ class MailBoxReSTAPI(object):
             this = cls.nodes[famez_id]
             this.famez_id = famez_id
             this.id = cls.mb.get_nodename(famez_id)
-            this.cclass = cls.mb.get_cclass(famez_id)
-            this.group = 'default'
+
+            cclass_name = cls.mb.get_cclass(famez_id)
+            this.hardware = cls.cclass_to_hardware_type(cclass_name)
+
+            this.group = 'port_%s' % famez_id
 
             # this.CID = 0        # Later
             # this.SID = 0
@@ -65,12 +68,27 @@ class MailBoxReSTAPI(object):
         thedict['links'] = links
         return thedict
 
-    @app.route('/gimme')
-    def gimme(self, request):
+
+    def cclass_to_hardware_type(cclass_name):
+        cclass_name = cclass_name.lower()
+
+        cclass_name = 'qemu' if 'qemu' in cclass_name
+        cclass_name = 'debugger' if 'debug' in cclass_name
+        cclass_name = 'adapter' if 'adapter' in cclass_name
+        cclass_name = 'switch' if 'switch' in cclass_name
+
+        return cclass_name
+
+
+    @app.route('/system')
+    def get_system(self, request):
         thedict = self.mb2dict()
 
         # Twisted "fixes" the case of headers and uses bytearrays.
         reqhdrs = dict(request.requestHeaders.getAllRawHeaders())
+        request.setHeader('Access-Control-Allow-Origin', '*')
+
+        return json.dumps(thedict)
         # print(reqhdrs, file=sys.stderr)
         if b'Apiversion' in reqhdrs:
             return json.dumps(thedict)
@@ -80,7 +98,8 @@ class MailBoxReSTAPI(object):
     def home(self, request):
         # print('Received "%s"' % request.uri.decode(), file=sys.stderr)
         reqhdrs = dict(request.requestHeaders.getAllRawHeaders())
-        return '<PRE>\n%s\nUse /gimme\n</PRE>' % '\n'.join(
+
+        return '<PRE>\n%s\nUse /system\n</PRE>' % '\n'.join(
             sorted([k.decode() for k in reqhdrs.keys()]))
 
     # Must come after all Klein dependencies and @decorators
@@ -103,6 +122,7 @@ class MailBoxReSTAPI(object):
         # /usr/lib/python3/dist-packages/klein/app.py::run()
         s = TWserver.Site(self.app.resource())
         TIreactor.listenTCP(port, s)
+
 
 if __name__ == '__main__':
 
