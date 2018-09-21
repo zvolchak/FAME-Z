@@ -2,6 +2,9 @@
 *.pyc
 *.swp
 
+*.mk
+*.o.*
+
 junk*
 nohup.out
 
