@@ -174,8 +174,15 @@ struct famez_adapter *famez_adapter_create(struct pci_dev *pdev)
 	if (!(adapter->my_slot = calculate_mailslot(adapter, adapter->my_id)))
 		goto err_kfree;
 	
-	// Leave room for the NUL in strings.
+	// Zap the slot but recover the peer_id set by server.
+	if (adapter->my_id != adapter->my_slot->peer_id) {
+		pr_err("Server-defined peer ID %llu is wrong\n", adapter->my_slot->peer_id);
+		goto err_kfree;
+	}
 	memset(adapter->my_slot, 0, adapter->globals->slotsize);
+	adapter->my_slot->peer_id = adapter->my_id;
+
+	// Leave room for the NUL in strings.
 	snprintf(adapter->my_slot->nodename,
 		 sizeof(adapter->my_slot->nodename) - 1,
 		 "%s.%02x", utsname()->nodename, adapter->pdev->devfn >> 3);
