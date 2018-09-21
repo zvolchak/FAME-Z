@@ -12,110 +12,89 @@
 # Go for the max slots in the file to hardwire libvirt domain XML file size.
 # famez.ko will read the global data to understand the mailbox layout.
 
-# All numbers are unsigned long long (8 bytes).  All strings are multiples
-# of 16 (including the C terminating NULL) on 32-byte boundaries.  Then it
+# All numbers are unsigned of an appropriate size.  All strings are multiples
+# of 32 (including the C terminating NULL) on 32-byte boundaries.  Then it
 # all looks good in "od -Ad -c" and even better in "od -Ax -c -tu8 -tx8".
 
+import ctypes
 import mmap
 import os
 import struct
 import sys
-from time import sleep
-from time import time as NOW
 
 from os.path import stat as STAT    # for constants
 from pdb import set_trace
+from time import sleep
+from time import time as NOW
+
+class FAMEZ_MailGlobals(ctypes.Structure):
+    _fields_ = [        # A magic ctypes class attribute.
+        ('slotsize',    ctypes.c_ulonglong),
+        ('buf_offset',  ctypes.c_ulonglong),
+        ('nClients',    ctypes.c_ulonglong),
+        ('nEvents',     ctypes.c_ulonglong),
+        ('server_id',   ctypes.c_ulonglong),
+    ]
+
+
+class FAMEZ_MailSlot(ctypes.Structure):
+    # c_char_p is variable length so force fixed size fields.
+
+    _strsize = 32
+    _bufsize = 384
+
+    _fields_ = [            # A magic ctypes class attribute.
+        ('_nodename',       ctypes.c_char * _strsize),
+        ('_cclass',         ctypes.c_char * _strsize),
+        ('buflen',          ctypes.c_ulonglong),
+        ('peer_id',         ctypes.c_ulonglong),
+        ('last_responder',  ctypes.c_ulonglong),
+        ('peer_SID',        ctypes.c_ulonglong),
+        ('peer_CID',        ctypes.c_ulonglong),
+        ('pad',             ctypes.c_ulonglong * 3),
+        ('buf',             ctypes.c_char * _bufsize)
+    ]
+
+    @property
+    def nodename(self):
+        return ctypes.string_at(self._nodename).decode()
+
+    @property
+    def cclass(self):
+        return ctypes.string_at(self._cclass).decode()
+
+    # This does not blank pad to the end, properly detects overrun, and
+    # lays down a NUL properly UNLESS the entire space is filled.  Help
+    # keep the length down and always preserve that final NUL.
+
+    @nodename.setter
+    def nodename(self, instr):
+        inbytes = instr.encode()
+        assert self._strsize > len(inbytes), '"%s" too big' % instr
+        self._nodename = inbytes
+
+    @cclass.setter
+    def cclass(self, instr):
+        inbytes = instr.encode()
+        assert self._strsize > len(inbytes), '"%s" too big' % instr
+        self._cclass = inbytes
 
 
 class FAMEZ_MailBox(object):
 
     # QEMU rules: file size (product of first two) must be a power of two.
-    MAILBOX_SLOTSIZE = 512
     MAILBOX_MAX_SLOTS = 16    # Dummy + server leaves 14 actual clients
-
-    G_SLOTSIZE_off = 0        # in the space of mailslot index 0
-    G_MSG_OFFSET_off = 8
-    G_NCLIENTS_off = 16
-    G_NEVENTS_off = 24
-    G_SERVER_ID_off = 32
-
-    # Metadata (front of famez_mailslot_t) is char[32] plus a few uint64_t.
-    # The actual message space starts after that, 32-byte aligned, which
-    # makes this look pretty: od -Ad -c -tx8 /dev/shm/famez_mailbox.
-
-    # Datum 1: 4 longs == up to 31 chars of NUL-terminated C string
-    MS_NODENAME_off = 0
-    MS_NODENAME_sz = 32
-
-    # Datum 2: 4 longs == up to 31 chars of NUL-terminated C string
-    MS_CCLASS_off = MS_NODENAME_off + MS_NODENAME_sz
-    MS_CCLASS_sz = 32
-
-    # Datum 3: 1 long
-    MS_MSGLEN_off = MS_CCLASS_off + MS_CCLASS_sz
-
-    # Datum 4: 1 long
-    MS_PEER_ID_off = MS_MSGLEN_off + 8
-
-    # Datum 5: 1 long
-    MS_LAST_RESPONDER_off = MS_PEER_ID_off + 8
-
-    # 5 longs of padding == 12 longs after 2nd char[32] and finally...
-
-    MS_MSG_off = 128
-    MS_MAX_MSGLEN = 384
+    MAILBOX_SLOTSIZE = 512
+    MS_BUF_off = 128
+    MS_MAX_BUFLEN = 384
+    assert MAILBOX_SLOTSIZE == MS_BUF_off + MS_MAX_BUFLEN, 'Big oops. Huge!'
 
     fd = None       # There can be only one
     mm = None       # Then I can access fill() from the class
     nClients = None
     nEvents = None
     server_id = None
-
-    #-----------------------------------------------------------------------
-    # mm/C "strings" are null-padded byte arrays.  Undo it.
-
-
-    @staticmethod
-    def bytes2str(inbytes):
-        return inbytes.split(b'\0', 1)[0].decode()
-
-    @classmethod
-    def _pullstring(cls, id, offset, size):
-        assert 1 <= id <= cls.server_id, 'slot is bad: %d' % id
-        index = id * cls.MAILBOX_SLOTSIZE + offset
-        fmt = '%ds' % size
-        tmp = struct.unpack(fmt, cls.mm[index:index + size])[0]
-        return cls.bytes2str(tmp)
-
-    @classmethod
-    def _pushbytes(cls, id, offset, inbytes):
-        assert 1 <= id <= cls.server_id, 'slot is bad: %d' % id
-        index = id * cls.MAILBOX_SLOTSIZE + offset
-        cls.mm[index:index + len(inbytes)] = inbytes
-
-    @classmethod
-    def _pullbytes(cls, index, fmt):
-        return struct.unpack(fmt, cls.mm[index:index + struct.calcsize(fmt)])
-
-    @classmethod
-    def get_nodename(cls, id):
-        return cls._pullstring(id, cls.MS_NODENAME_off, cls.MS_NODENAME_sz)
-
-    @classmethod
-    def set_nodename(cls, id, instr):
-        inbytes = instr.encode()
-        assert len(inbytes) < cls.MS_NODENAME_sz, 'No room for the NUL'
-        cls._pushbytes(id, cls.MS_NODENAME_off, inbytes)
-
-    @classmethod
-    def get_cclass(cls, id):
-        return cls._pullstring(id, cls.MS_CCLASS_off, cls.MS_CCLASS_sz)
-
-    @classmethod
-    def set_cclass(cls, id, instr):
-        inbytes = instr.encode()
-        assert len(inbytes) < cls.MS_CCLASS_sz, 'No room for the NUL'
-        cls._pushbytes(id, cls.MS_CCLASS_off, inbytes)
+    slots = None      # 0 == MailGlobal, 1 - server_id == MailSlot
 
     #-----------------------------------------------------------------------
     # Globals at offset 0 (slot 0)
@@ -124,35 +103,42 @@ class FAMEZ_MailBox(object):
     # First 32 bytes of any slot are NUL-terminated host name (a C string).
 
     def _initialize_mailbox(self, args):
-        self.__class__.mm = mmap.mmap(self.fd, 0)       # Only done once
+        # Operations are all against class variables.  mm[] is bytes and
+        # that involves copies and manual indexing.  The view is essentially
+        # an overlay, especially when combined with ctype structures.
+        self.__class__.mm = mmap.mmap(self.fd, 0)
+        self.__class__.view = memoryview(self.mm)
+        self.__class__.slots = [ None, ] * args.nEvents
 
-        # Empty it.  Simple code that's never too demanding on size (now 32k)
+        # Empty it.  Simple code that's never too demanding on size,
+        # default of 16 slots == now 32k.
         data = b'\0' * self.filesize
         self.mm[0:len(data)] = data
 
         # Fill in the globals; used by famez.ko and the C struct famez_globals.
-        data = struct.pack('QQQQQ',                         # unsigned long long
-            self.MAILBOX_SLOTSIZE, self.MS_MSG_off,         # constants
-            args.nClients, args.nEvents, args.server_id)    # runtime
-        self.mm[0:len(data)] = data
+        # It's at the start of the memory area so no indexing is needed.
+        mbg = FAMEZ_MailGlobals.from_buffer(self.view)
+        mbg.slotsize = self.MAILBOX_SLOTSIZE
+        mbg.buf_offset = self.MS_BUF_off
+        mbg.nClients = args.nClients
+        mbg.nEvents = args.nEvents
+        mbg.server_id = args.server_id
+        self.slots[0] = mbg
 
         # Set the peer_id for each slot as a C integer.  While python client
         # can discern a sender, the famez.ko driver needs an assist.
         # Get the server also.
 
         for slot in range(1, args.nEvents):
-            index = slot * self.MAILBOX_SLOTSIZE + self.MS_PEER_ID_off
-            packed_peer = struct.pack('Q', slot)   # uint64_t
-            self.mm[index:index + len(packed_peer)] = packed_peer
+            self.slots[slot] = FAMEZ_MailSlot.from_buffer(
+                self.view[mbg.slotsize * slot : mbg.slotsize * (slot + 1)])
+            self.slots[slot].peer_id = slot
 
         # Server's "hostname" and Base Component Class.  Zero-padding occurs
         # because it was all zeroed out just above.
-        data = 'Z-switch'.encode() if args.smart else 'Z-server'.encode()
-        index = args.server_id * self.MAILBOX_SLOTSIZE
-        self.mm[index:index + len(data)] = data
-        index += self.MS_NODENAME_sz
-        data = 'FabricSwitch'.encode()     # < 32 chars
-        self.mm[index:index + len(data)] = data
+        name = 'Z-switch' if args.smart else 'Z-server'
+        self.slots[args.server_id].nodename = name
+        self.slots[args.server_id].cclass = 'FabricSwitch'
 
         # Shortcut rutime values in self.
         self.__class__.nClients = args.nClients
@@ -174,10 +160,6 @@ class FAMEZ_MailBox(object):
         cls = self.__class__
         cls._beentheredonethat = True
 
-        assert (self.MS_MSG_off + self.MS_MAX_MSGLEN
-            == self.MAILBOX_SLOTSIZE), 'Fix this NOW'
-        assert self.MS_LAST_RESPONDER_off + 8 <= self.MS_MSG_off, \
-            'Fix this too'
         self.filesize = self.MAILBOX_MAX_SLOTS * self.MAILBOX_SLOTSIZE
 
         if args is None:
@@ -233,27 +215,21 @@ class FAMEZ_MailBox(object):
     @classmethod
     def retrieve(cls, peer_id, asbytes=False, clear=True):
         '''Return the message.'''
-        assert 1 <= peer_id <= cls.server_id, \
-            'Slotnum is out of domain 1 - %d' % (cls.server_id)
-        index = peer_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSGLEN_off
-        msglen = cls._pullbytes(index, 'Q')[0]
-        fmt = '%ds' % msglen
-        index = peer_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSG_off
-        msg = cls._pullbytes(index, fmt)[0]
+        ms = cls.slots[peer_id]
+        # This next test seems paranoid, but also validates that id != 0
+        # (which would have grabbed the MailGlobals).  Oh and it is self-
+        # limiting past server_id.
+        assert ms.peer_id == peer_id, '%d != %d: this is SO wrong' % (
+            ms.peer_id, peer_id)
+        buf = ms.buf[:ms.buflen]
 
         # The message is copied so mark the mailslot length zero as handshake
         # to the requester that its mailbox has been emptied.
 
         if clear:
-            index = peer_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSGLEN_off
-            cls.mm[index:index + 8] = struct.pack('Q', 0)
+            ms.buflen = 0
 
-        # Clean up the message copyout, which is a single element tuple
-        # that has a NUL at msglen.
-        msg = msg[:msglen]
-        if not asbytes:
-            msg = msg.decode()
-        return msg
+        return buf if asbytes else buf.decode()
 
     #----------------------------------------------------------------------
     # Post a message to the indicated mailbox slot but don't kick the
@@ -261,28 +237,24 @@ class FAMEZ_MailBox(object):
     # keeping it a separate operation facilitates sender spoofing.
 
     @classmethod
-    def fill(cls, sender_id, msg):
-        assert 1 <= sender_id <= cls.server_id, \
-            'Peer ID is out of domain 1 - %d' % (cls.server_id)
-        if isinstance(msg, str):
-            msg = msg.encode()
-        assert isinstance(msg, bytes), 'msg must be string or bytes'
-        msglen = len(msg)   # It's bytes now
-        assert msglen < cls.MS_MAX_MSGLEN, 'Message too long'
+    def fill(cls, sender_id, buf):
+        if isinstance(buf, str):
+            buf = buf.encode()
+        assert isinstance(buf, bytes), 'buf must be string or bytes'
+        buflen = len(buf)
+        assert buflen < cls.MS_MAX_BUFLEN, 'Message too long'
 
         # The previous responder needs to clear the msglen to indicate it
         # has pulled the message out of the sender's mailbox.
-        index = sender_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSGLEN_off
+        ms = cls.slots[sender_id]
         stop = NOW() + 1.05
-        while NOW() < stop and cls._pullbytes(index, 'Q')[0]:
+        while NOW() < stop and ms.buflen:
             sleep(0.1)
         if NOW() >= stop:
             print('pseudo-HW not ready to receive timeout: now stomping')
 
-        cls.mm[index:index + 8] = struct.pack('Q', msglen)
-        index = sender_id * cls.MAILBOX_SLOTSIZE + cls.MS_MSG_off
-        cls.mm[index:index + msglen] = msg
-        cls.mm[index + msglen] = 0     # NUL-terminate the message.
+        ms.buflen = buflen
+        ms.buf = buf
 
     #----------------------------------------------------------------------
     # Called by Python client on graceful shutdowns, and always by server
@@ -291,12 +263,12 @@ class FAMEZ_MailBox(object):
 
     @classmethod
     def clear_mailslot(cls, id):
-        zeros = b'\0' * (cls.MS_NODENAME_sz + cls.MS_CCLASS_sz)
-        cls._pushbytes(id, cls.MS_NODENAME_off, zeros)
+        cls.slots[id].nodename = ''
+        cls.slots[id].cclass = ''
+        cls.slots[id].peer_id = id
 
     #----------------------------------------------------------------------
-    # Called only by client.  mmap() the file, set hostname.  Many of the
-    # parameters must be retrieved from the globals area of the mailbox.
+    # Called only by client.  mmap() the file and retrieve globals.
 
     @classmethod
     def _init_mailslot(cls, id):
@@ -304,11 +276,29 @@ class FAMEZ_MailBox(object):
         assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
         if cls.mm is None:
             cls.mm = mmap.mmap(cls.fd, 0)
-            (cls.nClients,
-             cls.nEvents,
-             cls.server_id) = cls._pullbytes(cls.G_NCLIENTS_off, 'QQQ')
+            cls.view = memoryview(cls.mm)
+            mbg = FAMEZ_MailGlobals.from_buffer(cls.view)
+            cls.nClients = mbg.nClients
+            cls.nEvents = mbg.nEvents
+            cls.server_id = mbg.server_id
 
-        if id > cls.server_id:  # Probably a test run
+            # For clients, fill out the slots[] sparsely, so as to catch
+            # logic errors in attachments.
+            cls.slots = [ None, ] * cls.nEvents
+            cls.slots[0] = mbg
+            tmp = cls.server_id
+            cls.slots[tmp] = FAMEZ_MailSlot.from_buffer(
+                cls.view[mbg.slotsize * tmp : mbg.slotsize * (tmp + 1)])
+            # Done by the server at startup
+            assert cls.slots[tmp].peer_id == tmp, 'What happened (1)?'
+
+        if id > cls.server_id:  # Probably a test run of twisted_restapi
             return
+
+        if cls.slots[id] is None:
+            cls.slots[id] = FAMEZ_MailSlot.from_buffer(
+                cls.view[mbg.slotsize * id : mbg.slotsize * (id + 1)])
+            # Done by the server at startup
+            assert cls.slots[id].peer_id == id, 'What happened (2)?'
 
         cls.clear_mailslot(id)

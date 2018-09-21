@@ -104,7 +104,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             'SID0': '0',
             'C-Class': 'Driverless QEMU'
         }
-        FAMEZ_MailBox.set_cclass(self.id, 'Driverless QEMU')
+        FAMEZ_MailBox.slots[self.id].cclass = 'Driverless QEMU'
 
     @property
     def promptname(self):
@@ -263,8 +263,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 self.id = (sorted(available_ids))[0]
 
         # FIXME: This should have been set up before socket connection made?
-        self.nodename = FAMEZ_MailBox.get_nodename(self.id)
-        self.cclass = FAMEZ_MailBox.get_cclass(self.id)
+        self.nodename = FAMEZ_MailBox.slots[self.id].nodename
+        self.cclass = FAMEZ_MailBox.slots[self.id].cclass
         if self.SI.args.smart:
             self.SID0 = self.SI.default_SID
             self.CID0 = self.id * 100
@@ -307,7 +307,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     @staticmethod
     def ServerCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name = FAMEZ_MailBox.get_nodename(requester_id)
+        requester_name = FAMEZ_MailBox.slots[requester_id].nodename
         request = FAMEZ_MailBox.retrieve(requester_id)
         SI = vectorobj.cbdata
 
@@ -352,7 +352,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             N = 34
             lspaces = ' ' * N
             PRINT('%s  _________' % lspaces)
-            get_cclass = FAMEZ_MailBox.get_cclass
             for i in range(1, half + 1):
                 left = i
                 right = left + half
@@ -360,17 +359,17 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     ldesc = lspaces
                     c = clients[left]
                     pa = c.peerattrs
+                    cclass = FAMEZ_MailBox.slots[left].cclass
                     ldesc += lfmt % (
-                        # pa['C-Class'], c.nodename, pa['CID0'], pa['SID0'])
-                        get_cclass(left), c.nodename, pa['CID0'], pa['SID0'])
+                        cclass, c.nodename, pa['CID0'], pa['SID0'])
                 except KeyError as e:
                     pass
                 try:
                     c = clients[right]
                     pa = c.peerattrs
+                    cclass = FAMEZ_MailBox.slots[right].cclass
                     rdesc = rfmt % (
-                        # pa['CID0'], pa['SID0'], pa['C-Class'], c.nodename)
-                        pa['CID0'], pa['SID0'], get_cclass(right), c.nodename)
+                        pa['CID0'], pa['SID0'], cclass, c.nodename)
                 except KeyError as e:
                     rdesc = ''
                 PRINT('%-s -|%1d    %2d|- %s' % (

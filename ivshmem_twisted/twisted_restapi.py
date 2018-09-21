@@ -41,15 +41,14 @@ class MailBoxReSTAPI(object):
         ))
 
         # The D3 Javascript framework refers to a node's name as its "id".
-        for famez_id in range(1, cls.server_famez_id + 1):
-            offset = famez_id * cls.mb.MAILBOX_SLOTSIZE
+        for famez_id in range(1, cls.nEvents):
             this = cls.nodes[famez_id]
             this.famez_id = famez_id
-            this.id = cls.mb.get_nodename(famez_id)
+            this.id = cls.mb.slots[famez_id].nodename
+            this.cclass = cls.mb.slots[famez_id].cclass
+            this.hardware = cls.cclass_to_hardware_type(this.cclass)
 
-            cclass_name = cls.mb.get_cclass(famez_id)
-            this.hardware = cls.cclass_to_hardware_type(cclass_name)
-
+            # Since they all connect to the one switch (no P2P)
             this.group = 'port_%s' % famez_id
 
             # this.CID = 0        # Later
@@ -68,17 +67,12 @@ class MailBoxReSTAPI(object):
         thedict['links'] = links
         return thedict
 
-
     def cclass_to_hardware_type(cclass_name):
-        cclass_name = cclass_name.lower()
-
-        cclass_name = 'qemu' if 'qemu' in cclass_name
-        cclass_name = 'debugger' if 'debug' in cclass_name
-        cclass_name = 'adapter' if 'adapter' in cclass_name
-        cclass_name = 'switch' if 'switch' in cclass_name
-
-        return cclass_name
-
+        lower = cclass_name.lower()
+        for hw in ('qemu', 'debugger', 'adapter', 'switch'):
+            if hw in lower:
+                return hw
+        return lower
 
     @app.route('/system')
     def get_system(self, request):
@@ -89,7 +83,6 @@ class MailBoxReSTAPI(object):
         request.setHeader('Access-Control-Allow-Origin', '*')
 
         return json.dumps(thedict)
-        # print(reqhdrs, file=sys.stderr)
         if b'Apiversion' in reqhdrs:
             return json.dumps(thedict)
         return('<PRE>%s</PRE>' % pformat(dict(thedict)))
@@ -108,12 +101,11 @@ class MailBoxReSTAPI(object):
         if cls.mb is not None:
             return
         cls.mb = already_initialized_FAMEZ_mailbox
-        cls.mm = cls.mb.mm
         cls.nClients = cls.mb.nClients
         cls.nEvents = cls.mb.nEvents
         cls.server_famez_id = cls.mb.server_id      # see mb2dict
         # Clients/ports are enumerated 1-nClients inclusive
-        cls.nodes = [ cls.N() for _ in range(cls.server_famez_id + 1) ]
+        cls.nodes = [ cls.N() for _ in range(cls.nEvents) ]
 
         # Instead of this.app.run(), break it open and wait for
         # twister_server.py to finally invoke TIreactor.run() as all these

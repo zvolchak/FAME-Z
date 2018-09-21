@@ -100,7 +100,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def get_nodenames(cls):
         cls.id2nodename = OrderedDict()
         for peer_id in sorted(cls.id2fd_list):  # keys() are integer IDs
-            nodename = FAMEZ_MailBox.get_nodename(peer_id)
+            nodename = FAMEZ_MailBox.slots[peer_id].nodename
             cls.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
@@ -171,7 +171,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def nodename(self, name):
         self._nodename = name
         if name:
-            FAMEZ_MailBox.set_nodename(self.id, name)
+            FAMEZ_MailBox.slots[self.id].nodename = name
 
     @property
     def cclass(self):
@@ -181,7 +181,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def cclass(self, name):
         self._cclass = name
         if name:
-            FAMEZ_MailBox.set_cclass(self.id, name)
+            FAMEZ_MailBox.slots[self.id].cclass = name
 
     @property
     def latest_fd(self):
@@ -333,7 +333,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     @staticmethod
     def ClientCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name = FAMEZ_MailBox.get_nodename(requester_id)
+        requester_name = FAMEZ_MailBox.slots[requester_id].nodename
         request = FAMEZ_MailBox.retrieve(requester_id)
         responder = vectorobj.cbdata
 
