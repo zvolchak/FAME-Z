@@ -14,6 +14,7 @@ import os
 import random
 import struct
 import sys
+import time
 
 from collections import OrderedDict
 from pprint import pprint
@@ -99,6 +100,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                         tmp.start()
 
         self.create_new_peer_id()
+
+        # Default since QEMU VM might not load drivers at outset.  Debugger
+        # client will quickly overwrite this.
         self.peerattrs = {
             'CID0': '0',
             'SID0': '0',
@@ -212,6 +216,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         if self.SI.args.smart:
             send_payload(self, 'Link CTL Peer-Attribute')
+        else:
+            self.printswitch(self.SI.clients, 0)
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
@@ -227,17 +233,16 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             del self.SI.clients[self.id]
         if self.SI.args.recycle:
             self.SI.recycled[self.id] = self
-            return
+        else:
+            try:
+                for other_peer in self.SI.clients.values():
+                    ivshmem_send_one_msg(other_peer.transport.socket, self.id)
 
-        try:
-            for other_peer in self.SI.clients.values():
-                ivshmem_send_one_msg(other_peer.transport.socket, self.id)
-
-            for EN in self.EN_list:
-                EN.cleanup()
-
-        except Exception as e:
-            self.SI.logmsg('Closing peer transports failed: %s' % str(e))
+                for EN in self.EN_list:
+                    EN.cleanup()
+            except Exception as e:
+                self.SI.logmsg('Closing peer transports failed: %s' % str(e))
+        self.printswitch(self.SI.clients)
 
     def create_new_peer_id(self):
         '''Determine the lowest unused client ID and set self.id.'''
@@ -314,21 +319,62 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # The requester can die between its request and this callback.
         try:
             responder = SI.clients[requester_id]
+            responder.requester_id = requester_id   # Pedantic?
+            # For QEMU/VM, this may be the first chance to grab this (if
+            # the drivers hadn't come up before).
+            if not responder.nodename:
+                responder.nodename = requester_name
         except KeyError as e:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
-        responder.requester_id = requester_id   # FIXME: is this necessary?
-
-        # For QEMU/VM, this may be the first chance to retreive the filename.
-        if not responder.nodename:
-            responder.nodename = requester_name
 
         ret = handle_request(request, requester_name, responder)
 
-    #----------------------------------------------------------------------
-    # Command line parsing.
+        # ret is either True, False, or...
 
-    def doCommand(self, cmd, args):
+        if ret == 'dump':
+            # Might be some other stuff, but finally
+            ProtocolIVSHMSGServer.printswitch(SI.clients)
+
+    #----------------------------------------------------------------------
+    # ASCII art switch:  Left side and right sider are each half of the ports.
+
+    @staticmethod
+    def printswitch(clients, delay=0.5):
+        if int(delay) < 0 or int(delay) > 2:
+            delay = 1.0
+        time.sleep(delay)
+        lfmt = '%s %s [%s,%s]'
+        rfmt = '[%s,%s] %s %s'
+        half = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
+        NSP = 34
+        lspaces = ' ' * NSP
+        PRINT('%s  _________' % lspaces)
+        for i in range(1, half + 1):
+            left = i
+            right = left + half
+            try:
+                ldesc = lspaces
+                c = clients[left]
+                pa = c.peerattrs
+                cclass = FAMEZ_MailBox.slots[left].cclass
+                ldesc += lfmt % (cclass, c.nodename, pa['CID0'], pa['SID0'])
+            except KeyError as e:
+                pass
+            try:
+                c = clients[right]
+                pa = c.peerattrs
+                cclass = FAMEZ_MailBox.slots[right].cclass
+                rdesc = rfmt % (pa['CID0'], pa['SID0'], cclass, c.nodename)
+            except KeyError as e:
+                rdesc = ''
+            PRINT('%-s -|%1d    %2d|- %s' % (ldesc[-NSP:], left, right, rdesc))
+        PRINT('%s  =========' % lspaces)
+
+    #----------------------------------------------------------------------
+    # Command line parsing, picked up by commander.py
+
+    def doCommand(self, cmd, args=None):
 
         if cmd in ('h', 'help') or '?' in cmd:
             print('h[elp]\n\tThis message')
@@ -343,39 +389,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
                     if self.SI.args.verbose > 2:
                         PPRINT(vars(peer), stream=sys.stdout)
-
-            # ASCII art switch: Print full left side, right justifed, into 30
-            clients = self.SI.clients
-            lfmt = '%s %s [%s,%s]'
-            rfmt = '[%s,%s] %s %s'
-            half = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
-            N = 34
-            lspaces = ' ' * N
-            PRINT('%s  _________' % lspaces)
-            for i in range(1, half + 1):
-                left = i
-                right = left + half
-                try:
-                    ldesc = lspaces
-                    c = clients[left]
-                    pa = c.peerattrs
-                    cclass = FAMEZ_MailBox.slots[left].cclass
-                    ldesc += lfmt % (
-                        cclass, c.nodename, pa['CID0'], pa['SID0'])
-                except KeyError as e:
-                    pass
-                try:
-                    c = clients[right]
-                    pa = c.peerattrs
-                    cclass = FAMEZ_MailBox.slots[right].cclass
-                    rdesc = rfmt % (
-                        pa['CID0'], pa['SID0'], cclass, c.nodename)
-                except KeyError as e:
-                    rdesc = ''
-                PRINT('%-s -|%1d    %2d|- %s' % (
-                    ldesc[-N:], left, right, rdesc))
-            PRINT('%s  =========' % lspaces)
-
+            self.printswitch(self.SI.clients, 0)
             return True
 
         if cmd in ('q', 'quit'):

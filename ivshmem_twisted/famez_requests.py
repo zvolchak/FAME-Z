@@ -126,7 +126,7 @@ def _Standalone_Acknowledgment(responder, args):
     if _tagged:
         print('Outstanding tags:', file=sys.stderr)
         pprint(_tagged, stream=sys.stderr)
-    return retval
+    return 'dump'
 
 
 def _send_SA(responder, tag, reason):
@@ -187,6 +187,7 @@ def _Link_RFC(responder, args):
 # Gen-Z 1.0 "11.11 Link CTL"
 # Entered on both client and server responses.
 
+
 def _Link_CTL(responder, args):
     '''Subelements should be empty.'''
     arg0 = args[0] if len(args) else ''
@@ -206,7 +207,7 @@ def _Link_CTL(responder, args):
         # FIXME: correlation ala _tagged?  How do I know it's peer attrs?
         # FIXME: add a key to the response...
         responder.peerattrs = CSV2dict(args[1])
-        return True
+        return 'dump'
 
     if arg0 == 'NAK':
         # FIXME: do I track the sender ala _tagged and deal with it?
@@ -222,6 +223,11 @@ def _Link_CTL(responder, args):
 
 def _ping(responder, args):
     return send_payload(responder, 'pong')
+
+
+def _dump(responder, args):
+    return 'dump'      # Technically "True", but with semantics
+
 
 ###########################################################################
 # Chained from actual EventReader callback in twisted_server.py.
