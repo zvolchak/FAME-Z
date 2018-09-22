@@ -1,0 +1,22 @@
+# Systemd unit file to remove modules on shutdown.  This gives
+# them a chance to cleanly rewrite their state for monitoring
+# tools like Executive Cardboard and the switch "dump".
+
+# Location: /etc/systemd/system/famez-stop.service
+# After copying, register it for the first time:
+# sudo systemctl daemon-reload
+# sudo systemctl enable famez-stop
+# sudo systemctl start famez-stop
+
+[Unit]
+Description=Unload FAME-Z
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true
+RemainAfterExit=true
+ExecStop=/bin/bash -c 'rmmod famez_bridge; rmmod famez; rmmod genz'
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
