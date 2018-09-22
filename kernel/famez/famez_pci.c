@@ -146,6 +146,8 @@ static void famez_remove_one(struct pci_dev *pdev)
 	}
 	pr_cont("disabling/removing/freeing resources\n");
 
+	strcpy(adapter->my_slot->cclass, "Driverless QEMU");
+
 	famez_ISR_teardown(pdev);
 
 	pci_disable_device(pdev);

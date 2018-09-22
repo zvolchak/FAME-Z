@@ -115,7 +115,7 @@ EXPORT_SYMBOL(genz_core_structure_destroy);
  * Based on misc_register().  Returns 0 on success or -ESOMETHING.
  */
 
-const char * const genz_register_bridge(
+struct genz_char_device *genz_register_bridge(
 	unsigned CCE,
 	const struct file_operations *fops,
 	void *file_private_data,
@@ -198,6 +198,8 @@ const char * const genz_register_bridge(
 		ret = PTR_ERR(wrapper->this_device);
 		goto up_and_out;
 	}
+	wrapper->CCE = CCE;
+	wrapper->cclass = genz_component_class_str[CCE];
 
 up_and_out:
 	mutex_unlock(&bridge_mutex);
@@ -207,6 +209,14 @@ up_and_out:
 			kfree(wrapper);
 		return ERR_PTR(ret);
 	}
-	return genz_component_class_str[CCE];
+	return wrapper;
 }
 EXPORT_SYMBOL(genz_register_bridge);
+
+void genz_unregister_char_device(struct genz_char_device *genz_chrdev)
+{
+	// FIXME: memory leaks?
+	device_destroy(genz_chrdev->genz_class, genz_chrdev->cdev.dev);
+	kfree(genz_chrdev);
+}
+EXPORT_SYMBOL(genz_unregister_char_device);

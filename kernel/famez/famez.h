@@ -62,7 +62,6 @@ struct famez_adapter {
 	atomic_t nr_users;				// User-space actors
 	struct pci_dev *pdev;				// Paranoid reverse ptr
 	int slot;					// pdev->devfn >> 3
-	void *teardown_lookup;				// Convenience backpointer
 	uint64_t max_buflen;
 	uint16_t my_id;					// match ringer field
 	struct ivshmem_registers __iomem *regs;		// BAR0
@@ -84,7 +83,9 @@ struct famez_adapter {
 	// responsibility of that module, managed by open() & release().
 	void *outgoing;
 
-	struct genz_core_structure *core;
+	struct genz_core_structure *core;		// Primary data structure
+	struct genz_char_device *genz_chrdev;		// Convenience backpointers
+	void *teardown;
 };
 
 //-------------------------------------------------------------------------

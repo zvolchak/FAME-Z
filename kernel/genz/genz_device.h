@@ -11,7 +11,9 @@
 // as a full structure; it can be be pulled from the filp->f_inode->i_cdev
 // and used as anchor in to_xxxx lookups.
 
-struct genz_char_device {		// FIXME: Move this to genz
+struct genz_char_device {
+	unsigned CCE;			// MUST BE FIRST FIELD!
+	const char *cclass;		// genz_component_class_str[CCE]
 	void *file_private_data;	// Extracted at first fops->open()
 	struct class *genz_class;	// Multi-purpose struct
 	struct cdev cdev;		// full structure, has
@@ -54,7 +56,8 @@ extern const char * const genz_component_class_str[];
 extern struct genz_core_structure *genz_core_structure_create(uint64_t);
 extern void genz_core_structure_destroy(struct genz_core_structure *);
 
-extern const char * const genz_register_bridge(
+extern struct genz_char_device *genz_register_bridge(
 	unsigned, const struct file_operations *, void *, int);
 
+extern void genz_unregister_char_device(struct genz_char_device *);
 #endif
