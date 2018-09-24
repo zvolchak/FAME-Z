@@ -29,13 +29,13 @@ from zope.interface import implementer
 
 try:
     from commander import Commander
-    from famez_mailbox import FAMEZ_MailBox
+    from famez_mailbox import FAMEZ_MailBox as MB
     from famez_requests import handle_request, send_payload
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 except ImportError as e:
     from .commander import Commander
-    from .famez_mailbox import FAMEZ_MailBox
+    from .famez_mailbox import FAMEZ_MailBox as MB
     from .famez_requests import handle_request, send_payload
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
@@ -99,8 +99,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     @classmethod
     def get_nodenames(cls):
         cls.id2nodename = OrderedDict()
+        if cls.SI.args.verbose:
+            print('Scanning peers', sorted(cls.id2fd_list))
         for peer_id in sorted(cls.id2fd_list):  # keys() are integer IDs
-            nodename = FAMEZ_MailBox.slots[peer_id].nodename
+            if cls.SI.args.verbose > 1:
+                print('\nScanning peer', peer_id)
+                print(MB.slots[1:])
+            nodename = MB.slots[peer_id].nodename
             cls.id2nodename[peer_id] = nodename
 
     def parse_target(self, instr):
@@ -171,7 +176,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def nodename(self, name):
         self._nodename = name
         if name:
-            FAMEZ_MailBox.slots[self.id].nodename = name
+            MB.slots[self.id].nodename = name
 
     @property
     def cclass(self):
@@ -181,7 +186,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def cclass(self, name):
         self._cclass = name
         if name:
-            FAMEZ_MailBox.slots[self.id].cclass = name
+            MB.slots[self.id].cclass = name
 
     @property
     def latest_fd(self):
@@ -209,7 +214,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # beyond the intial three.  The constructor does some work
         # then returns a few attributes pulled out of the globals,
         # but work is only actually done on the first call.
-        mailbox = FAMEZ_MailBox(fd=mailbox_fd, client_id=self.id)
+        mailbox = MB(fd=mailbox_fd, client_id=self.id)
         self.SI.nClients = mailbox.nClients
         self.SI.nEvents = mailbox.nEvents
         self.SI.server_id = mailbox.server_id
@@ -318,7 +323,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Dirty disconnect')
         else:
             print('Clean disconnect')
-        FAMEZ_MailBox.clear_mailslot(self.id)  # In particular, nodename
+        MB.clear_mailslot(self.id)  # In particular, nodename
         # FIXME: if reactor.isRunning:
         TIreactor.stop()
 
@@ -333,8 +338,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     @staticmethod
     def ClientCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name = FAMEZ_MailBox.slots[requester_id].nodename
-        request = FAMEZ_MailBox.retrieve(requester_id)
+        requester_name = MB.slots[requester_id].nodename
+        request = MB.retrieve(requester_id)
         responder = vectorobj.cbdata
 
         # Need to be set each time because of spoof cabability, especiall

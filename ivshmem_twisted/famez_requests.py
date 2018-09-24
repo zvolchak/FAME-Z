@@ -95,9 +95,9 @@ def send_payload(peer, response,
     _tracker += 1
     response += '%s%d' % (_TRACKER_TOKEN, _tracker)
 
-    FAMEZ_MailBox.fill(sender_id, response)
+    ret = FAMEZ_MailBox.fill(sender_id, response)
     sender_EN.incr()
-    return True     # FIXME: is there anything to detect?
+    return ret
 
 ###########################################################################
 # Gen-Z 1.0 "6.8 Standalone Acknowledgment"

@@ -214,10 +214,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # And now that it's finished:
         self.SI.clients[self.id] = self
 
+        # QEMU did the connect but its VM is probably not running well
+        # enough to respond.  Since there's no (easy) way to tell,
+        # this is a blind shot...
+        self.printswitch(self.SI.clients, 0)    # Driverless QEMU or Debugger
         if self.SI.args.smart:
             send_payload(self, 'Link CTL Peer-Attribute')
-        else:
-            self.printswitch(self.SI.clients, 0)
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
