@@ -105,6 +105,25 @@ void genz_core_structure_destroy(struct genz_core_structure *core)
 }
 EXPORT_SYMBOL(genz_core_structure_destroy);
 
+static ssize_t genz_bridge_CS0_read(
+	struct file *file, struct kobject *kobj, struct bin_attribute *bin_attr,
+	char *buf, loff_t offset, size_t size)
+{
+	pr_info("%s(%lu bytes)\n", __FUNCTION__, size);
+	memset(buf, 0, size);
+	strcat(buf, "You're in a maze of twisty little passages, all alike.\n");
+	return size;
+}
+
+static ssize_t genz_bridge_CS0_write(
+	struct file *file, struct kobject *kobj, struct bin_attribute *bin_attr,
+	char *buf, loff_t offset, size_t size)
+{
+	buf[size - 1] = '\0';
+	pr_info("%s(%lu bytes) = %s\n", __FUNCTION__, size, buf);
+	return size;
+}
+
 /**
  * genz_register_bridge - add a new bridge character device and driver
  * @CCE: Component Class Encoding from the Gen-Z spec
@@ -123,7 +142,7 @@ struct genz_char_device *genz_register_bridge(
 {
 	int ret = 0;
 	char *ownername = NULL;
-	struct genz_char_device *wrapper = NULL;
+	struct genz_char_device *genz_chrdev = NULL;
 	dev_t base_dev_t = 0;
 	uint64_t minor;
 
@@ -157,65 +176,84 @@ struct genz_char_device *genz_register_bridge(
 	pr_info("%s(%s) dev_t = %llu:%llu\n", __FUNCTION__, ownername,
 		bridge_major, minor);
 
-	if (!(wrapper = kzalloc(sizeof(*wrapper), GFP_KERNEL))) {
+	if (!(genz_chrdev = kzalloc(sizeof(*genz_chrdev), GFP_KERNEL))) {
 		ret = -ENOMEM;
 		goto up_and_out;
 	}
 
 	// This sets .fops, .list, and .kobj == ktype_cdev_default.
 	// Then add anything else.
-	cdev_init(&wrapper->cdev, fops);
-	wrapper->cdev.dev = MKDEV(bridge_major, minor);
-	wrapper->cdev.count = 1;
-	if ((ret = kobject_set_name(&wrapper->cdev.kobj,
+	cdev_init(&genz_chrdev->cdev, fops);
+	genz_chrdev->cdev.dev = MKDEV(bridge_major, minor);
+	genz_chrdev->cdev.count = 1;
+	if ((ret = kobject_set_name(&genz_chrdev->cdev.kobj,
 				    "%s_%02x", ownername, instance)))
 		goto up_and_out;
 
-	wrapper->genz_class = genz_class_getter(CCE);
-	wrapper->mode = 0666;
-	if (!(wrapper->parent = genz_find_bus_by_instance(instance))) {
+	genz_chrdev->genz_class = genz_class_getter(CCE);
+	genz_chrdev->mode = 0666;
+	if (!(genz_chrdev->parent = genz_find_bus_by_instance(instance))) {
 		ret = -ENODEV;
 		goto up_and_out;
 	}
-	if ((ret = cdev_add(&wrapper->cdev,
-			    wrapper->cdev.dev,
-			    wrapper->cdev.count))) {
+	if ((ret = cdev_add(&genz_chrdev->cdev,
+			    genz_chrdev->cdev.dev,
+			    genz_chrdev->cdev.count))) {
 		goto up_and_out;
 	}
-		
+
 	// Final work: there's also plain "device_create()".  Driver
 	// becomes "live" on success so insure data is ready.
-	wrapper->file_private_data = file_private_data;
-	wrapper->this_device = device_create_with_groups(
-		wrapper->genz_class,
-		wrapper->parent,	// ugly croakage if this is NULL
-		wrapper->cdev.dev,
-		wrapper,		// drvdata: not sure where this goes
-		wrapper->attr_groups,
+	genz_chrdev->file_private_data = file_private_data;
+	genz_chrdev->this_device = device_create_with_groups(
+		genz_chrdev->genz_class,
+		genz_chrdev->parent,	// ugly croakage if this is NULL
+		genz_chrdev->cdev.dev,
+		genz_chrdev,		// drvdata: not sure where this goes
+		genz_chrdev->attr_groups,
 		"%s_%02x",
 		ownername, instance);
-	if (IS_ERR(wrapper->this_device)) {
-		ret = PTR_ERR(wrapper->this_device);
+	if (IS_ERR(genz_chrdev->this_device)) {
+		ret = PTR_ERR(genz_chrdev->this_device);
 		goto up_and_out;
 	}
-	wrapper->CCE = CCE;
-	wrapper->cclass = genz_component_class_str[CCE];
+	genz_chrdev->CCE = CCE;
+	genz_chrdev->cclass = genz_component_class_str[CCE];
+
+	// For Jim.
+	sysfs_bin_attr_init(&genz_chrdev->ctlwrite0);
+	genz_chrdev->controlspace0.attr.name = "ControlSpace0";
+	genz_chrdev->controlspace0.attr.mode = S_IRUSR | S_IWUSR;
+	genz_chrdev->controlspace0.size = 64;
+	genz_chrdev->controlspace0.private = NULL;
+	genz_chrdev->controlspace0.read = genz_bridge_CS0_read;
+	genz_chrdev->controlspace0.write = genz_bridge_CS0_write;
+	genz_chrdev->controlspace0.mmap = NULL;
+
+	if ((ret = device_create_bin_file(		// Not fatal for now
+		genz_chrdev->this_device, 
+		&genz_chrdev->controlspace0))) {
+		pr_err("Couldn't create ctlwr0: %d\n", ret);
+	}
 
 up_and_out:
 	mutex_unlock(&bridge_mutex);
 	if (ret) {
 		pr_cont("FAILURE\n");
-		if (wrapper)
-			kfree(wrapper);
+		if (genz_chrdev)
+			kfree(genz_chrdev);
 		return ERR_PTR(ret);
 	}
-	return wrapper;
+	return genz_chrdev;
 }
 EXPORT_SYMBOL(genz_register_bridge);
 
 void genz_unregister_char_device(struct genz_char_device *genz_chrdev)
 {
-	// FIXME: memory leaks?
+	// FIXME: review for memory leaks
+	device_remove_bin_file(
+		genz_chrdev->this_device,
+		&genz_chrdev->controlspace0);
 	device_destroy(genz_chrdev->genz_class, genz_chrdev->cdev.dev);
 	kfree(genz_chrdev);
 }
