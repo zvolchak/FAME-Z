@@ -107,17 +107,17 @@ static int famez_init_one(
 	}
 
 
-	// Get peer-attributes from famez_server.  This message will also
-	// trigger the server to read my hostname from the mailbox.  The
-	// response is processed elsewhere.
+	// Get peer-attributes from famez_server; response processed inline
 	ret = famez_create_outgoing(
 		adapter->globals->server_id,
 		FAMEZ_SID_CID_IS_PEER_ID,
 		get_peer_attributes, strlen(get_peer_attributes), adapter);
 	if (ret > 0)
 		ret = ret == strlen(get_peer_attributes) ? 0 : -EIO;
-	if (!ret)
+	if (!ret) {
+		UPDATE_SWITCH(adapter);
 		return ret;	// else fall through
+	}
 
 err_MSIX_teardown:
 	PR_V1("tearing down MSI-X %s\n", CARDLOC(pdev));
@@ -147,6 +147,7 @@ static void famez_remove_one(struct pci_dev *pdev)
 	pr_cont("disabling/removing/freeing resources\n");
 
 	strcpy(adapter->my_slot->cclass, "Driverless QEMU");
+	UPDATE_SWITCH(adapter);
 
 	famez_ISR_teardown(pdev);
 

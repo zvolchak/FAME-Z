@@ -140,6 +140,12 @@ extern int famez_unregister(const struct file_operations *);
 //-------------------------------------------------------------------------
 // Legibility assistance
 
+// Send a command for the switch interpreter
+#define UPDATE_SWITCH(AdApTeR) famez_create_outgoing( \
+			AdApTeR->globals->server_id, \
+			FAMEZ_SID_CID_IS_PEER_ID, \
+			"dump", 4, AdApTeR);
+
 // linux/pci.h missed one
 #ifndef pci_resource_name
 #define pci_resource_name(dev, bar) (char *)((dev)->resource[(bar)].name)

@@ -61,6 +61,8 @@ int famez_register(unsigned CCE, const struct file_operations *fops)
 		strncpy(adapter->my_slot->cclass, genz_chrdev->cclass,
 			sizeof(adapter->my_slot->cclass) - 1);
 
+		UPDATE_SWITCH(adapter)
+
 		pr_cont("success\n");
 		nbindings++;
 	}
@@ -98,6 +100,7 @@ int famez_unregister(const struct file_operations *fops)
 				sizeof(adapter->my_slot->cclass) - 1);
 			strncpy(adapter->core->Base_C_Class_str, DEFAULT_CCLASS,
 				sizeof(adapter->core->Base_C_Class_str) - 1);
+			UPDATE_SWITCH(adapter)
 			ret++;
 			pr_cont("success\n");
 		} else {

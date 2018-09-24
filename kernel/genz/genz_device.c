@@ -173,7 +173,7 @@ struct genz_char_device *genz_register_bridge(
 
 	wrapper->genz_class = genz_class_getter(CCE);
 	wrapper->mode = 0666;
-	if (!(wrapper->parent = genz_find_me_a_bus_device(instance))) {
+	if (!(wrapper->parent = genz_find_bus_by_instance(instance))) {
 		ret = -ENODEV;
 		goto up_and_out;
 	}
@@ -184,7 +184,7 @@ struct genz_char_device *genz_register_bridge(
 	}
 		
 	// Final work: there's also plain "device_create()".  Driver
-	// bcomes "live" on success so insure data is ready.
+	// becomes "live" on success so insure data is ready.
 	wrapper->file_private_data = file_private_data;
 	wrapper->this_device = device_create_with_groups(
 		wrapper->genz_class,

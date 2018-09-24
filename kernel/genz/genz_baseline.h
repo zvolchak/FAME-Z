@@ -102,7 +102,7 @@ struct genz_interface_structure {
 //-------------------------------------------------------------------------
 // genz_bus.c
 
-struct device *genz_find_me_a_bus_device(int);
+struct device *genz_find_bus_by_instance(int);
 
 //-------------------------------------------------------------------------
 // genz_class.c

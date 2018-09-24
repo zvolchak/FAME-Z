@@ -129,20 +129,20 @@ struct bus_type genz_bus = {		// Only one directly in /sys/bus
 };
 
 #define MAXBUSES	254		// Fit into "0x%02x" format
-#define POTPOURRID	(MAXBUSES + 1)	// The "first available" potpourri bus
+#define POTPOURRID	(MAXBUSES + 1)	// The "pick it for me" bus
 
 static DEFINE_MUTEX(bus_mutex);
 static LIST_HEAD(bus_list);
 
 struct genz_bus_entry {
 	struct list_head bus_lister;
-	unsigned id;		// derived from slot of requester
+	unsigned id;			// from hints to genz_find_bus_by_xxx
 	struct device bus_dev;
 };
 
 #define to_genz_bus(pDeV) container_of(pDeV, struct genz_bus_entry, bus_dev);
 
-struct device *genz_find_me_a_bus_device(int desired)
+struct device *genz_find_bus_by_instance(int desired)
 {
 	struct genz_bus_entry *tmp, *foundit = NULL;
 
