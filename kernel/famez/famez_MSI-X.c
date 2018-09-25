@@ -138,7 +138,7 @@ int famez_ISR_setup(struct pci_dev *pdev)
 			msix_entries[last_irq_index].vector,
 			all_msix,
 			0,
-			"FAME-Z",
+			FAMEZ_NAME,
 			adapter))) {
 				pr_err(FZ "request_irq(%d) failed: %d\n",
 					last_irq_index, ret);

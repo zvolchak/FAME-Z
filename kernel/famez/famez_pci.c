@@ -93,9 +93,14 @@ static int famez_init_one(
 		}
 	}
 	if (!ret) {
-		if (pdev->slot) {	// When does this go live?
-			pr_info("Slot name = %s\n", pci_slot_name(pdev->slot));
-			ret = kobject_rename(&pdev->slot->kobj, FAMEZ_NAME);
+		if (pdev->slot) {	// See lscpi -v
+			char newname[32];
+
+			// Originally slot number %d
+			// pr_info("Slot name = %s\n", pci_slot_name(pdev->slot));
+			sprintf(newname, "%s.%02x",
+				FAMEZ_NAME, (unsigned)(pdev->slot->number));
+			ret = kobject_rename(&pdev->slot->kobj, newname);
 			ret = 0;	// __must_check, but __dont_care
 		}
 		list_add_tail(&adapter->lister, &famez_adapter_list);
@@ -137,6 +142,7 @@ err_pci_disable_device:
 static void famez_remove_one(struct pci_dev *pdev)
 {
 	struct famez_adapter *cur, *next, *adapter = pci_get_drvdata(pdev);
+	char oldname[8];
 	int ret;
 
 	pr_info(FZ "%s(%s): ", __FUNCTION__, CARDLOC(pdev));
@@ -145,6 +151,11 @@ static void famez_remove_one(struct pci_dev *pdev)
 		return;
 	}
 	pr_cont("disabling/removing/freeing resources\n");
+
+	// Fix lspci -v
+	sprintf(oldname, "%u", (unsigned)(pdev->slot->number));
+	ret = kobject_rename(&pdev->slot->kobj, oldname);
+	ret = 0;	// __must_check, but __dont_care
 
 	strcpy(adapter->my_slot->cclass, "Driverless QEMU");
 	UPDATE_SWITCH(adapter);
