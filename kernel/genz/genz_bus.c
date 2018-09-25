@@ -29,6 +29,18 @@ static int genz_num_vf(struct device *dev)
 	return 1;
 }
 
+//-------------------------------------------------------------------------
+// Kernel bitches at you without one of these.
+
+static int genz_remove_one_device(struct device *dev)
+{
+	struct genz_device __unused *genz_dev = to_genz_dev(dev);
+	// struct genz_driver *drv = genz_dev->driver;
+
+	pr_info("%s()\n", __FUNCTION__);
+	return 0;
+}
+
 //-----------------------------------------------------------------------
 // FIXME: how is this called?
 
@@ -125,6 +137,7 @@ struct bus_type genz_bus = {		// Only one directly in /sys/bus
 	.dev_root = NULL,		// "Default parent device"
 	.match = genz_match,		// Verify driver<->device permutations
 	.probe = genz_init_one,		// if match() call drv.probe
+	.remove = genz_remove_one_device,
 	.num_vf = genz_num_vf,
 };
 
