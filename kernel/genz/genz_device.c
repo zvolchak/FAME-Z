@@ -220,19 +220,19 @@ struct genz_char_device *genz_register_bridge(
 	genz_chrdev->CCE = CCE;
 	genz_chrdev->cclass = genz_component_class_str[CCE];
 
-	// For Jim.
+	// For Jim.  Section 8.14
 	sysfs_bin_attr_init(&genz_chrdev->ctlwrite0);
-	genz_chrdev->controlspace0.attr.name = "ControlSpace0";
-	genz_chrdev->controlspace0.attr.mode = S_IRUSR | S_IWUSR;
-	genz_chrdev->controlspace0.size = 64;
-	genz_chrdev->controlspace0.private = NULL;
-	genz_chrdev->controlspace0.read = genz_bridge_CS0_read;
-	genz_chrdev->controlspace0.write = genz_bridge_CS0_write;
-	genz_chrdev->controlspace0.mmap = NULL;
+	genz_chrdev->CoreStructure.attr.name = "CoreStructure";
+	genz_chrdev->CoreStructure.attr.mode = S_IRUSR | S_IWUSR;
+	genz_chrdev->CoreStructure.size = 64;
+	genz_chrdev->CoreStructure.private = NULL;
+	genz_chrdev->CoreStructure.read = genz_bridge_CS0_read;
+	genz_chrdev->CoreStructure.write = genz_bridge_CS0_write;
+	genz_chrdev->CoreStructure.mmap = NULL;
 
 	if ((ret = device_create_bin_file(		// Not fatal for now
 		genz_chrdev->this_device, 
-		&genz_chrdev->controlspace0))) {
+		&genz_chrdev->CoreStructure))) {
 		pr_err("Couldn't create ctlwr0: %d\n", ret);
 	}
 
@@ -253,7 +253,7 @@ void genz_unregister_char_device(struct genz_char_device *genz_chrdev)
 	// FIXME: review for memory leaks
 	device_remove_bin_file(
 		genz_chrdev->this_device,
-		&genz_chrdev->controlspace0);
+		&genz_chrdev->CoreStructure);
 	device_destroy(genz_chrdev->genz_class, genz_chrdev->cdev.dev);
 	kfree(genz_chrdev);
 }

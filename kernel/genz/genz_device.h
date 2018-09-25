@@ -23,7 +23,7 @@ struct genz_char_device {
 					// list_head
 					// dev_t (base maj/min)
 					// count (of minors)
-	struct bin_attribute controlspace0;
+	struct bin_attribute CoreStructure;
 
 	// Copied from miscdevice, in active use
 	struct device *parent;		// set by caller, now to figure out WTF?
