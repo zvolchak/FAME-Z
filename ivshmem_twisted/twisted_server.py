@@ -19,6 +19,8 @@ import time
 from collections import OrderedDict
 from pprint import pprint
 
+# While deprecated, it has the best examples and is the only thing I
+# could get working.  twisted.logger.Logger() is the new way.
 from twisted.python import log as TPlog
 from twisted.python.logfile import DailyLogFile
 
@@ -57,6 +59,21 @@ PRINT = functools.partial(print, file=sys.stderr)
 PPRINT = functools.partial(pprint, stream=sys.stderr)
 
 ###########################################################################
+# Broken; need to get smarter to find actual module loggers.
+# See the section below with "/dev/null" with the bandaid fix.
+
+import logging
+
+def shutdown_http_logging():
+    for module in ('urllib3', 'requests', 'asdfjkl'):
+        logger = logging.getLogger(module)
+        logger.addHandler(logging.NullHandler())
+        logger.setLevel(logging.CRITICAL)
+        logger.disabled = True
+        logger.propagate = False
+        # print(vars(logger), file=sys.stderr)
+
+###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
 # qemu/contrib/ivshmem-server.c::ivshmem_server_handle_new_conn() calling
 # qemu/contrib/ivshmem-server.c::ivshmem_server_send_initial_info(), then
@@ -72,6 +89,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     def __init__(self, factory):
         '''"self" is a new client connection, not "me" the server.'''
+        shutdown_http_logging()
         if self.SI is None:
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
@@ -349,9 +367,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         lfmt = '%s %s [%s,%s]'
         rfmt = '[%s,%s] %s %s'
         half = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
-        NSP = 34
+        NSP = 32
         lspaces = ' ' * NSP
-        PRINT('%s  _________' % lspaces)
+        PRINT('\n%s  _________' % lspaces)
         for i in range(1, half + 1):
             left = i
             right = left + half
@@ -380,7 +398,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         if cmd in ('h', 'help') or '?' in cmd:
             print('h[elp]\n\tThis message')
-            print('s[tatus]\n\tStatus of all ports')
+            print('d[ump]\n\tPrint status of all ports')
             print('q[uit]\n\tShut it all down')
             return True
 
@@ -439,10 +457,16 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         # the way I wrote the Klein API server so...
         mb = FAMEZ_MailBox(args=args)
         MailBoxReSTAPI(mb)
+        shutdown_http_logging()
 
         self.cmdlineargs = args
         if args.foreground:
-            TPlog.startLogging(sys.stdout, setStdout=False)
+            if args.verbose > 1:
+                TPlog.startLogging(sys.stdout, setStdout=False)
+            else:
+                print('The first connection will start interactivity...')
+                TPlog.startLogging(open('/dev/null', 'a'), setStdout=False)
+                pass
         else:
             PRINT('Logging to %s' % args.logfile)
             TPlog.startLogging(
@@ -466,6 +490,9 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 
     def buildProtocol(self, useless_addr):
+        # Unfortunately this doesn't work.  Search for /dev/null above.
+        shutdown_http_logging()
+
         # Docs mislead, have to explicitly pass something to get persistent
         # state across protocol/transport invocations.  As there is only
         # one server object per process instantion, that's not necessary.

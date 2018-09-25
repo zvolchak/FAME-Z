@@ -118,6 +118,8 @@ class MailBoxReSTAPI(object):
 
 if __name__ == '__main__':
 
+    from twisted.python import log as TPlog	# Deprecated
+
     from famez_mailbox import FAMEZ_MailBox
 
     # These things are done explicitly in twisted_server.py
@@ -129,5 +131,8 @@ if __name__ == '__main__':
     mb = FAMEZ_MailBox(fd=fd, client_id=99)
     tmp = MailBoxReSTAPI(mb)
 
-    # This is done implicitly after protocol registration
+    # This is done explicitly in twisted_server.py
+    TPlog.startLogging(sys.stdout, setStdout=False)
+
+    # This is done implicitly after protocol registration in full app.
     TIreactor.run()
