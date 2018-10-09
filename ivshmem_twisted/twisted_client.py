@@ -73,7 +73,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             if self.SI is None:     # singleton class variables
                 self.__class__.SI = ServerInvariant()
                 self.SI.args = cmdlineargs
-                self.SI.C_Class = 'Debugger'
 
             self.id = None       # Until initial info; state machine key
             self.linkattrs = { 'State': 'up' }
@@ -96,22 +95,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def promptname(self):
         return self.nodename
 
-    @classmethod
-    def get_nodenames(cls):
-        cls.id2nodename = OrderedDict()
-        if cls.SI.args.verbose:
-            print('Scanning peers', sorted(cls.id2fd_list))
-        for peer_id in sorted(cls.id2fd_list):  # keys() are integer IDs
-            if cls.SI.args.verbose > 1:
-                print('\nScanning peer', peer_id)
-                print(MB.slots[1:])
-            nodename = MB.slots[peer_id].nodename
-            cls.id2nodename[peer_id] = nodename
-
     def parse_target(self, instr):
         '''Return a list even for one item for consistency with keywords
            ALL and OTHERS.'''
-        self.get_nodenames()
         indices = tuple()       # Default return is nothing
         try:
             tmp = (int(instr), )
@@ -123,14 +109,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             if instr.lower()[-6:] in ('server', 'switch'):
                 return (self.SI.server_id,)
             elif instr.lower() == 'all':
-                return sorted(self.id2nodename.keys())
+                return sorted(self.id2fd_list.keys())
             elif instr.lower() == 'others':
-                tmp = list(self.id2nodename.keys())
+                tmp = list(self.id2fd_list.keys())
                 tmp.remove(self.id)
                 return sorted(tmp)
 
-            for id, nodename in self.id2nodename.items():
-                if nodename == instr:
+            for id in self.id2fd_list.keys():
+                if MB.slots[id].nodename == instr:
                     indices = (id, )
                     break
         return indices
@@ -221,7 +207,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         # Gotta wait for initialized mailbox
         self.nodename = 'z%02d' % self.id
-        self.cclass = self.SI.C_Class   # FIXME: only need one
+        self.cclass = 'Debugger'
         print('This ID = %2d (%s)' % (self.id, self.nodename))
 
     # Called multiple times so keep state info about previous calls.
@@ -241,8 +227,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         if latest_fd is None:   # "this" is a disconnect notification
             print('%s (%d) has left the building' %
-                (self.id2nodename[this], this))
-            for collection in (self.id2EN_list, self.id2nodename, self.id2fd_list):
+                (MB.slots[this].nodename, this))
+            for collection in (self.id2EN_list, self.id2fd_list):
                 try:
                     del collection[this]
                 except Exception as e:
@@ -299,7 +285,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # Now arm my incoming events and announce readiness.
         # FIXME: can I really get here more than once?
         if self.firstpass:
-            self.get_nodenames()    # From mailbox, including mine
             if this == self.id:
                 for i, N in enumerate(self.id2EN_list[self.id]):
                     N.num = i
@@ -385,10 +370,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print()
 
             print('Client node/host names:')
-            for key in sorted(self.id2nodename.keys()):
-                print('\t%2d %s' % (key, self.id2nodename[key]))
+            for key in sorted(self.id2fd_list.keys()):
+                print('\t%2d %s' % (key, MB.slots[key].nodename))
 
-            print('\nMy SID0:CID0 = %d:%d' % (self.SID0, self.CID0))
+            print('\nMy CID0:SID0 = %d:%d' % (self.CID0, self.SID0))
             print('Link attributes:\n', self.linkattrs)
             print('Peer attributes:\n', self.peerattrs)
 
@@ -408,11 +393,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         if cmd in ('w', 'who'):
             print('\nThis ID = %2d (%s)' % (self.id, self.nodename))
-            self.get_nodenames()
-            for id, nodename in self.id2nodename.items():
+            for id in self.id2fd_list.keys():
                 if id == self.id:
                     continue
-                print('Peer ID = %2d (%s)' % (id, nodename))
+                print('Peer ID = %2d (%s)' % (id, MB.slots[id].nodename))
             return True
 
         if cmd.lower() in ('l', 'link'):

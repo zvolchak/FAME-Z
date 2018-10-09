@@ -199,8 +199,8 @@ def _Link_CTL(responder, args):
             else:
                 SID0 = responder.SI.server_SID0
                 CID0 = responder.SI.server_CID0
-            attrs = 'C-Class=%s,SID0=%d,CID0=%d' % (
-                responder.SI.C_Class, SID0, CID0)
+            attrs = 'C-Class=%s,CID0=%d,SID0=%d' % (
+                responder.cclass, CID0, SID0)
             return send_LinkACK(responder, attrs)
 
     if arg0 == 'ACK' and len(args) == 2:

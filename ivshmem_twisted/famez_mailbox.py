@@ -139,8 +139,8 @@ class FAMEZ_MailBox(object):
         # Server's "hostname" and Base Component Class.  Zero-padding occurs
         # because it was all zeroed out just above.
         name = 'Z-switch' if args.smart else 'Z-server'
-        cls.slots[args.server_id].nodename = name
-        cls.slots[args.server_id].cclass = 'FabricSwitch'
+        cls.slots[cls.server_id].nodename = name
+        cls.slots[cls.server_id].cclass = 'FabricSwitch'
 
     #----------------------------------------------------------------------
     # Polymorphic.  Someday I'll learn about metaclasses.  While initialized

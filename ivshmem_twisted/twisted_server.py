@@ -94,7 +94,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
             self.__class__.SI = ServerInvariant(factory.cmdlineargs)
             SI = self.SI
-            SI.C_Class = 'FabricSwitch'
             self.__class__.responder_id = SI.server_id  # THE MARK OF THE BEAST
 
             # Non-standard addition to IVSHMEM server role: this server can be
@@ -126,6 +125,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             'SID0': '0',
             'C-Class': 'Driverless QEMU'
         }
+        # A first connection is raw QEMU which doesn't speak for itself.
         FAMEZ_MailBox.slots[self.id].cclass = 'Driverless QEMU'
 
     @property
@@ -344,6 +344,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # the drivers hadn't come up before).
             if not responder.nodename:
                 responder.nodename = requester_name
+                responder.cclass = FAMEZ_MailBox.slots[requester_id].cclass
         except KeyError as e:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
@@ -377,15 +378,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 ldesc = lspaces
                 c = clients[left]
                 pa = c.peerattrs
-                cclass = FAMEZ_MailBox.slots[left].cclass
-                ldesc += lfmt % (cclass, c.nodename, pa['CID0'], pa['SID0'])
+                ldesc += lfmt % (c.cclass, c.nodename, pa['CID0'], pa['SID0'])
             except KeyError as e:
                 pass
             try:
                 c = clients[right]
                 pa = c.peerattrs
-                cclass = FAMEZ_MailBox.slots[right].cclass
-                rdesc = rfmt % (pa['CID0'], pa['SID0'], cclass, c.nodename)
+                rdesc = rfmt % (pa['CID0'], pa['SID0'], c.cclass, c.nodename)
             except KeyError as e:
                 rdesc = ''
             PRINT('%-s -|%1d    %2d|- %s' % (ldesc[-NSP:], left, right, rdesc))
