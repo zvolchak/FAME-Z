@@ -34,7 +34,7 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 
 try:
     from commander import Commander
-    from famez_mailbox import FAMEZ_MailBox
+    from famez_mailbox import FAMEZ_MailBox as MB
     from famez_requests import handle_request, send_payload
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
@@ -42,7 +42,7 @@ try:
     from twisted_restapi import MailBoxReSTAPI
 except ImportError as e:
     from .commander import Commander
-    from .famez_mailbox import FAMEZ_MailBox
+    from .famez_mailbox import FAMEZ_MailBox as MB
     from .famez_requests import handle_request, send_payload
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
@@ -126,7 +126,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             'C-Class': 'Driverless QEMU'
         }
         # A first connection is raw QEMU which doesn't speak for itself.
-        FAMEZ_MailBox.slots[self.id].cclass = 'Driverless QEMU'
+        MB.slots[self.id].cclass = 'Driverless QEMU'
 
     @property
     def promptname(self):
@@ -247,7 +247,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             txt = 'Clean'
         self.SI.logmsg('%s disconnect from peer id %d' % (txt, self.id))
         # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
-        FAMEZ_MailBox.clear_mailslot(self.id)
+        MB.clear_mailslot(self.id)
 
         if self.id in self.SI.clients:     # Only if everything was completed
             del self.SI.clients[self.id]
@@ -287,9 +287,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             else:
                 self.id = (sorted(available_ids))[0]
 
-        # FIXME: This should have been set up before socket connection made?
-        self.nodename = FAMEZ_MailBox.slots[self.id].nodename
-        self.cclass = FAMEZ_MailBox.slots[self.id].cclass
         if self.SI.args.smart:
             self.SID0 = self.SI.default_SID
             self.CID0 = self.id * 100
@@ -314,7 +311,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
             # 3. -1 for data with the fd of the ivshmem file.  Using this
             # protocol a valid fd is required.
-            ivshmem_send_one_msg(thesocket, -1, FAMEZ_MailBox.fd)
+            ivshmem_send_one_msg(thesocket, -1, MB.fd)
             return True
         except Exception as e:
             PRINT(str(e))
@@ -332,19 +329,18 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     @staticmethod
     def ServerCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name = FAMEZ_MailBox.slots[requester_id].nodename
-        request = FAMEZ_MailBox.retrieve(requester_id)
+        requester_name = MB.nodename(requester_id)
+        request = MB.retrieve(requester_id)
         SI = vectorobj.cbdata
 
         # The requester can die between its request and this callback.
         try:
             responder = SI.clients[requester_id]
             responder.requester_id = requester_id   # Pedantic?
-            # For QEMU/VM, this may be the first chance to grab this (if
-            # the drivers hadn't come up before).
-            if not responder.nodename:
-                responder.nodename = requester_name
-                responder.cclass = FAMEZ_MailBox.slots[requester_id].cclass
+            # For QEMU/VM, this may be the first chance to grab this (if the
+            # drivers hadn't come up before).  Just get it fresh each time.
+            responder.nodename = requester_name
+            responder.cclass = MB.cclass(requester_id)
         except KeyError as e:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
@@ -367,7 +363,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         time.sleep(delay)
         lfmt = '%s %s [%s,%s]'
         rfmt = '[%s,%s] %s %s'
-        half = (FAMEZ_MailBox.MAILBOX_MAX_SLOTS - 1) // 2
+        half = (MB.MAILBOX_MAX_SLOTS - 1) // 2
         NSP = 32
         lspaces = ' ' * NSP
         PRINT('\n%s  _________' % lspaces)
@@ -378,13 +374,15 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 ldesc = lspaces
                 c = clients[left]
                 pa = c.peerattrs
-                ldesc += lfmt % (c.cclass, c.nodename, pa['CID0'], pa['SID0'])
+                ldesc += lfmt % (MB.cclass(left), MB.nodename(left),
+                    pa['CID0'], pa['SID0'])
             except KeyError as e:
                 pass
             try:
                 c = clients[right]
                 pa = c.peerattrs
-                rdesc = rfmt % (pa['CID0'], pa['SID0'], c.cclass, c.nodename)
+                rdesc = rfmt % (pa['CID0'], pa['SID0'],
+                    MB.cclass(right), MB.nodename(right))
             except KeyError as e:
                 rdesc = ''
             PRINT('%-s -|%1d    %2d|- %s' % (ldesc[-NSP:], left, right, rdesc))
@@ -405,7 +403,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             if self.SI.args.verbose > 1:
                 PRINT('')
                 for id, peer in self.SI.clients.items():
-                    PRINT('%10s: %s' % (peer.nodename, peer.peerattrs))
+                    PRINT('%10s: %s' % (MB.nodename(id), peer.peerattrs))
                     if self.SI.args.verbose > 2:
                         PPRINT(vars(peer), stream=sys.stdout)
             self.printswitch(self.SI.clients, 0)
@@ -454,7 +452,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
 
         # It's a singleton so no reason to keep the instance, however it's
         # the way I wrote the Klein API server so...
-        mb = FAMEZ_MailBox(args=args)
+        mb = MB(args=args)
         MailBoxReSTAPI(mb)
         shutdown_http_logging()
 

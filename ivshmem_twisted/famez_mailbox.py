@@ -295,3 +295,14 @@ class FAMEZ_MailBox(object):
             return
         assert cls.slots[id].peer_id == id, 'What happened?'
         cls.clear_mailslot(id)
+
+    #----------------------------------------------------------------------
+    # Typing conveniences.  No setters, use the full expression.
+
+    @classmethod
+    def nodename(cls, index):
+        return cls.slots[index].nodename
+
+    @classmethod
+    def cclass(cls, index):
+        return cls.slots[index].cclass

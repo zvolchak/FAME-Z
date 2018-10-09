@@ -11,9 +11,9 @@ from collections import OrderedDict
 from pprint import pprint
 
 try:
-    from famez_mailbox import FAMEZ_MailBox
+    from famez_mailbox import FAMEZ_MailBox as MB
 except ImportError as e:
-    from .famez_mailbox import FAMEZ_MailBox
+    from .famez_mailbox import FAMEZ_MailBox as MB
 
 PRINT = functools.partial(print, file=sys.stderr)
 PPRINT = functools.partial(pprint, stream=sys.stderr)
@@ -95,7 +95,7 @@ def send_payload(peer, response,
     _tracker += 1
     response += '%s%d' % (_TRACKER_TOKEN, _tracker)
 
-    ret = FAMEZ_MailBox.fill(sender_id, response)
+    ret = MB.fill(sender_id, response)
     sender_EN.incr()
     return ret
 
@@ -196,11 +196,13 @@ def _Link_CTL(responder, args):
             if getattr(responder.SI, 'isPFM', None) is None:
                 SID0 = responder.SID0
                 CID0 = responder.CID0
+                cclass = responder.cclass
             else:
                 SID0 = responder.SI.server_SID0
                 CID0 = responder.SI.server_CID0
-            attrs = 'C-Class=%s,CID0=%d,SID0=%d' % (
-                responder.cclass, CID0, SID0)
+                cclass = MB.cclass(MB.server_id)
+            attrs = 'C-Class=%s,CID0=%d,SID0=%d' % (cclass, CID0, SID0)
+                # MB.cclass(responder.id), CID0, SID0)
             return send_LinkACK(responder, attrs)
 
     if arg0 == 'ACK' and len(args) == 2:
