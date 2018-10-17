@@ -2,10 +2,10 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 
-#include "genz_baseline.h"
+#include "genz_class.h"
 
 //-------------------------------------------------------------------------
-// Gen-Z 1.0, Appendix C Component Class Encodings are the array index.
+// Component Class Encodings are the array index.
 // Some names are tweaked to facilitate alphabetical ordering.
 
 static struct class genz_classes[] = {

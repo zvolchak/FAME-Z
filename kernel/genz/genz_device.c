@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 
 #include "genz_baseline.h"
+#include "genz_class.h"
 #include "genz_device.h"
 #include "genz_routing_fabric.h"
 

@@ -13,38 +13,6 @@
 
 #define __unused __attribute__ ((unused))
 
-/**
-  * Gen-Z 1.0 Appendix C, Component Class Encodings.
-  * NB == Non-Bootable
-  * NC == Non-Coherent
-  */
-
-enum genz_component_class_encodings {
-	GENZ_CCE_RESERVED_SHALL_NOT_BE_USED = 0x0,
-	GENZ_CCE_MEMORY_P2P_CORE,
-	GENZ_CCE_MEMORY_EXPLICIT_OPCLASS,
-	GENZ_CCE_INTEGRATED_SWITCH,
-	GENZ_CCE_ENC_EXP_SWITCH,
-	GENZ_CCE_FABRIC_SWITCH,
-	GENZ_CCE_PROCESSOR,
-	GENZ_CCE_PROCESSOR_NB,
-	GENZ_CCE_ACCELERATOR_NB_NC = 0x8,
-	GENZ_CCE_ACCELERATOR_NB,
-	GENZ_CCE_ACCELERATOR_NC,
-	GENZ_CCE_ACCELERATOR,
-	GENZ_CCE_IO_NB_NC,
-	GENZ_CCE_IO_NB,
-	GENZ_CCE_IO_NC,
-	GENZ_CCE_IO,
-	GENZ_CCE_BLOCK_STORAGE = 0x10,
-	GENZ_CCE_BLOCK_STORAGE_NB,
-	GENZ_CCE_TRANSPARENT_ROUTER,
-	GENZ_CCE_MULTI_CLASS,
-	GENZ_CCE_DISCRETE_BRIDGE,
-	GENZ_CCE_INTEGRATED_BRIDGE = 0x15,
-	GENZ_CCE_TOO_BIG,
-};
-
 struct genz_device {
 	char namefmt[GZNAMFMTSIZ];
 	struct list_head lister;
@@ -61,7 +29,7 @@ struct genz_device_ops {
 
 // Minimum proscribed data structures are listed in
 // Gen-Z 1.0 "8.13.1 Grouping: Baseline Structures" and 
-//           "8.13.2 Grouping: Routing/Fabric Structures"
+// Gen-Z 1.0 "8.13.2 Grouping: Routing/Fabric Structures"
 // Definitions below ending in "_structure" are merely pertinent fields.
 // Those ending in "_format" are the packed binary layout.
 
