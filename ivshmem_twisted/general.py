@@ -13,8 +13,9 @@ from collections import OrderedDict
 class ServerInvariant(object):
 
     def __init__(self, args=None):
-        if args is None:        # Called from client, filled in gradually
-            self.nClients = 0   # Total peers including me, excluding server
+        self.args = args
+        if args is None:        # Called from client, filled in from server
+            self.nClients = 0
             self.nEvents = 0
             self.server_id = 0
             self.logmsg = print
@@ -22,19 +23,18 @@ class ServerInvariant(object):
             self.stdtrace = sys.stdout
             return
 
-        self.args = args
         self.logmsg = args.logmsg           # Often-used
         self.logerr = args.logerr
         self.stdtrace = sys.stderr
         self.nClients = args.nClients
-        self.server_id = args.nClients + 1  # This is me!
-        self.nEvents = args.nClients + 2
+        self.nEvents = args.nEvents
+        self.server_id = args.server_id
         self.clients = OrderedDict()        # Order probably not necessary
         self.recycled = {}
         if args.smart:
             self.default_SID = 27
             self.server_SID0 = self.default_SID
-            self.server_CID0 = self.server_id * 100
+            self.server_CID0 = args.server_id * 100
             self.isPFM = True
         else:
             self.default_SID = 0

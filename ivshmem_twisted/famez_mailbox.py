@@ -27,6 +27,7 @@ from pdb import set_trace
 from time import sleep
 from time import time as NOW
 
+
 class FAMEZ_MailGlobals(ctypes.Structure):
     _fields_ = [        # A magic ctypes class attribute.
         ('slotsize',    ctypes.c_ulonglong),
@@ -264,6 +265,12 @@ class FAMEZ_MailBox(object):
         cls.slots[id].nodename = ''
         cls.slots[id].cclass = ''
         cls.slots[id].peer_id = id
+
+    @classmethod
+    def active_ids(cls):
+        return sorted([
+            slot.peer_id for slot in cls.slots[1:cls.server_id + 1] if
+                slot.nodename])
 
     #----------------------------------------------------------------------
     # Called only by client.  mmap() the file and retrieve globals.

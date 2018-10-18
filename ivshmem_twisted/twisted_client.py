@@ -90,44 +90,43 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except Exception as e:
             print('__init__() failed: %s' % str(e))
             # ...and any number of attribute references will fail soon
+        # print('--------------------------- __init__ finished')
 
     @property   # For Commander prompt
     def promptname(self):
+        # print('--------------------------- promptname')
         return self.nodename
 
-    def parse_target(self, instr):
+    @staticmethod
+    def parse_target(caller_id, instr):
         '''Return a list even for one item for consistency with keywords
            ALL and OTHERS.'''
-        indices = tuple()       # Default return is nothing
         try:
             tmp = (int(instr), )
-            if 1 <= tmp[0] <= self.SI.server_id:
-                indices = tmp
+            if 1 <= tmp[0] <= MB.server_id:
+                return tmp
         except TypeError as e:
-            return indices
+            return None
         except ValueError as e:
             if instr.lower()[-6:] in ('server', 'switch'):
-                return (self.SI.server_id,)
-            elif instr.lower() == 'all':
-                return sorted(self.id2fd_list.keys())
-            elif instr.lower() == 'others':
-                tmp = list(self.id2fd_list.keys())
-                tmp.remove(self.id)
-                return sorted(tmp)
-
-            for id in self.id2fd_list.keys():
+                return (MB.server_id,)
+            active_ids = MB.active_ids()
+            for id in active_ids:
                 if MB.slots[id].nodename == instr:
-                    indices = (id, )
-                    break
-        return indices
+                    return (id, )
+            if instr.lower() == 'all':      # Includes caller_id
+                return active_ids
+            if instr.lower() == 'others':
+                return active_ids.remove(caller_id)
+        return None
 
     def place_and_go(self, dest, msg, src=None, reset_tracker=True):
         '''Yes, reset_tracker defaults to True here.'''
-        dest_indices = self.parse_target(dest)
+        dest_indices = self.parse_target(self.id, dest)
         if src is None:
             src_indices = (self.id,)
         else:
-            src_indices = self.parse_target(src)
+            src_indices = self.parse_target(self.id, src)
         if self.SI.args.verbose > 1:
             print('P&G dest %s=%s src %s=%s' %
                       (dest, dest_indices, src, src_indices))
@@ -151,6 +150,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     return
 
     def fileDescriptorReceived(self, latest_fd):
+        # print('--------------------------- fdReceived')
         assert self._latest_fd is None, 'Latest fd has not been consumed'
         self._latest_fd = latest_fd     # See the next property
 
@@ -176,6 +176,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     @property
     def latest_fd(self):
+        # print('--------------------------- latest_fd')
         '''This is NOT idempotent!'''
         tmp = self._latest_fd
         self._latest_fd = None
@@ -185,6 +186,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
         # and then a -1 with the FD of the IVSHMEM file which is
         # delivered before this.
+        # print('--------------------------- retrieve_initial_info')
         assert len(data) == 24, 'Initial data needs three quadwords'
 
         # Enough idiot checks.
@@ -197,13 +199,15 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
         # Initialize my mailbox slot.  Get other parameters from the
         # globals because the IVSHMSG protocol doesn't allow values
-        # beyond the intial three.  The constructor does some work
-        # then returns a few attributes pulled out of the globals,
-        # but work is only actually done on the first call.
-        mailbox = MB(fd=mailbox_fd, client_id=self.id)
-        self.SI.nClients = mailbox.nClients
-        self.SI.nEvents = mailbox.nEvents
-        self.SI.server_id = mailbox.server_id
+        # beyond the intial three.  The constructor does some work then
+        # returns a few attributes pulled out of the globals, but work
+        # is only actually done on the first call.  It's a singleton with
+        # class variables so there's no reason to keep the instance.
+        # SI is the object passed to the event callback so flesh it out.
+        MB(fd=mailbox_fd, client_id=self.id)
+        self.SI.nClients = MB.nClients
+        self.SI.nEvents = MB.nEvents
+        self.SI.server_id = MB.server_id
 
         # Gotta wait for initialized mailbox
         self.nodename = 'z%02d' % self.id
@@ -212,6 +216,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     # Called multiple times so keep state info about previous calls.
     def dataReceived(self, data):
+        # print('--------------------------- dataReceived')
         if self.id is None and self.firstpass:
             self.retrieve_initial_info(data)
             return      # But I'll be right back :-)
@@ -243,14 +248,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # they're all the same.  Just shove all fds in, including mine.
 
         # Am I starting the last batch (eventfds for me that need notifiers?)
-        if this == self.id and not self.SI.server_id:
-            self.SI.server_id = self.prevthis
+        if this == self.id and not MB.server_id:
+            assert MB.server_id == self.prevthis, 'Then dont assign it'
         self.prevthis = this     # For corner case where I am first contact
 
         # Just save the eventfd now, generate objects later.
         try:
             tmp = len(self.id2fd_list[this])
-            assert tmp <= self.SI.server_id, 'fd list is too long'
+            assert tmp <= MB.server_id, 'fd list is too long'
             if tmp == self.SI.nEvents:   # Beginning of client reconnect
                 assert this != self.id, 'Updating MY eventfds??? off-by-one'
                 raise KeyError('Forced update')
@@ -302,15 +307,17 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def connectionMade(self):
         if self.SI.args.verbose:
             print('Connection made on fd', self.transport.fileno())
+        # print('--------------------------- connectionMade')
 
     def connectionLost(self, reason):
+        # print('--------------------------- connectionLost')
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
             print('Dirty disconnect')
         else:
             print('Clean disconnect')
         MB.clear_mailslot(self.id)  # In particular, nodename
-        # FIXME: if reactor.isRunning:
-        TIreactor.stop()
+        if TIreactor.running:
+            TIreactor.stop()
 
     # Match the signature of twisted_server object so they're both compliant
     # with downstream processing.   General lookup form is [dest][src], ie,
@@ -399,7 +406,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 print('Peer ID = %2d (%s)' % (id, MB.slots[id].nodename))
             return True
 
-        if cmd.lower() in ('l', 'link'):
+        if cmd in ('l', 'link'):
             assert len(args) >= 1, 'Missing directive'
             msg = 'Link %s' % ' '.join(args)
             self.place_and_go('server', msg)

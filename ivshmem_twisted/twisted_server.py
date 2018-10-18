@@ -49,11 +49,10 @@ except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .twisted_restapi import MailBoxReSTAPI
 
-# Don't use peer ID 0, certain docs imply it's reserved.  Put the clients
-# from 1 - nClients, and the server goes at nClients + 1.  Then use slot
-# 0 as global data storage, primarily the server command-line arguments.
+# Don't use peer ID 0, certain docs imply it's reserved.  Use that slot
+# (0) as global data storage, primarily the server command-line arguments.
 
-IVSHMEM_UNUSED_ID = 0
+IVSHMEM_LOWEST_ID = 1
 
 PRINT = functools.partial(print, file=sys.stderr)
 PPRINT = functools.partial(pprint, stream=sys.stderr)
@@ -85,21 +84,22 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
     SI = None
-    responder_id = None     # ie, I am the one responding to interrupts
+    server_id = None     # ie, I am the one responding to interrupts
 
     def __init__(self, factory):
         '''"self" is a new client connection, not "me" the server.'''
         shutdown_http_logging()
         if self.SI is None:
             assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
-            self.__class__.SI = ServerInvariant(factory.cmdlineargs)
-            SI = self.SI
-            self.__class__.responder_id = SI.server_id  # THE MARK OF THE BEAST
+            cls = self.__class__
+            cls.SI = ServerInvariant(factory.cmdlineargs)
+            cls.server_id = cls.SI.server_id
+            cls.responder_id = cls.server_id    # THE MARK OF THE BEAST
 
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
             # This variable will get looped even if it's empty (silent mode).
-            SI.EN_list = []
+            cls.SI.EN_list = []
 
             # Usually create eventfds for receiving messages in IVSHMSG and
             # set up a callback.  This early arming is not a race condition
@@ -107,12 +107,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # of the fds it would use to trigger here.
 
             if not factory.cmdlineargs.silent:
-                SI.EN_list = ivshmem_event_notifier_list(SI.nEvents)
+                cls.SI.EN_list = ivshmem_event_notifier_list(cls.SI.nEvents)
                 # The actual client doing the sending needs to be fished out
                 # via its "num" vector.
-                for i, EN in enumerate(SI.EN_list):
+                for i, EN in enumerate(cls.SI.EN_list):
                     EN.num = i
-                    tmp = EventfdReader(EN, self.ServerCallback, SI)
+                    tmp = EventfdReader(EN, self.ServerCallback, cls.SI)
                     if i:   # Technically it blocks mailslot 0, the globals
                         tmp.start()
 
@@ -275,10 +275,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         # dumb: monotonic from 1; smart: random (finds holes in the code).
         # Generate ID sets used by each.
+        all_ids = frozenset((range(IVSHMEM_LOWEST_ID, self.SI.server_id)))
         active_ids = frozenset(self.SI.clients.keys())
-        unused_ids = frozenset((range(self.SI.nClients + 2))) - \
-                     frozenset((IVSHMEM_UNUSED_ID, self.SI.server_id))
-        available_ids = unused_ids - active_ids
+        available_ids = all_ids - active_ids
         if self.SI.args.smart:
             self.id = random.choice(tuple(available_ids))
         else:
