@@ -137,10 +137,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
-                    self.requester_id = D
-                    self.responder_id = S
-                    # Yes it repeat-loads a mailslot D times but who cares
-                    send_payload(self, msg, reset_tracker=reset_tracker)
+                    # self.requester_id = D
+                    # self.responder_id = S
+                    # First get the list for dest, then src ("from me")
+                    # doorbell EN.  This repeat-loads a mailslot D times
+                    # but I don't care.
+                    send_payload(msg, D, self.id2EN_list[D][S],
+                        reset_tracker=reset_tracker)
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue
@@ -327,19 +330,21 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         return self.id2EN_list[self.requester_id][self.responder_id]
 
     # The cbdata is precisely the object which can be used for the response.
+    # In other words, it's directly "me", with "my" identity data.
     @staticmethod
     def ClientCallback(vectorobj):
         requester_id = vectorobj.num
-        requester_name = MB.slots[requester_id].nodename
+        requester_name = MB.nodename(requester_id)
         request = MB.retrieve(requester_id)
-        responder = vectorobj.cbdata
+        receiver = vectorobj.cbdata
+        print('Raw Req ID = %d\n%s' % (requester_id, vars(receiver)))
 
-        # Need to be set each time because of spoof cabability, especiall
+        # Need to be set each time because of spoof cabability, especially
         # with destinations like "other" and "all"
-        responder.requester_id = requester_id
-        responder.responder_id = responder.id   # Not like twisted_server.py
+        receiver.requester_id = requester_id
+        receiver.responder_id = receiver.id   # Not like twisted_server.py
 
-        handle_request(request, requester_name, responder)
+        handle_request(request, requester_name, receiver)
 
     #----------------------------------------------------------------------
     # Command line parsing.

@@ -66,6 +66,10 @@ class IVSHMEM_Event_Notifier(object):  # Probably overkill
                     return False
                 raise
 
+    def ring(self):
+        '''An alias that helps legibility of IVSHMSG code.'''
+        self.incr()
+
     def reset(self):
         '''Without EFD_SEMAPHORE, reset if non-zero, else EAGAIN (NONBLOCK).'''
         while True:

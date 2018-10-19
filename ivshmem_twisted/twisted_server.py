@@ -237,7 +237,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # this is a blind shot...
         self.printswitch(self.SI.clients, 0)    # Driverless QEMU or Debugger
         if self.SI.args.smart:
-            send_payload(self, 'Link CTL Peer-Attribute')
+            send_payload('Link CTL Peer-Attribute',
+                         self.server_id,
+                         self.EN_list[self.id])
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
@@ -319,12 +321,15 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # Match the signature of twisted_client object so they're both compliant
     # with downstream processing.  General lookup form is [dest][src], ie,
     # first get the list for dest, then pick out src ("from") trigger EN.
+    # Note that src is used again as the MB slot.
     @property
     def responder_EN(self):
         return self.EN_list[self.responder_id]  # requester not used
 
-    # The cbdata is a class variable common to all requester proxy objects.
-    # The object which serves as the responder needs to be calculated.
+    # The server is the receiver, and the cbdata is the server SI class
+    # attribute shared by all requester proxy objects.  The client instance
+    # which which made the request (and provides the target for the response)
+    # must be indirectly looked up.
     @staticmethod
     def ServerCallback(vectorobj):
         requester_id = vectorobj.num
@@ -332,19 +337,33 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         request = MB.retrieve(requester_id)
         SI = vectorobj.cbdata
 
-        # The requester can die between its request and this callback.
+        # Recover the appropriate requester proxy object which can die between
+        # its interrupt and this callback.
         try:
-            responder = SI.clients[requester_id]
-            responder.requester_id = requester_id   # Pedantic?
+            requester_proxy = SI.clients[requester_id]
+            assert requester_proxy.SI is SI, 'Say WHAT?'
+            assert requester_proxy.id == requester_id, 'WTF MF?'
+            requester_proxy.requester_id = requester_id   # Pedantic?
             # For QEMU/VM, this may be the first chance to grab this (if the
             # drivers hadn't come up before).  Just get it fresh each time.
-            responder.nodename = requester_name
-            responder.cclass = MB.cclass(requester_id)
+            requester_proxy.nodename = requester_name
+            requester_proxy.cclass = MB.cclass(requester_id)
         except KeyError as e:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
 
-        ret = handle_request(request, requester_name, responder)
+        # The object passed has two sets of data:
+        # 1. Id/target information on where to send the response
+        # 2. Peer attributes used in two requests:
+        #    readout to send them
+        #    overwrite if they're being sent by a PFM
+        # I'm "if blah blah" in handle_request() but I should just strip the
+        # peer attribute here (the server in this case).  for the server,
+        # requester_name and requester_proxy.nodename are the same
+        # peer_attributes are from the server, not the proxy.
+        # it's different for the client.
+
+        ret = handle_request(request, requester_name, requester_proxy)
 
         # ret is either True, False, or...
 
@@ -365,10 +384,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         half = (MB.MAILBOX_MAX_SLOTS - 1) // 2
         NSP = 32
         lspaces = ' ' * NSP
-        PRINT('\n%s  _________' % lspaces)
+        PRINT('\n%s  ____ ____' % lspaces)
+        notch = 'U'
         for i in range(1, half + 1):
             left = i
-            right = left + half
+            right = MB.server_id - left     # 74XX TTL
             try:
                 ldesc = lspaces
                 c = clients[left]
@@ -384,7 +404,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                     MB.cclass(right), MB.nodename(right))
             except KeyError as e:
                 rdesc = ''
-            PRINT('%-s -|%1d    %2d|- %s' % (ldesc[-NSP:], left, right, rdesc))
+            PRINT('%-s -|%1d  %c %2d|- %s' % (
+                ldesc[-NSP:], left, notch, right, rdesc))
+            notch = ' '
         PRINT('%s  =========' % lspaces)
 
     #----------------------------------------------------------------------
