@@ -140,9 +140,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     # self.requester_id = D
                     # self.responder_id = S
                     # First get the list for dest, then src ("from me")
-                    # doorbell EN.  This repeat-loads a mailslot D times
-                    # but I don't care.
-                    send_payload(msg, D, self.id2EN_list[D][S],
+                    # doorbell EN.  This repeat-loads the source mailslot
+                    # D times but I don't care.
+                    send_payload(msg, S, self.id2EN_list[D][S],
                         reset_tracker=reset_tracker)
                 except KeyError as e:
                     print('No such peer id', str(e))
