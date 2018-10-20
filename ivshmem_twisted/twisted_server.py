@@ -35,7 +35,7 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox as MB
-    from famez_requests import handle_request, send_payload
+    from famez_requests import handle_request, send_payload, ResponseObject
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
@@ -43,7 +43,7 @@ try:
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox as MB
-    from .famez_requests import handle_request, send_payload
+    from .famez_requests import handle_request, send_payload, ResponseObject
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
@@ -70,7 +70,6 @@ def shutdown_http_logging():
         logger.setLevel(logging.CRITICAL)
         logger.disabled = True
         logger.propagate = False
-        # print(vars(logger), file=sys.stderr)
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -94,7 +93,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             cls = self.__class__
             cls.SI = ServerInvariant(factory.cmdlineargs)
             cls.server_id = cls.SI.server_id
-            cls.responder_id = cls.server_id    # THE MARK OF THE BEAST
+            cls.SI.cclass = MB.cclass(cls.server_id)
 
             # Non-standard addition to IVSHMEM server role: this server can be
             # interrupted and messaged to particpate in client activity.
@@ -118,15 +117,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.create_new_peer_id()
 
-        # Default since QEMU VM might not load drivers at outset.  Debugger
-        # client will quickly overwrite this.
+        # famez_client.py will quickly fix this.  QEMU VM will eventually
+        # modprobe, etc.
         self.peerattrs = {
-            'CID0': '0',
-            'SID0': '0',
-            'C-Class': 'Driverless QEMU'
-        }
-        # A first connection is raw QEMU which doesn't speak for itself.
-        MB.slots[self.id].cclass = 'Driverless QEMU'
+                'CID0': '0',
+                'SID0': '0',
+                'cclass': 'Driverless QEMU'
+            }
+        MB.slots[self.id].cclass = self.peerattrs['cclass']
 
     @property
     def promptname(self):
@@ -232,11 +230,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # And now that it's finished:
         self.SI.clients[self.id] = self
 
-        # QEMU did the connect but its VM is probably not running well
-        # enough to respond.  Since there's no (easy) way to tell,
-        # this is a blind shot...
-        self.printswitch(self.SI.clients, 0)    # Driverless QEMU or Debugger
-        if self.SI.args.smart:
+        # QEMU did the connect but its VM is probably not yet running well
+        # enough to respond.  Since there's no (easy) way to tell, this is
+        # a blind shot...
+        self.printswitch(self.SI.clients)   # default settling time
+        if not self.SI.isPFM:
             send_payload('Link CTL Peer-Attribute',
                          self.server_id,
                          self.EN_list[self.id])
@@ -318,14 +316,6 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             PRINT(str(e))
         return False
 
-    # Match the signature of twisted_client object so they're both compliant
-    # with downstream processing.  General lookup form is [dest][src], ie,
-    # first get the list for dest, then pick out src ("from") trigger EN.
-    # Note that src is used again as the MB slot.
-    @property
-    def responder_EN(self):
-        return self.EN_list[self.responder_id]  # requester not used
-
     # The server is the receiver, and the cbdata is the server SI class
     # attribute shared by all requester proxy objects.  The client instance
     # which which made the request (and provides the target for the response)
@@ -348,6 +338,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # drivers hadn't come up before).  Just get it fresh each time.
             requester_proxy.nodename = requester_name
             requester_proxy.cclass = MB.cclass(requester_id)
+            requester_proxy.peerattrs['cclass'] = requester_proxy.cclass
         except KeyError as e:
             SI.logmsg('Disappeering act by %d' % requester_id)
             return
@@ -363,7 +354,16 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # peer_attributes are from the server, not the proxy.
         # it's different for the client.
 
-        ret = handle_request(request, requester_name, requester_proxy)
+        ro = ResponseObject(
+            this=SI,                # has "my" (server) CID0, SID0, and cclass
+            proxy=requester_proxy,  # for certain server-only admin
+            from_id=SI.server_id,
+            to_doorbell=requester_proxy.EN_list[SI.server_id],
+            logmsg=SI.logmsg,
+            stdtrace=SI.stdtrace,
+            verbose=SI.args.verbose
+        )
+        ret = handle_request(request, requester_name, ro)
 
         # ret is either True, False, or...
 
@@ -393,15 +393,17 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 ldesc = lspaces
                 c = clients[left]
                 pa = c.peerattrs
-                ldesc += lfmt % (MB.cclass(left), MB.nodename(left),
+                pa['cclass'] = MB.cclass(left)
+                ldesc += lfmt % (pa['cclass'], MB.nodename(left),
                     pa['CID0'], pa['SID0'])
             except KeyError as e:
                 pass
             try:
                 c = clients[right]
                 pa = c.peerattrs
+                pa['cclass'] = MB.cclass(right)
                 rdesc = rfmt % (pa['CID0'], pa['SID0'],
-                    MB.cclass(right), MB.nodename(right))
+                    pa['cclass'], MB.nodename(right))
             except KeyError as e:
                 rdesc = ''
             PRINT('%-s -|%1d  %c %2d|- %s' % (

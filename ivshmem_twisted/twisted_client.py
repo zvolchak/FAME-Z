@@ -30,13 +30,13 @@ from zope.interface import implementer
 try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox as MB
-    from famez_requests import handle_request, send_payload
+    from famez_requests import handle_request, send_payload, ResponseObject
     from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox as MB
-    from .famez_requests import handle_request, send_payload
+    from .famez_requests import handle_request, send_payload, ResponseObject
     from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
@@ -137,13 +137,13 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                 if self.SI.args.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
-                    # self.requester_id = D
-                    # self.responder_id = S
-                    # First get the list for dest, then src ("from me")
-                    # doorbell EN.  This repeat-loads the source mailslot
+                    # First get the list for dest, then the src ("from me")
+                    # doorbell EN.
+                    doorbell = self.id2EN_list[D][S]
+
+                    # This repeat-loads the source mailslot
                     # D times but I don't care.
-                    send_payload(msg, S, self.id2EN_list[D][S],
-                        reset_tracker=reset_tracker)
+                    send_payload(msg, S, doorbell, reset_tracker=reset_tracker)
                 except KeyError as e:
                     print('No such peer id', str(e))
                     continue
@@ -274,10 +274,10 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # Do the final housekeeping after the final batch.  ASS-U-MES all
         # vector lists are the same length.  My vectors come last during
         # first pass.  During a new client join it's only their info.
-        if ((self.firstpass and this != self.id) or
-            (len(self.id2fd_list[this]) < self.SI.nEvents)):
+        need = self.SI.nEvents - len(self.id2fd_list[this])
+        if ((self.firstpass and this != self.id) or need > 0):
             if self.SI.args.verbose > 1:
-                print('This (%d) waiting for more fds...\n' % this)
+                print('%d expecting %d more fds...\n' % (this, need))
             return
 
         if self.SI.args.verbose > 1:
@@ -322,13 +322,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         if TIreactor.running:
             TIreactor.stop()
 
-    # Match the signature of twisted_server object so they're both compliant
-    # with downstream processing.   General lookup form is [dest][src], ie,
-    # first get the list for dest, then pick out src ("from me") trigger EN.
-    @property
-    def responder_EN(self):
-        return self.id2EN_list[self.requester_id][self.responder_id]
-
     # The cbdata is precisely the object which can be used for the response.
     # In other words, it's directly "me", with "my" identity data.
     @staticmethod
@@ -336,18 +329,24 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         requester_id = vectorobj.num
         requester_name = MB.nodename(requester_id)
         request = MB.retrieve(requester_id)
-        receiver = vectorobj.cbdata
-        print('Raw Req ID = %d\n%s' % (requester_id, vars(receiver)))
+        requester_obj = vectorobj.cbdata
+        # print('Raw Req ID = %d\n%s' % (requester_id, vars(requester_obj)))
 
-        # Need to be set each time because of spoof cabability, especially
-        # with destinations like "other" and "all"
-        receiver.requester_id = requester_id
-        receiver.responder_id = receiver.id   # Not like twisted_server.py
-
-        handle_request(request, requester_name, receiver)
+        # [dest][src]
+        ro = ResponseObject(
+            this=requester_obj,         # has CID0, SID0, and cclass
+            proxy=None,                 # I don't manage ever (for now)
+            from_id=requester_obj.id,
+            to_doorbell=requester_obj.id2EN_list[requester_id][requester_obj.id],
+            logmsg=requester_obj.SI.logmsg,
+            stdtrace=requester_obj.SI.stdtrace,
+            verbose=requester_obj.SI.args.verbose,
+        )
+        ret = handle_request(request, requester_name, ro)
 
     #----------------------------------------------------------------------
     # Command line parsing.
+
 
     def doCommand(self, cmd, args):
         cmd = cmd.lower()

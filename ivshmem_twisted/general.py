@@ -18,6 +18,7 @@ class ServerInvariant(object):
             self.nClients = 0
             self.nEvents = 0
             self.server_id = 0
+            self.isPFM = False
             self.logmsg = print
             self.logerr = print
             self.stdtrace = sys.stdout
@@ -33,13 +34,13 @@ class ServerInvariant(object):
         self.recycled = {}
         if args.smart:
             self.default_SID = 27
-            self.server_SID0 = self.default_SID
-            self.server_CID0 = args.server_id * 100
+            self.SID0 = self.default_SID    # Satisfy ResponseObject/request()
+            self.CID0 = args.server_id * 100
             self.isPFM = True
         else:
             self.default_SID = 0
-            self.server_SID0 = 0
-            self.server_CID0 = 0
+            self.SID0 = 0
+            self.CID0 = 0
             self.isPFM = False
 
     def trace(self, tracemsg):
