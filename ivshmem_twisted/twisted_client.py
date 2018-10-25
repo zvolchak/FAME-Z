@@ -141,8 +141,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     # doorbell EN.
                     doorbell = self.id2EN_list[D][S]
 
-                    # This repeat-loads the source mailslot
-                    # D times but I don't care.
+                    # This repeat-loads the source mailslot D times per S
+                    # but I don't care.
                     send_payload(msg, S, doorbell, reset_tracker=reset_tracker)
                 except KeyError as e:
                     print('No such peer id', str(e))
@@ -302,8 +302,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             msg = 'Ready player %s' % self.nodename
             if self.SI.args.verbose:
                 print(msg)
-            self.place_and_go('server', 'Link CTL Peer-Attribute',
-                reset_tracker=False)
+            self.place_and_go('server', 'Link CTL Peer-Attribute')
 
         self.firstpass = False
 

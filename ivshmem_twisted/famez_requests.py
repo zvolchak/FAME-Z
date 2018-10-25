@@ -170,6 +170,8 @@ def _CTL_Write(RO, args):
         return False
     RO.this.CID0 = int(kv['CID'])
     RO.this.SID0 = int(kv['SID'])
+    RO.this.PFMCID0 = int(kv['PFMCID'])
+    RO.this.PFMSID0 = int(kv['PFMSID'])
     RO.this.linkattrs['State'] = 'configured'
     return _send_SA(RO, kv['Tag'], 'OK')
 
@@ -212,6 +214,7 @@ def _Link_CTL(RO, args):
             return send_LinkACK(RO, attrs)
 
     if arg0 == 'ACK' and len(args) == 2:
+        # Update the local proxy values, ASS-U-ME it's peerattrs
         # FIXME: correlation ala _tagged?  How do I know it's peer attrs?
         # FIXME: add a key to the response...
         if RO.proxy is not None:
@@ -248,7 +251,7 @@ _stdtrace = None
 
 
 def handle_request(request, requester_name, response_object):
-    global _logmsg, _stdtrace
+    global _logmsg, _stdtrace, _tracker
 
     if _logmsg is None:
         _logmsg = response_object.logmsg   # FIXME: logger.logger...
@@ -257,10 +260,10 @@ def handle_request(request, requester_name, response_object):
     elements = request.split(_TRACKER_TOKEN)
     payload = elements.pop(0)
     trace = '\n%10s -> "%s"' % (requester_name, payload)
-    FTZ = int(elements[0]) if elements else False
-    if FTZ:
-        trace += ' (%d)' % FTZ
-        _tracker = FTZ
+    FZT = int(elements[0]) if elements else False
+    if FZT:
+        trace += ' (%d)' % FZT
+        _tracker = FZT
     PRINT(trace)
 
     elements = payload.split()
