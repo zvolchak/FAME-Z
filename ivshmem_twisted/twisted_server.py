@@ -7,6 +7,7 @@
 # Rocky Craig <rocky.craig@hpe.com>
 
 import argparse
+import attr
 import functools
 import grp
 import mmap
@@ -36,7 +37,6 @@ try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox as MB
     from famez_requests import handle_request, send_payload, ResponseObject
-    from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from ivshmem_sendrecv import ivshmem_send_one_msg
     from twisted_restapi import MailBoxReSTAPI
@@ -44,7 +44,6 @@ except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox as MB
     from .famez_requests import handle_request, send_payload, ResponseObject
-    from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .twisted_restapi import MailBoxReSTAPI
@@ -82,49 +81,83 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
-    SI = None
-    server_id = None     # ie, I am the one responding to interrupts
+    args = None         # True class variables, mostly for typing convenience
+    server_id = None
+    verbose = None
+    SI = None           # Server Instance, contrived to be "me" not a peer
 
-    def __init__(self, factory):
-        '''"self" is a new client connection, not "me" the server.'''
+    def __init__(self, factory, cmdlineargs=None):
+        '''"self" is a new client connection, not "me" the server.  As such
+            it is a proxy object for the other end of each switch "port".
+            cmdlineargs is NOT passed on instantiation via connection.'''
+        assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
         shutdown_http_logging()
-        if self.SI is None:
-            assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
-            cls = self.__class__
-            cls.SI = ServerInvariant(factory.cmdlineargs)
-            cls.server_id = cls.SI.server_id
-            cls.SI.cclass = MB.cclass(cls.server_id)
-
-            # Non-standard addition to IVSHMEM server role: this server can be
-            # interrupted and messaged to particpate in client activity.
-            # This variable will get looped even if it's empty (silent mode).
-            cls.SI.EN_list = []
-
-            # Usually create eventfds for receiving messages in IVSHMSG and
-            # set up a callback.  This early arming is not a race condition
-            # as the peer for which this is destined has not yet been told
-            # of the fds it would use to trigger here.
-
-            if not factory.cmdlineargs.silent:
-                cls.SI.EN_list = ivshmem_event_notifier_list(cls.SI.nEvents)
-                # The actual client doing the sending needs to be fished out
-                # via its "num" vector.
-                for i, EN in enumerate(cls.SI.EN_list):
-                    EN.num = i
-                    tmp = EventfdReader(EN, self.ServerCallback, cls.SI)
-                    if i:   # Technically it blocks mailslot 0, the globals
-                        tmp.start()
-
-        self.create_new_peer_id()
-
-        # famez_client.py will quickly fix this.  QEMU VM will eventually
-        # modprobe, etc.
-        self.peerattrs = {
+        self.isPFM = False
+        if self.SI is not None and cmdlineargs is None:
+            self.create_new_peer_id()
+            # famez_client.py will quickly fix this.  QEMU VM will eventually
+            # modprobe, etc.
+            self.peerattrs = {
                 'CID0': '0',
                 'SID0': '0',
                 'cclass': 'Driverless QEMU'
             }
-        MB.slots[self.id].cclass = self.peerattrs['cclass']
+            MB.slots[self.id].cclass = self.peerattrs['cclass']
+            return
+
+        # This instance is voodoo, representing a manual kick.  Once there
+        # was a separate class for the server, but it was "too separate".
+        # Then it was a generic object, but even that starting fading
+        # into a special case of this Protocol class with heavy leverage
+        # of data and methods.  So now it's a "reserved instance".
+        cls = self.__class__
+        cls.SI = self                               # Reserve it.
+
+        # Direct class variables that make sense
+        cls.args = cmdlineargs
+        cls.server_id = self.SI.args.server_id      # Rube Goldberg
+        cls.verbose = cls.args.verbose
+        assert self.server_id == MB.server_id, 'Server ID mismatch'
+
+        self.cclass = MB.cclass(cls.server_id)
+        self.logmsg = self.args.logmsg      # Often-used
+        self.logerr = self.args.logerr
+        self.stdtrace = sys.stderr
+        self.clients = OrderedDict()        # Order probably not necessary
+        self.recycled = {}
+
+        # This instance (SI) is used as the callback for events.  Thse
+        # fields are for the ResponseObject/request().
+        if self.args.smart:
+            self.default_SID = 27
+            self.SID0 = self.default_SID
+            self.CID0 = self.server_id * 100
+            self.isPFM = True
+        else:
+            self.default_SID = 0
+            self.SID0 = 0
+            self.CID0 = 0
+
+        # Non-standard addition to IVSHMEM server role: this server can be
+        # interrupted and messaged to particpate in client activity.
+        # This variable will get looped even if it's empty (silent mode).
+        self.EN_list = []
+
+        # Usually create eventfds for receiving messages in IVSHMSG and
+        # set up a callback.  This early arming is not a race condition
+        # as the peer for which this is destined has not yet been told
+        # of the fds it would use to trigger here.
+
+        if not self.args.silent:
+            self.EN_list = ivshmem_event_notifier_list(MB.nEvents)
+            # The actual client doing the sending needs to be fished out
+            # via its "num" vector.
+            for i, EN in enumerate(self.EN_list):
+                EN.num = i
+                tmp = EventfdReader(EN, self.ServerCallback, cls.SI)
+                if i:   # Technically it blocks mailslot 0, the globals
+                    tmp.start()
+
 
     @property
     def promptname(self):
@@ -167,14 +200,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.EN_list = recycled.EN_list
         else:
             try:
-                self.EN_list = ivshmem_event_notifier_list(self.SI.nEvents)
+                self.EN_list = ivshmem_event_notifier_list(MB.nEvents)
             except Exception as e:
                 self.SI.logmsg('Event notifiers failed: %s' % str(e))
                 self.send_initial_info(False)
                 return
 
         # Server line 183: send version, peer id, shm fd
-        if self.SI.args.verbose:
+        if self.verbose:
             PRINT('Sending initial info to new peer...')
         if not self.send_initial_info():
             self.SI.logmsg('Send initial info failed')
@@ -184,7 +217,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # this new peer has not yet been added to the list; this loop is
         # NOT traversed for the first peer to connect.
         if not recycled:
-            if self.SI.args.verbose:
+            if self.verbose:
                 PRINT('NOT recycled: advertising other peers...')
             for other_peer in server_peer_list:
                 for peer_EN in self.EN_list:
@@ -195,7 +228,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         # Server line 197: advertise the other peers to the new one.
         # Remember "this" new peer proxy has not been added to the list yet.
-        if self.SI.args.verbose:
+        if self.verbose:
             PRINT('Advertising other peers to the new peer...')
         for other_peer in server_peer_list:
             for other_peer_EN in other_peer.EN_list:
@@ -207,7 +240,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Non-standard voodoo extension to previous advertisment: advertise
         # this server to the new peer.  To QEMU it just looks like one more
         # grouping in the previous batch.  Exists only in non-silent mode.
-        if self.SI.args.verbose:
+        if self.verbose:
             PRINT('Advertising this server to the new peer...')
         for server_EN in self.SI.EN_list:
             ivshmem_send_one_msg(
@@ -219,7 +252,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # eventfds it needs for receiving messages.  This final batch
         # where the embedded self.id matches the initial_info id is the
         # sentinel that communications are finished.
-        if self.SI.args.verbose:
+        if self.verbose:
             PRINT('Advertising the new peer to itself...')
         for peer_EN in self.EN_list:
             ivshmem_send_one_msg(
@@ -269,7 +302,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.SID0 = 0   # When queried, the answer is in the context...
         self.CID0 = 0   # ...of the server/switch, NOT the proxy item.
-        if len(self.SI.clients) >= self.SI.nClients:
+        if len(self.SI.clients) >= MB.nClients:
             self.id = -1    # sentinel
             return  # Until a Link RFC is executed
 
@@ -423,11 +456,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('d', 'dump'):
-            if self.SI.args.verbose > 1:
+            if self.verbose > 1:
                 PRINT('')
                 for id, peer in self.SI.clients.items():
                     PRINT('%10s: %s' % (MB.nodename(id), peer.peerattrs))
-                    if self.SI.args.verbose > 2:
+                    if self.verbose > 2:
                         PPRINT(vars(peer), stream=sys.stdout)
             self.printswitch(self.SI.clients, 0)
             return True
@@ -469,7 +502,8 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             setattr(args, arg, getattr(args, arg, default))
 
         # Mailbox may be sized above the requested number of clients to
-        # satisfy QEMU IVSHMEM restrictions.
+        # satisfy QEMU IVSHMEM restrictions.  These end up as MB class
+        # variables.
         args.server_id = args.nClients + 1
         args.nEvents = args.nClients + 2
 
@@ -479,7 +513,6 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         MailBoxReSTAPI(mb)
         shutdown_http_logging()
 
-        self.cmdlineargs = args
         if args.foreground:
             if args.verbose > 1:
                 TPlog.startLogging(sys.stdout, setStdout=False)
@@ -509,15 +542,19 @@ class FactoryIVSHMSGServer(TIPServerFactory):
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 
+        # Voodoo kick to a) set up one-time SI b)setup commander
+        # Docs mislead, have to explicitly pass something to get persistent
+        # state across protocol/transport invocations.  As there is only
+        # one server object per process instantion, that's not necessary.
+
+        protobj = ProtocolIVSHMSGServer(self, args)     # Extra "args"
+        Commander(protobj)
+
     def buildProtocol(self, useless_addr):
         # Unfortunately this doesn't work.  Search for /dev/null above.
         shutdown_http_logging()
 
-        # Docs mislead, have to explicitly pass something to get persistent
-        # state across protocol/transport invocations.  As there is only
-        # one server object per process instantion, that's not necessary.
-        protobj = ProtocolIVSHMSGServer(self)
-        Commander(protobj)
+        protobj = ProtocolIVSHMSGServer(self)           # No "args"
         return protobj
 
     def run(self):

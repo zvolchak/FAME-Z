@@ -31,13 +31,11 @@ try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox as MB
     from famez_requests import handle_request, send_payload, ResponseObject
-    from general import ServerInvariant
     from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox as MB
     from .famez_requests import handle_request, send_payload, ResponseObject
-    from .general import ServerInvariant
     from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
 
 ###########################################################################
@@ -64,17 +62,28 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     CLIENT_IVSHMEM_PROTOCOL_VERSION = 0
 
-    SI = None
+    args = None
     id2fd_list = OrderedDict()     # Sent to me for each peer
     id2EN_list = OrderedDict()     # Generated from fd_list
 
     def __init__(self, cmdlineargs):
         try:                        # twisted causes blindness
-            if self.SI is None:     # singleton class variables
-                self.__class__.SI = ServerInvariant()
-                self.SI.args = cmdlineargs
+            if self.args is None:
+                cls = self.__class__
+                cls.args = cmdlineargs
+                cls.logmsg = print
+                cls.logerr = print
+                cls.stdtrace = sys.stdout
+                cls.verbose = cls.args.verbose
 
+            # The state machine major decisions about the semantics of blocks
+            # of data have one predicate.  initial_pass is an extra guard.
             self.id = None       # Until initial info; state machine key
+            self._latest_fd = None
+            self.initial_pass = True
+
+            # Other stuff
+            self.isPFM = False
             self.linkattrs = { 'State': 'up' }
             self.peerattrs = {}
             self.SID0 = 0
@@ -82,11 +91,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.nodename = None
             self.cclass = None
             self.afterACK = []
-            # The state machine major decisions about the semantics of blocks
-            # of data have one predicate.   While technically unecessary,
-            # firstpass guards against server coding errors.
-            self._latest_fd = None
-            self.firstpass = True
         except Exception as e:
             print('__init__() failed: %s' % str(e))
             # ...and any number of attribute references will fail soon
@@ -127,14 +131,14 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             src_indices = (self.id,)
         else:
             src_indices = self.parse_target(self.id, src)
-        if self.SI.args.verbose > 1:
+        if self.verbose > 1:
             print('P&G dest %s=%s src %s=%s' %
                       (dest, dest_indices, src, src_indices))
         assert src_indices, 'missing or unknown source(s)'
         assert dest_indices, 'missing or unknown destination(s)'
         for S in src_indices:
             for D in dest_indices:
-                if self.SI.args.verbose > 1:
+                if self.verbose > 1:
                     print('P&G(%s, "%s", %s)' % (D, msg, S))
                 try:
                     # First get the list for dest, then the src ("from me")
@@ -189,16 +193,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # 3 longwords: protocol version w/o FD, my (new) ID w/o FD,
         # and then a -1 with the FD of the IVSHMEM file which is
         # delivered before this.
-        # print('--------------------------- retrieve_initial_info')
+        assert self.initial_pass, 'Internal state error (1)'
         assert len(data) == 24, 'Initial data needs three quadwords'
 
         # Enough idiot checks.
         mailbox_fd = self.latest_fd
-        version, self.id, minusone = struct.unpack('qqq', data)
+        version, tmpid, minusone = struct.unpack('qqq', data)
         assert version == self.CLIENT_IVSHMEM_PROTOCOL_VERSION, \
             'Unxpected protocol version %d' % version
         assert minusone == -1, \
-            'Expected -1 with mailbox fd, got %d' % minuseone
+            'Expected -1 with mailbox fd, got %d' % minusone
 
         # Initialize my mailbox slot.  Get other parameters from the
         # globals because the IVSHMSG protocol doesn't allow values
@@ -207,20 +211,17 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # is only actually done on the first call.  It's a singleton with
         # class variables so there's no reason to keep the instance.
         # SI is the object passed to the event callback so flesh it out.
-        MB(fd=mailbox_fd, client_id=self.id)
-        self.SI.nClients = MB.nClients
-        self.SI.nEvents = MB.nEvents
-        self.SI.server_id = MB.server_id
+        MB(fd=mailbox_fd, client_id=tmpid)
 
-        # Gotta wait for initialized mailbox
+        # Wait for initialized mailbox to finally (re)assign the sentinel.
+        self.id = tmpid
         self.nodename = 'z%02d' % self.id
         self.cclass = 'Debugger'
         print('This ID = %2d (%s)' % (self.id, self.nodename))
 
     # Called multiple times so keep state info about previous calls.
     def dataReceived(self, data):
-        # print('--------------------------- dataReceived')
-        if self.id is None and self.firstpass:
+        if self.id is None:
             self.retrieve_initial_info(data)
             return      # But I'll be right back :-)
 
@@ -228,91 +229,107 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # a single <peer id> which is a disconnect notification.
         latest_fd = self.latest_fd
         assert len(data) == 8, 'Expecting a signed long long'
-        this = struct.unpack('q', data)[0]
-        if self.SI.args.verbose > 1:
-            print('Just got index %s, fd %s' % (this, latest_fd))
-        assert this >= 0, 'Latest data is negative number'
+        thisbatch = struct.unpack('q', data)[0]
+        if self.verbose > 1:
+            print('Just got index %s, fd %s' % (thisbatch, latest_fd))
+        assert thisbatch >= 0, 'Latest data is negative number'
 
-        if latest_fd is None:   # "this" is a disconnect notification
+        if latest_fd is None:   # "thisbatch" is a disconnect notification
             print('%s (%d) has left the building' %
-                (MB.slots[this].nodename, this))
+                (MB.slots[thisbatch].nodename, thisbatch))
             for collection in (self.id2EN_list, self.id2fd_list):
                 try:
-                    del collection[this]
+                    del collection[thisbatch]
                 except Exception as e:
                     pass
             return
 
-        # Get a stream of batched integers, max batch length == nEvents
-        # (the dummy slot 0, nClients, and the server).  There will be
-        # one batch for each existing peer, then the server (see
-        # the "voodoo" comment in twisted_server.py).  In general the
-        # batch lengths could be different for each peer, but in FAME-Z
-        # they're all the same.  Just shove all fds in, including mine.
+        # Collect all the fds for this batch, max batch length == nEvents
+        # (the dummy slot 0, nClients, and the server).  This batch may one
+        # one of many, or one of one for two different reasons:
+        # 1. 1 of 1: Another new client has joined the cluster.   This batch
+        #    is for that new client.
+        # 2. First contact by this client instance: There will be one batch
+        #    for each existing peer, terminated by a batch of "my" fds.
+        #    That last batch is tagged with "my" self.id AND must come last
+        #    (an assumption of QEMU).
+        #    A. if using the stock QEMU "ivshmem_server" there will NOT be
+        #       a batch for the server itself.  Thus it's possible to receive
+        #       only one batch during first_contact, if this is the only peer.
+        #    B. if using famez_server, on first contact you will always get
+        #       at least the server batch first, so the minimum batch run
+        #       length is two.
+        # Keep track of all batches then post-process when they stop coming.
 
-        # Am I starting the last batch (eventfds for me that need notifiers?)
-        if this == self.id and not MB.server_id:
-            assert MB.server_id == self.prevthis, 'Then dont assign it'
-        self.prevthis = this     # For corner case where I am first contact
+        # Am I starting the final batch of my initial connection?  This
+        # paranoia check is on MB and its assignment during _initial_info().
+        if thisbatch == self.id and not MB.server_id:
+            assert MB.server_id == self.prevbatch, 'Then dont assign it'
+        self.prevbatch = thisbatch     # corner case where I am first peer
 
         # Just save the eventfd now, generate objects later.
         try:
-            tmp = len(self.id2fd_list[this])
+            tmp = len(self.id2fd_list[thisbatch])
             assert tmp <= MB.server_id, 'fd list is too long'
-            if tmp == self.SI.nEvents:   # Beginning of client reconnect
-                assert this != self.id, 'Updating MY eventfds??? off-by-one'
+            if tmp == MB.nEvents:   # Beginning of client reconnect
+                assert thisbatch != self.id, \
+                    'Updating MY eventfds??? off-by-one'
                 raise KeyError('Forced update')
-            self.id2fd_list[this].append(latest_fd)   # order matters
+            self.id2fd_list[thisbatch].append(latest_fd)    # order matters
         except KeyError as e:
-            self.id2fd_list[this] = [latest_fd, ]
+            self.id2fd_list[thisbatch] = [latest_fd, ]      # first one
 
-        if self.SI.args.verbose > 1:
+        if self.verbose > 1:
             print('fd list is now %s' % str(self.id2fd_list.keys()))
             for id, eventfds in self.id2fd_list.items():
                 print(id, eventfds)
 
-        # Do the final housekeeping after the final batch.  ASS-U-MES all
-        # vector lists are the same length.  My vectors come last during
-        # first pass.  During a new client join it's only their info.
-        need = self.SI.nEvents - len(self.id2fd_list[this])
-        if ((self.firstpass and this != self.id) or need > 0):
-            if self.SI.args.verbose > 1:
-                print('%d expecting %d more fds...\n' % (this, need))
+        # Assumes all vector lists are the same length.
+        batchneeds = MB.nEvents - len(self.id2fd_list[thisbatch])
+        if batchneeds > 0:
+            if self.verbose > 1:
+                print('Batch for peer id %d expecting %d more fds...\n' %
+                    (thisbatch, batchneeds))
             return
 
-        if self.SI.args.verbose > 1:
-            print('--------- Finish housekeeping')
+        # Batch is complete, it's either
+        # 1. one of many, so more to come in this initial contact
+        #    (unless it was me)
+        # 2. Just a single batch, ie, a new peer
+        if self.initial_pass:
+            if thisbatch != self.id:
+                if self.verbose > 1:
+                    print('%d is not the final batch' % thisbatch)
+                return
+            print('Active client list now complete')
+        else:
+            print('New client %d complete' % thisbatch)
 
         # First generate event notifiers from each fd_list for signalling
         # to other peers.
-        for id in self.id2fd_list:          # For triggering message pickup
-            if id not in self.id2EN_list:   # Paranoid
+        for id in self.id2fd_list:          # Triggers message pickup
+            if id not in self.id2EN_list:   # already processed?
                 self.id2EN_list[id] = ivshmem_event_notifier_list(
                     self.id2fd_list[id])
 
         # Now arm my incoming events and announce readiness.
-        # FIXME: can I really get here more than once?
-        if self.firstpass:
-            if this == self.id:
-                for i, N in enumerate(self.id2EN_list[self.id]):
-                    N.num = i
-                    tmp = EventfdReader(N, self.ClientCallback, self)
-                    tmp.start()
-
-            msg = 'Ready player %s' % self.nodename
-            if self.SI.args.verbose:
-                print(msg)
-            self.place_and_go('server', 'Link CTL Peer-Attribute')
-
-        self.firstpass = False
+        assert self.initial_pass, 'Internal state error (2)'
+        if not self.initial_pass:
+            return
+        assert thisbatch == self.id, 'Cuz it\'s not paranoid if you catch it'
+        self.initial_pass = False
+        for i, N in enumerate(self.id2EN_list[self.id]):
+            N.num = i
+            tmp = EventfdReader(N, self.ClientCallback, self)
+            tmp.start()
+        print('Ready player %s' % self.nodename)
+        self.place_and_go('server', 'Link CTL Peer-Attribute')
 
     def connectionMade(self):
-        if self.SI.args.verbose:
+        if self.verbose:
             print('Connection made on fd', self.transport.fileno())
-        # print('--------------------------- connectionMade')
 
     def connectionLost(self, reason):
-        # print('--------------------------- connectionLost')
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
             print('Dirty disconnect')
         else:
@@ -337,9 +354,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             proxy=None,                 # I don't manage ever (for now)
             from_id=requester_obj.id,
             to_doorbell=requester_obj.id2EN_list[requester_id][requester_obj.id],
-            logmsg=requester_obj.SI.logmsg,
-            stdtrace=requester_obj.SI.stdtrace,
-            verbose=requester_obj.SI.args.verbose,
+            logmsg=requester_obj.logmsg,
+            stdtrace=requester_obj.stdtrace,
+            verbose=requester_obj.verbose,
         )
         ret = handle_request(request, requester_name, ro)
 
@@ -370,8 +387,8 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             return True
 
         if cmd in ('d', 'dump'):    # Include the server
-            if self.SI.args.verbose > 1:
-                print('Peer list keys (%d max):' % (self.SI.nClients + 1))
+            if self.verbose > 1:
+                print('Peer list keys (%d max):' % (MB.nClients + 1))
                 print('\t%s' % sorted(self.id2EN_list.keys()))
 
                 print('\nActor event fds:')
