@@ -10,10 +10,10 @@
 	"Link CTL Peer-Attribute"
 
 #define LINK_CTL_ACK \
-	"Link CTL ACK C-Class=%s,SID0=%d,CID0=%d"
+	"Link CTL ACK C-Class=%s,CID0=%d,SID0=%d"
 
-#define CTL_WRITE_0_SID_CID \
-	"CTL-Write Space=0,PFMSID=%d,PFMCID=%d,SID=%d,CID=%d,Tag=%d"
+#define CTL_WRITE_0_CID_SID \
+	"CTL-Write Space=0,PFMCID=%d,PFMSID=%d,CID=%d,SID=%d,Tag=%d"
 
 #define STANDALONE_ACKNOWLEDGMENT \
 	"Standalone Acknowledgment Tag=%d,Reason=OK"
@@ -50,8 +50,8 @@ irqreturn_t famez_link_request(struct famez_mailslot __iomem *incoming_slot,
 		spin_unlock(&(adapter->incoming_slot_lock));
 		sprintf(outbuf, LINK_CTL_ACK,
 			adapter->core->Base_C_Class_str,
-			adapter->core->SID0,
-			adapter->core->CID0);
+			adapter->core->CID0,
+			adapter->core->SID0);
 		famez_create_outgoing(
 			incoming_slot->peer_id,
 			FAMEZ_SID_CID_IS_PEER_ID,
@@ -60,14 +60,14 @@ irqreturn_t famez_link_request(struct famez_mailslot __iomem *incoming_slot,
 		return IRQ_HANDLED;
 	}
 
-	if (sscanf(incoming_slot->buf, CTL_WRITE_0_SID_CID,
-		   &PFMSID, &PFMCID, &SID, &CID, &tag) == 5) {
+	if (sscanf(incoming_slot->buf, CTL_WRITE_0_CID_SID,
+		   &PFMCID, &PFMSID, &CID, &SID, &tag) == 5) {
 		incoming_slot->buflen = 0;	// buf received
 		spin_unlock(&(adapter->incoming_slot_lock));
-		adapter->core->PFMSID = PFMSID;
 		adapter->core->PFMCID = PFMCID;
-		adapter->core->SID0 = SID;
+		adapter->core->PFMSID = PFMSID;
 		adapter->core->CID0 = CID;
+		adapter->core->SID0 = SID;
 		adapter->core->PMCID = -1;
 		sprintf(outbuf, STANDALONE_ACKNOWLEDGMENT, tag);
 		famez_create_outgoing(
