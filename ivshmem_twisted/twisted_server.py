@@ -93,6 +93,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
         shutdown_http_logging()
         self.isPFM = False
+
+        # Am I one of many peer proxies?
         if self.SI is not None and cmdlineargs is None:
             self.create_new_peer_id()
             # famez_client.py will quickly fix this.  QEMU VM will eventually
@@ -109,7 +111,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # was a separate class for the server, but it was "too separate".
         # Then it was a generic object, but even that starting fading
         # into a special case of this Protocol class with heavy leverage
-        # of data and methods.  So now it's a "reserved instance".
+        # of data and methods.  So now it's a "reserved instance" which
+        # is used as the callback for events (ie, incoming mailslot doorbell).
         cls = self.__class__
         cls.SI = self                               # Reserve it.
 
@@ -126,8 +129,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         self.clients = OrderedDict()        # Order probably not necessary
         self.recycled = {}
 
-        # This instance (SI) is used as the callback for events.  Thse
-        # fields are for the ResponseObject/request().
+        # For the ResponseObject/request().
         if self.args.smart:
             self.default_SID = 27
             self.SID0 = self.default_SID
@@ -141,13 +143,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Non-standard addition to IVSHMEM server role: this server can be
         # interrupted and messaged to particpate in client activity.
         # This variable will get looped even if it's empty (silent mode).
-        self.EN_list = []
-
         # Usually create eventfds for receiving messages in IVSHMSG and
-        # set up a callback.  This early arming is not a race condition
-        # as the peer for which this is destined has not yet been told
-        # of the fds it would use to trigger here.
+        # set up a callback.  This arming is not a race condition as any
+        # peer for which this is destined has not yet been "listened/heard".
 
+        self.EN_list = []
         if not self.args.silent:
             self.EN_list = ivshmem_event_notifier_list(MB.nEvents)
             # The actual client doing the sending needs to be fished out
@@ -155,9 +155,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             for i, EN in enumerate(self.EN_list):
                 EN.num = i
                 tmp = EventfdReader(EN, self.ServerCallback, cls.SI)
-                if i:   # Technically it blocks mailslot 0, the globals
+                if i:   # Skip mailslot 0, the globals "slot"
                     tmp.start()
-
 
     @property
     def promptname(self):

@@ -197,7 +197,7 @@ def _Link_RFC(RO, args):
         RO.this.CID0, RO.this.SID0, RO.proxy.CID0, RO.proxy.SID0)
     return send_payload(payload, RO.from_id, RO.to_doorbell,
                         tag='AfterACK=Link CTL Peer-Attribute',
-                        tagCID=RO.this.CID0, tagSID=(RO.this.SID0))
+                        tagCID=RO.this.CID0, tagSID=RO.this.SID0)
 
 ###########################################################################
 # Gen-Z 1.0 "11.11 Link CTL"
@@ -217,7 +217,9 @@ def _Link_CTL(RO, args):
         # Update the local proxy values, ASS-U-ME it's peerattrs
         # FIXME: correlation ala _tagged?  How do I know it's peer attrs?
         # FIXME: add a key to the response...
-        if RO.proxy is not None:
+        if RO.proxy is None:
+            RO.this.peerattrs = CSV2dict(args[1])
+        else:
             RO.proxy.peerattrs = CSV2dict(args[1])
         return 'dump'
 

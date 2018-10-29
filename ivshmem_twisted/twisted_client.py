@@ -94,11 +94,9 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         except Exception as e:
             print('__init__() failed: %s' % str(e))
             # ...and any number of attribute references will fail soon
-        # print('--------------------------- __init__ finished')
 
     @property   # For Commander prompt
     def promptname(self):
-        # print('--------------------------- promptname')
         return self.nodename
 
     @staticmethod
@@ -157,7 +155,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
                     return
 
     def fileDescriptorReceived(self, latest_fd):
-        # print('--------------------------- fdReceived')
         assert self._latest_fd is None, 'Latest fd has not been consumed'
         self._latest_fd = latest_fd     # See the next property
 
@@ -183,7 +180,6 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 
     @property
     def latest_fd(self):
-        # print('--------------------------- latest_fd')
         '''This is NOT idempotent!'''
         tmp = self._latest_fd
         self._latest_fd = None
@@ -305,25 +301,25 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         else:
             print('New client %d complete' % thisbatch)
 
-        # First generate event notifiers from each fd_list for signalling
+        # Generate event notifiers from each (new) fd_list for signalling
         # to other peers.
         for id in self.id2fd_list:          # Triggers message pickup
             if id not in self.id2EN_list:   # already processed?
                 self.id2EN_list[id] = ivshmem_event_notifier_list(
                     self.id2fd_list[id])
 
-        # Now arm my incoming events and announce readiness.
-        assert self.initial_pass, 'Internal state error (2)'
-        if not self.initial_pass:
+        if not self.initial_pass:           # It was just one additional peer
             return
+
+        # Finally arm my incoming events and announce readiness.
         assert thisbatch == self.id, 'Cuz it\'s not paranoid if you catch it'
-        self.initial_pass = False
         for i, N in enumerate(self.id2EN_list[self.id]):
             N.num = i
             tmp = EventfdReader(N, self.ClientCallback, self)
             tmp.start()
         print('Ready player %s' % self.nodename)
         self.place_and_go('server', 'Link CTL Peer-Attribute')
+        self.initial_pass = False
 
     def connectionMade(self):
         if self.verbose:
