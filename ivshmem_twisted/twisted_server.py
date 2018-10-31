@@ -48,10 +48,10 @@ except ImportError as e:
     from .ivshmem_sendrecv import ivshmem_send_one_msg
     from .twisted_restapi import MailBoxReSTAPI
 
-# Don't use peer ID 0, certain docs imply it's reserved.  Use that slot
-# (0) as global data storage, primarily the server command-line arguments.
+# Don't use peer ID 0, certain docs imply it's reserved.  Use its mailslot
+# as global data storage, primarily the server command-line arguments.
 
-IVSHMEM_LOWEST_ID = 1
+IVSHMSG_LOWEST_ID = 1
 
 PRINT = functools.partial(print, file=sys.stderr)
 PPRINT = functools.partial(pprint, stream=sys.stderr)
@@ -81,21 +81,18 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     SERVER_IVSHMEM_PROTOCOL_VERSION = 0
 
-    args = None         # True class variables, mostly for typing convenience
-    server_id = None
-    verbose = None
     SI = None           # Server Instance, contrived to be "me" not a peer
 
-    def __init__(self, factory, cmdlineargs=None):
+    def __init__(self, factory, args=None):
         '''"self" is a new client connection, not "me" the server.  As such
             it is a proxy object for the other end of each switch "port".
-            cmdlineargs is NOT passed on instantiation via connection.'''
+            args is NOT passed on instantiation via connection.'''
         assert isinstance(factory, TIPServerFactory), 'arg0 not my Factory'
         shutdown_http_logging()
         self.isPFM = False
 
         # Am I one of many peer proxies?
-        if self.SI is not None and cmdlineargs is None:
+        if self.SI is not None and args is None:
             self.create_new_peer_id()
             # famez_client.py will quickly fix this.  QEMU VM will eventually
             # modprobe, etc.
@@ -107,33 +104,31 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             MB.slots[self.id].cclass = self.peerattrs['cclass']
             return
 
-        # This instance is voodoo, representing a manual kick.  Once there
-        # was a separate class for the server, but it was "too separate".
-        # Then it was a generic object, but even that starting fading
-        # into a special case of this Protocol class with heavy leverage
-        # of data and methods.  So now it's a "reserved instance" which
-        # is used as the callback for events (ie, incoming mailslot doorbell).
+        # This instance is voodoo from the first manual kick.  Originally
+        # the server had "other" tracking but now it's a "reserved instance"
+        # which is used as the callback for events (ie, incoming mailslot
+        # doorbell for each active peer proxy).
+
         cls = self.__class__
-        cls.SI = self                               # Reserve it.
+        cls.SI = self                       # Reserve it and flesh it out.
+        cls.verbose = args.verbose
 
-        # Direct class variables that make sense
-        cls.args = cmdlineargs
-        cls.server_id = self.SI.args.server_id      # Rube Goldberg
-        cls.verbose = cls.args.verbose
-        assert self.server_id == MB.server_id, 'Server ID mismatch'
-
-        self.cclass = MB.cclass(cls.server_id)
-        self.logmsg = self.args.logmsg      # Often-used
-        self.logerr = self.args.logerr
+        self.id = args.server_id
+        assert self.id == MB.server_id, 'Server ID mismatch'
+        self.quitting = False
+        self.cclass = MB.cclass(self.id)
+        self.logmsg = args.logmsg
+        self.logerr = args.logerr
         self.stdtrace = sys.stderr
+        self.smart = args.smart
         self.clients = OrderedDict()        # Order probably not necessary
-        self.recycled = {}
+        self.recycled = {} if args.recycle else None
 
         # For the ResponseObject/request().
-        if self.args.smart:
+        if self.smart:
             self.default_SID = 27
             self.SID0 = self.default_SID
-            self.CID0 = self.server_id * 100
+            self.CID0 = self.id * 100
             self.isPFM = True
         else:
             self.default_SID = 0
@@ -148,7 +143,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # peer for which this is destined has not yet been "listened/heard".
 
         self.EN_list = []
-        if not self.args.silent:
+        if not args.silent:
             self.EN_list = ivshmem_event_notifier_list(MB.nEvents)
             # The actual client doing the sending needs to be fished out
             # via its "num" vector.
@@ -161,7 +156,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     @property
     def promptname(self):
         '''For Commander prompt'''
-        return 'Z-switch' if self.SI.args.smart else 'Z-server'
+        return 'Z-switch' if self.SI.smart else 'Z-server'
 
     def logPrefix(self):    # This override works after instantiation
         return 'ProtoIVSHMSG'
@@ -174,7 +169,9 @@ class ProtocolIVSHMSGServer(TIPProtocol):
     # If errors occur early enough, send a bad revision to the client so it
     # terminates the connection.  Remember, "self" is a proxy for a peer.
     def connectionMade(self):
-        recycled = self.SI.recycled.get(self.id, None)
+        recycled = self.SI.recycled                         # Does it exist?
+        if recycled:
+            recycled = self.SI.recycled.get(self.id, None)  # Am I there?
         if recycled:
             del self.SI.recycled[recycled.id]
         msg = 'new socket %d == peer id %d %s' % (
@@ -244,7 +241,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         for server_EN in self.SI.EN_list:
             ivshmem_send_one_msg(
                 self.transport.socket,
-                self.SI.server_id,
+                self.SI.id,
                 server_EN.wfd)
 
         # Server line 205: advertise the new peer to itself, ie, send the
@@ -268,22 +265,20 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         self.printswitch(self.SI.clients)   # default settling time
         if not self.SI.isPFM:
             send_payload('Link CTL Peer-Attribute',
-                         self.server_id,
+                         self.SI.id,
                          self.EN_list[self.id])
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
-        if reason.check(TIError.ConnectionDone) is None:    # Dirty
-            txt = 'Dirty'
-        else:
-            txt = 'Clean'
-        self.SI.logmsg('%s disconnect from peer id %d' % (txt, self.id))
-        # For QEMU crashes and shutdowns.  Not the VM, but QEMU itself.
+        status = 'Clean' if reason.check(TIError.ConnectionDone) else 'Dirty'
+        verb = 'server shutdown' if self.SI.quitting else 'disconnect'
+        self.SI.logmsg('%s %s of peer id %d' % (status, verb, self.id))
+        # For QEMU crashes and shutdowns (not the OS guest but QEMU itself).
         MB.clear_mailslot(self.id)
 
         if self.id in self.SI.clients:     # Only if everything was completed
             del self.SI.clients[self.id]
-        if self.SI.args.recycle:
+        if self.SI.recycled:
             self.SI.recycled[self.id] = self
         else:
             try:
@@ -295,6 +290,10 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             except Exception as e:
                 self.SI.logmsg('Closing peer transports failed: %s' % str(e))
         self.printswitch(self.SI.clients)
+        if self.SI.quitting and not self.SI.clients:    # Turn out the lights
+            print('Turn out the lights (1)', file=sys.stderr)
+            TIreactor.stop()
+            sys.exit(0)
 
     def create_new_peer_id(self):
         '''Determine the lowest unused client ID and set self.id.'''
@@ -305,12 +304,12 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.id = -1    # sentinel
             return  # Until a Link RFC is executed
 
-        # dumb: monotonic from 1; smart: random (finds holes in the code).
-        # Generate ID sets used by each.
-        all_ids = frozenset((range(IVSHMEM_LOWEST_ID, self.SI.server_id)))
+        # Generate ID sets used by each.  The range includes the highest
+        # client ID.  Two modes: dumb == monotonic from 1; smart == random.
+        all_ids = frozenset((range(IVSHMSG_LOWEST_ID, self.SI.id)))
         active_ids = frozenset(self.SI.clients.keys())
         available_ids = all_ids - active_ids
-        if self.SI.args.smart:
+        if self.SI.smart:
             self.id = random.choice(tuple(available_ids))
         else:
             if not self.SI.clients:   # empty
@@ -318,7 +317,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             else:
                 self.id = (sorted(available_ids))[0]
 
-        if self.SI.args.smart:
+        if self.SI.smart:
             self.SID0 = self.SI.default_SID
             self.CID0 = self.id * 100
 
@@ -389,11 +388,11 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         ro = ResponseObject(
             this=SI,                # has "my" (server) CID0, SID0, and cclass
             proxy=requester_proxy,  # for certain server-only admin
-            from_id=SI.server_id,
-            to_doorbell=requester_proxy.EN_list[SI.server_id],
+            from_id=SI.id,
+            to_doorbell=requester_proxy.EN_list[SI.id],
             logmsg=SI.logmsg,
             stdtrace=SI.stdtrace,
-            verbose=SI.args.verbose
+            verbose=SI.verbose
         )
         ret = handle_request(request, requester_name, ro)
 
@@ -444,7 +443,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         PRINT('%s  =========' % lspaces)
 
     #----------------------------------------------------------------------
-    # Command line parsing, picked up by commander.py
+    # Command line parsing, picked up by commander.py.  This instance was
+    # from the original "class-setting" call so it has no transport.
 
     def doCommand(self, cmd, args=None):
 
@@ -465,7 +465,13 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             return True
 
         if cmd in ('q', 'quit'):
-            self.transport.loseConnection()
+            self.quitting = True                # self == SI, remember?
+            if not self.clients:
+                print('Turn out the lights (2)', file=sys.stderr)
+                TIreactor.stop()
+                sys.exit(0)
+            for c in self.clients.values():
+                c.transport.loseConnection()    # Invokes callbacks in proxies
             return False
 
         raise NotImplementedError('asdf')
@@ -501,8 +507,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             setattr(args, arg, getattr(args, arg, default))
 
         # Mailbox may be sized above the requested number of clients to
-        # satisfy QEMU IVSHMEM restrictions.  These end up as MB class
-        # variables.
+        # satisfy QEMU IVSHMEM restrictions.
         args.server_id = args.nClients + 1
         args.nEvents = args.nClients + 2
 
@@ -541,19 +546,19 @@ class FactoryIVSHMSGServer(TIPServerFactory):
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 
-        # Voodoo kick to a) set up one-time SI b)setup commander
+        # Voodoo kick to a) set up one-time SI and b)setup commander.
         # Docs mislead, have to explicitly pass something to get persistent
         # state across protocol/transport invocations.  As there is only
         # one server object per process instantion, that's not necessary.
 
-        protobj = ProtocolIVSHMSGServer(self, args)     # Extra "args"
+        protobj = ProtocolIVSHMSGServer(self, args)     # With "args"
         Commander(protobj)
 
     def buildProtocol(self, useless_addr):
         # Unfortunately this doesn't work.  Search for /dev/null above.
         shutdown_http_logging()
 
-        protobj = ProtocolIVSHMSGServer(self)           # No "args"
+        protobj = ProtocolIVSHMSGServer(self)           # Without "args"
         return protobj
 
     def run(self):

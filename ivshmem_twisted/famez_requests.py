@@ -39,8 +39,7 @@ ResponseObject = attr.make_class('ResponseObject',
 
 def _unprocessed(client, *args, **kwargs):
     return False
-    cmdlineargs = getattr(client, 'args', client.SI.args)
-    if client.SI.args.verbose:
+    if client.SI.verbose:
         _logmsg('NOOP', args, kwargs)
     return False
 

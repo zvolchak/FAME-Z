@@ -87,7 +87,6 @@ class _proxyCommander(LineReceiver):
         if not ok:
             if cmd:
                 if cmd in ('q', 'quit'):
-                    self.commProto.transport.loseConnection()
                     self.transport.loseConnection()
                     return
             print('Unrecognized command "%s", try "help"' % cmd)
