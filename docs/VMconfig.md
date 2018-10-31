@@ -66,7 +66,7 @@ http://www.gtlib.gatech.edu/pub/centos/7/os/x86_64/
 ### Method 3: FAME
 
 If your host OS is a Debian distro (or derivative like Ubuntu) you can use
-the [emulated development platform for The Machine](docs/FAME_background.md).
+the [emulated development platform for The Machine](FAME_background.md).
 It will do all the necessary things:
 
 * Set up a dedicted virtual network (no need to use default)
