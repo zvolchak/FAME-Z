@@ -29,12 +29,12 @@ from zope.interface import implementer
 
 try:
     from commander import Commander
-    from famez_mailbox import FAMEZ_MailBox as MB
+    from ivshmsg_mailbox import IVSHMSG_MailBox as MB
     from famez_requests import handle_request, send_payload, ResponseObject
     from ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
 except ImportError as e:
     from .commander import Commander
-    from .famez_mailbox import FAMEZ_MailBox as MB
+    from .ivshmsg_mailbox import IVSHMSG_MailBox as MB
     from .famez_requests import handle_request, send_payload, ResponseObject
     from .ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
 
@@ -253,7 +253,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         #    A. if using the stock QEMU "ivshmem_server" there will NOT be
         #       a batch for the server itself.  Thus it's possible to receive
         #       only one batch during first_contact, if this is the only peer.
-        #    B. if using famez_server, on first contact you will always get
+        #    B. if using twisted_server, on first contact you will always get
         #       at least the server batch first, so the minimum batch run
         #       length is two.
         # Keep track of all batches then post-process when they stop coming.
@@ -329,14 +329,15 @@ class ProtocolIVSHMSGClient(TIPProtocol):
     def connectionLost(self, reason):
         print(reason.value)
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
-            print('Probably forced/killed by user.')
+            print('Client was probably interrupted or killed.')
         else:
             if self.quitting:
                 print('Last interactive command was "quit".')
             else:
-                print('Probably a server shutdown.')
+                print('The server was probably shut down.')
         MB.clear_mailslot(self.id)  # In particular, nodename
-        TIreactor.stop()
+        if TIreactor.running:       # Stopped elsewhere on SIGINT
+            TIreactor.stop()
 
     # The cbdata is precisely the object which can be used for the response.
     # In other words, it's directly "me", with "my" identity data.

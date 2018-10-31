@@ -14,7 +14,7 @@ from pprint import pformat, pprint
 
 from klein import Klein                             # Uses default reactor...
 
-from twisted.internet import reactor as TIreactor   # ...just like famez_server
+from twisted.internet import reactor as TIreactor   # ...like twisted_server
 from twisted.web import server as TWserver
 
 
@@ -37,19 +37,19 @@ class MailBoxReSTAPI(object):
     def mb2dict(cls):
         thedict = OrderedDict((
             ('nClients', cls.nClients),
-            ('server_famez_id', cls.server_famez_id),
+            ('server_ivshmsg_id', cls.server_ivshmsg_id),
         ))
 
         # The D3 Javascript framework refers to a node's name as its "id".
-        for famez_id in range(1, cls.nEvents):
-            this = cls.nodes[famez_id]
-            this.famez_id = famez_id
-            this.id = cls.mb.slots[famez_id].nodename
-            this.cclass = cls.mb.slots[famez_id].cclass
+        for ivshmsg_id in range(1, cls.nEvents):
+            this = cls.nodes[ivshmsg_id]
+            this.ivshmsg_id = ivshmsg_id
+            this.id = cls.mb.slots[ivsmsg_id].nodename
+            this.cclass = cls.mb.slots[ivshmsg_id].cclass
             this.hardware = cls.cclass_to_hardware_type(this.cclass)
 
             # Since they all connect to the one switch (no P2P)
-            this.group = 'port_%s' % famez_id
+            this.group = 'port_%s' % ivshmsg_id
 
             # this.CID = 0        # Later
             # this.SID = 0
@@ -59,7 +59,7 @@ class MailBoxReSTAPI(object):
         thedict['nodes'] = [ vars(n) for n in cls.nodes[1:] if n.id ]
 
         links = []
-        server_id = cls.nodes[cls.server_famez_id].id    # a string
+        server_id = cls.nodes[cls.server_ivshmsg_id].id    # a string
         for node in thedict['nodes']:
             id = node['id']             # also a string
             if id and id != server_id:
@@ -96,14 +96,14 @@ class MailBoxReSTAPI(object):
             sorted([k.decode() for k in reqhdrs.keys()]))
 
     # Must come after all Klein dependencies and @decorators
-    def __init__(self, already_initialized_FAMEZ_mailbox, port=1991):
+    def __init__(self, already_initialized_IVSHMSG_mailbox, port=1991):
         cls = self.__class__
         if cls.mb is not None:
             return
-        cls.mb = already_initialized_FAMEZ_mailbox
+        cls.mb = already_initialized_IVSHMSG_mailbox
         cls.nClients = cls.mb.nClients
         cls.nEvents = cls.mb.nEvents
-        cls.server_famez_id = cls.mb.server_id      # see mb2dict
+        cls.server_ivshmsg_id = cls.mb.server_id      # see mb2dict
         # Clients/ports are enumerated 1-nClients inclusive
         cls.nodes = [ cls.N() for _ in range(cls.nEvents) ]
 
@@ -120,15 +120,15 @@ if __name__ == '__main__':
 
     from twisted.python import log as TPlog	# Deprecated
 
-    from famez_mailbox import FAMEZ_MailBox
+    from ivshmsg_mailbox import IVSHMSG_MailBox
 
     # These things are done explicitly in twisted_server.py
-    fname = '/dev/shm/famez_mailbox' if len(sys.argv) < 2 else sys.argv[1]
+    fname = '/dev/shm/ivshmsg_mailbox' if len(sys.argv) < 2 else sys.argv[1]
     if not fname or fname[0] == '-':
         raise SystemExit('usage: %s [ /path/to/mailbox ]' % sys.argv[0])
     print('Opening', fname)
     fd = os.open(fname, os.O_RDWR)
-    mb = FAMEZ_MailBox(fd=fd, client_id=99)
+    mb = IVSHMSG_MailBox(fd=fd, client_id=99)
     tmp = MailBoxReSTAPI(mb)
 
     # This is done explicitly in twisted_server.py

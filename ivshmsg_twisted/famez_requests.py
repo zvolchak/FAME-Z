@@ -12,9 +12,9 @@ from collections import OrderedDict
 from pprint import pprint
 
 try:
-    from famez_mailbox import FAMEZ_MailBox as MB
+    from ivshmsg_mailbox import IVSHMSG_MailBox as MB
 except ImportError as e:
-    from .famez_mailbox import FAMEZ_MailBox as MB
+    from .ivshmsg_mailbox import IVSHMSG_MailBox as MB
 
 def PRINT(*args):
     print(*args, file=_stdtrace)
@@ -76,7 +76,7 @@ def CSV2dict(oneCSVstr):
     return kv
 
 ###########################################################################
-# Here instead of famez_mailbox to manage the tag.  Can be called as a
+# Here instead of ivshmsg_mailbox to manage the tag.  Can be called as a
 # "discussion initiator" usually from the REPL interpreters, or as a
 # response to a received command from the callbacks.
 
@@ -84,9 +84,9 @@ _next_tag = 1               # Gen-Z tag field
 
 _tagged = OrderedDict()     # By tag, just store receiver now
 
-_tracker = 0                # FAME-Z addenda to watch conversations
+_tracker = 0                # EmerGen-Z addenda to watch conversations
 
-_TRACKER_TOKEN = '!FZT='
+_TRACKER_TOKEN = '!EZT='
 
 def send_payload(payload, from_id, to_doorbell, reset_tracker=False,
                  tag=None, tagCID=0, tagSID=0):
@@ -254,6 +254,7 @@ _stdtrace = None
 def handle_request(request, requester_name, response_object):
     global _logmsg, _stdtrace, _tracker
 
+    assert isinstance(response_object, ResponseObject), 'Bad response object'
     if _logmsg is None:
         _logmsg = response_object.logmsg   # FIXME: logger.logger...
         _stdtrace = response_object.stdtrace
@@ -261,10 +262,10 @@ def handle_request(request, requester_name, response_object):
     elements = request.split(_TRACKER_TOKEN)
     payload = elements.pop(0)
     trace = '\n%10s -> "%s"' % (requester_name, payload)
-    FZT = int(elements[0]) if elements else False
-    if FZT:
-        trace += ' (%d)' % FZT
-        _tracker = FZT
+    EZT = int(elements[0]) if elements else False
+    if EZT:
+        trace += ' (%d)' % EZT
+        _tracker = EZT
     PRINT(trace)
 
     elements = payload.split()

@@ -5,12 +5,12 @@
 # is a shared common area split into "slots".   slot 0 is a global read-only
 # area populated by the server, then "nClients" worth of slots, and a final
 # entry "nClients + 1" is the server mailslot.  This is contiguous because it
-# it aligns with how QEMU expects delivery of peer info, including the FAME-Z
+# it aligns with how QEMU expects delivery of peer info, including the twisted
 # server (which is an extension beyond stock QEMU IVSHMSG protocol).
 # Right now a mailslot is 512 bytes: 128 bytes of metadata (currently about
 # 96 used), then 384 of message buffer.
 # Go for the max slots in the file to hardwire libvirt domain XML file size.
-# famez.ko will read the global data to understand the mailbox layout.
+# VM guest kernel modules read global data to understand the mailbox layout.
 
 # All numbers are unsigned of an appropriate size.  All strings are multiples
 # of 32 (including the C terminating NULL) on 32-byte boundaries.  Then it
@@ -28,7 +28,7 @@ from time import sleep
 from time import time as NOW
 
 
-class FAMEZ_MailGlobals(ctypes.Structure):
+class IVSHMSG_MailGlobals(ctypes.Structure):
     _fields_ = [        # A magic ctypes class attribute.
         ('slotsize',    ctypes.c_ulonglong),
         ('buf_offset',  ctypes.c_ulonglong),
@@ -38,7 +38,7 @@ class FAMEZ_MailGlobals(ctypes.Structure):
     ]
 
 
-class FAMEZ_MailSlot(ctypes.Structure):
+class IVSHMSG_MailSlot(ctypes.Structure):
     # c_char_p is variable length so force fixed size fields.
 
     _strsize = 32
@@ -81,7 +81,7 @@ class FAMEZ_MailSlot(ctypes.Structure):
         self._cclass = inbytes
 
 
-class FAMEZ_MailBox(object):
+class IVSHMSG_MailBox(object):
 
     # QEMU rules: file size (product of first two) must be a power of two.
     MAILBOX_MAX_SLOTS = 16    # Dummy + server leaves 14 actual clients
@@ -119,9 +119,9 @@ class FAMEZ_MailBox(object):
         data = b'\0' * cls.FILESIZE
         cls.mm[0:len(data)] = data
 
-        # Fill in the globals; used by famez.ko and the C struct famez_globals.
+        # Fill in the globals; used by ivshmsg.ko and the C struct globals.
         # It's at the start of the memory area so no indexing is needed.
-        mbg = FAMEZ_MailGlobals.from_buffer(cls.view)
+        mbg = IVSHMSG_MailGlobals.from_buffer(cls.view)
         mbg.slotsize = cls.MAILBOX_SLOTSIZE
         mbg.buf_offset = cls.MS_BUF_off
         mbg.nClients = cls.nClients
@@ -133,7 +133,7 @@ class FAMEZ_MailBox(object):
         # as a sentinel for other code.  Don't forget the server.
 
         for slot in range(1, cls.nEvents):
-            cls.slots[slot] = FAMEZ_MailSlot.from_buffer(
+            cls.slots[slot] = IVSHMSG_MailSlot.from_buffer(
                 cls.view[mbg.slotsize * slot : mbg.slotsize * (slot + 1)])
             cls.slots[slot].peer_id = slot
 
@@ -258,7 +258,7 @@ class FAMEZ_MailBox(object):
     #----------------------------------------------------------------------
     # Called by Python client on graceful shutdowns, and always by server
     # when a peer dies.  This is mostly for QEMU crashes so the nodename
-    # is not reused when a QEMU restarts, before loading famez.ko.
+    # is not reused when a QEMU restarts, before loading ivshmsg.ko.
 
     @classmethod
     def clear_mailslot(cls, id):
@@ -283,7 +283,7 @@ class FAMEZ_MailBox(object):
             assert STAT.S_ISREG(buf.st_mode), 'Mailbox FD is not a regular file'
             cls.mm = mmap.mmap(cls.fd, 0)
             view = memoryview(cls.mm)
-            mbg = FAMEZ_MailGlobals.from_buffer(view)
+            mbg = IVSHMSG_MailGlobals.from_buffer(view)
             # Convenience
             cls.nClients = mbg.nClients
             cls.nEvents = mbg.nEvents
@@ -294,7 +294,7 @@ class FAMEZ_MailBox(object):
             cls.slots = [ None, ] * cls.nEvents
             cls.slots[0] = mbg
             for slot in range(1, cls.nEvents):
-                cls.slots[slot] = FAMEZ_MailSlot.from_buffer(
+                cls.slots[slot] = IVSHMSG_MailSlot.from_buffer(
                     view[mbg.slotsize * slot : mbg.slotsize * (slot + 1)])
                 assert cls.slots[slot].peer_id == slot, 'What happened?'
 

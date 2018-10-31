@@ -6,31 +6,29 @@
 
 # Rocky Craig <rocky.craig@hpe.com>
 
-# This is modelled on the ivshmem-client program that comes with QEMU,
-# with modifications for the FAME-Z work.  Some options are the same
-# but some are missing as unecessary in an IVSHMSG world.
+# This is modelled on the ivshmem-client program that comes with QEMU.
 
 import argparse
 import grp
 import os
 import sys
 
-from ivshmem_twisted.twisted_client import FactoryIVSHMSGClient
+from ivshmsg_twisted.twisted_client import FactoryIVSHMSGClient
 
 ###########################################################################
 
 
 def parse_cmdline(cmdline_args):
     '''cmdline_args does NOT lead with the program name.  Single-letter
-       arguments reflect the stock "ivshmem-client".'''
+       arguments reflect the stock QEMU "ivshmem-client".'''
     parser = argparse.ArgumentParser(
-        description='FAME-Z client files',
+        description='IVSHMSG client files',
         epilog='Options reflect those in the QEMU "ivshmem-client".'
     )
     parser.add_argument('-?', action='help')  # -h and --help are built in
     parser.add_argument('--socketpath', '-S', metavar='/path/to/socket',
         help='Absolute path to UNIX domain socket created by the server',
-        default='/tmp/famez_socket'
+        default='/tmp/ivshmsg_socket'
     )
     parser.add_argument('--verbose', '-v',
         help='Specify multiple times to increase verbosity',
@@ -41,7 +39,7 @@ def parse_cmdline(cmdline_args):
 
     # Idiot checking.
     assert os.path.exists(args.socketpath), \
-        'No such socket %s (have you started famez_server?)' % args.socketpath
+        'No socket %s (have you started ivshmsg_server?)' % args.socketpath
 
     return args
 

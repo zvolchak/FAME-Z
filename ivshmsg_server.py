@@ -13,16 +13,16 @@ import sys
 
 from daemonize import Daemonize
 
-from ivshmem_twisted.twisted_server import FactoryIVSHMSGServer
+from ivshmsg_twisted.twisted_server import FactoryIVSHMSGServer
 
 ###########################################################################
 
 
 def parse_cmdline(cmdline_args):
     '''cmdline_args does NOT lead with the program name.  Single-letter
-       arguments reflect the stock "ivshmem-server".'''
+       arguments reflect the stock QEMU "ivshmem-server".'''
     parser = argparse.ArgumentParser(
-        description='FAME-Z server files and vector counts',
+        description='IVSHMSG server files and vector counts',
         epilog='Options reflect those in the QEMU "ivshmem-server".'
     )
     parser.add_argument('-?', action='help')  # -h and --help are built in
@@ -35,11 +35,11 @@ def parse_cmdline(cmdline_args):
     )
     parser.add_argument('--logfile', '-L', metavar='<name>',
         help='Pathname of logfile for use in daemon mode',
-        default='/tmp/famez_log'
+        default='/tmp/ivshmsg_log'
     )
     parser.add_argument('--mailbox', '-M', metavar='<name>',
         help='Name of mailbox that exists in POSIX shared memory',
-        default='famez_mailbox'
+        default='ivshmsg_mailbox'
     )
     parser.add_argument('--nClients', '-n', metavar='<integer>',
         help='Serve up to this number of clients (max=14)',
@@ -59,7 +59,7 @@ def parse_cmdline(cmdline_args):
     )
     parser.add_argument('--socketpath', '-S', metavar='/path/to/socket',
         help='Absolute path to UNIX domain socket (will be created)',
-        default='/tmp/famez_socket'
+        default='/tmp/ivshmsg_socket'
     )
     parser.add_argument('--verbose', '-v',
         help='Specify multiple times to increase verbosity',
@@ -99,7 +99,7 @@ def forever(cmdline_args=None):
         raise NotImplementedError('Gotta run it in the foreground for now')
         if args.verbose:
             print(Daemonize.__doc__)    # The website is WRONG
-        d = Daemonize('famez_server', '/dev/null', None, auto_close_fds=None)
+        d = Daemonize('ivshmsg_server', '/dev/null', None, auto_close_fds=None)
         d.start()
     server = FactoryIVSHMSGServer(args)
     server.run()

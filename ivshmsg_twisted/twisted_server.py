@@ -35,14 +35,14 @@ from twisted.internet.protocol import Protocol as TIPProtocol
 
 try:
     from commander import Commander
-    from famez_mailbox import FAMEZ_MailBox as MB
+    from ivshmsg_mailbox import IVSHMSG_MailBox as MB
     from famez_requests import handle_request, send_payload, ResponseObject
     from ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
     from ivshmsg_sendrecv import ivshmsg_send_one_msg
     from twisted_restapi import MailBoxReSTAPI
 except ImportError as e:
     from .commander import Commander
-    from .famez_mailbox import FAMEZ_MailBox as MB
+    from .ivshmsg_mailbox import IVSHMSG_MailBox as MB
     from .famez_requests import handle_request, send_payload, ResponseObject
     from .ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
     from .ivshmsg_sendrecv import ivshmsg_send_one_msg
@@ -94,7 +94,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         # Am I one of many peer proxies?
         if self.SI is not None and args is None:
             self.create_new_peer_id()
-            # famez_client.py will quickly fix this.  QEMU VM will eventually
+            # Python client will quickly fix this.  QEMU VM will eventually
             # modprobe, etc.
             self.peerattrs = {
                 'CID0': '0',
