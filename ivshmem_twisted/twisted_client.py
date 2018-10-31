@@ -31,12 +31,12 @@ try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox as MB
     from famez_requests import handle_request, send_payload, ResponseObject
-    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox as MB
     from .famez_requests import handle_request, send_payload, ResponseObject
-    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
+    from .ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
 
 ###########################################################################
 # See qemu/docs/specs/ivshmem-spec.txt::Client-Server protocol and
@@ -83,6 +83,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             self.initial_pass = True
 
             # Other stuff
+            self.quitting = False
             self.isPFM = False
             self.linkattrs = { 'State': 'up' }
             self.peerattrs = {}
@@ -305,7 +306,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
         # to other peers.
         for id in self.id2fd_list:          # Triggers message pickup
             if id not in self.id2EN_list:   # already processed?
-                self.id2EN_list[id] = ivshmem_event_notifier_list(
+                self.id2EN_list[id] = ivshmsg_event_notifier_list(
                     self.id2fd_list[id])
 
         if not self.initial_pass:           # It was just one additional peer
@@ -326,13 +327,16 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             print('Connection made on fd', self.transport.fileno())
 
     def connectionLost(self, reason):
+        print(reason.value)
         if reason.check(TIError.ConnectionDone) is None:    # Dirty
-            print('Dirty disconnect')
+            print('Probably forced/killed by user.')
         else:
-            print('Clean disconnect')
+            if self.quitting:
+                print('Last interactive command was "quit".')
+            else:
+                print('Probably a server shutdown.')
         MB.clear_mailslot(self.id)  # In particular, nodename
-        if TIreactor.running:
-            TIreactor.stop()
+        TIreactor.stop()
 
     # The cbdata is precisely the object which can be used for the response.
     # In other words, it's directly "me", with "my" identity data.
@@ -434,11 +438,11 @@ class ProtocolIVSHMSGClient(TIPProtocol):
             return True
 
         if cmd in ('q', 'quit'):
+            self.quitting = True
             self.transport.loseConnection()
             return False
 
         print('Unrecognized command "%s", try "help"' % cmd)
-
         return True
 
 ###########################################################################
@@ -450,7 +454,7 @@ class ProtocolIVSHMSGClient(TIPProtocol):
 class FactoryIVSHMSGClient(TIPClientFactory):
 
     _required_arg_defaults = {
-        'socketpath':   '/tmp/ivshmem_socket',
+        'socketpath':   '/tmp/ivshmsg_socket',
         'verbose':      0,
     }
 

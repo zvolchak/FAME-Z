@@ -7,9 +7,10 @@
 # Rocky Craig <rocky.craig@hpe.com>
 
 # Routine names here mirror those in qemu/contrib/ivshmem-[client|server].
-# The IVSHMEM communications protocol is based on 8-byte integers and an
-# optional 4-byte file descriptor.  Twisted transport.sendFileDescriptor
-# gets the packing sizes wrong so do it right.
+# The IVSHMEM communications protocol (now christened IVSHMSG) is based on
+# 8-byte integers and an optional 4-byte file descriptor.  Twisted
+# transport.sendFileDescriptor gets the packing sizes wrong for IVSHMSG
+# so do it right.
 
 import socket
 import struct
@@ -18,7 +19,7 @@ import sys
 ###########################################################################
 
 
-def ivshmem_send_one_msg(thesocket, data, fd=None):
+def ivshmsg_send_one_msg(thesocket, data, fd=None):
     # On the far side, if no fd is received from here, a helper routine
     # returns fd == -1 which is checked in various places.
     data = int(data)
@@ -37,5 +38,5 @@ def ivshmem_send_one_msg(thesocket, data, fd=None):
     return ret == 8
 
 
-def ivshmem_recv_one_msg(thesocket):
+def ivshmsg_recv_one_msg(thesocket):
     print(thesocket.recvmsg(64, 64))

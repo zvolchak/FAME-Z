@@ -7,9 +7,10 @@
 # Rocky Craig <rocky.craig@hpe.com>
 
 # Routine names here mirror those in qemu/contrib/ivshmem-[client|server].
-# The IVSHMEM communications protocol is based on 8-byte integers and an
-# optional 4-byte file descriptor.  Twisted transport.sendFileDescriptor
-# gets the packing sizes wrong so do it right.
+# The IVSHMEM communications protocol (now christened IVSHMSG) is based on
+# 8-byte integers and an optional 4-byte file descriptor.  Twisted
+# transport.sendFileDescriptor gets the packing sizes wrong for IVSHMSG
+# so do it right.
 
 import errno
 import os
@@ -28,7 +29,7 @@ from zope.interface import implementer
 
 from ctypes import cdll
 
-class IVSHMEM_Event_Notifier(object):  # Probably overkill
+class IVSHMSG_Event_Notifier(object):  # Probably overkill
 
     # /usr/include/x86_64-linux-gnu/bits/eventfd.h
     EFD_SEMAPHORE = 0o00000001
@@ -98,15 +99,15 @@ class IVSHMEM_Event_Notifier(object):  # Probably overkill
         self.rfd = self.wfd = -1
 
 
-def ivshmem_event_notifier_list(list_or_count):
+def ivshmsg_event_notifier_list(list_or_count):
     '''Polymorphic.  If list_or_count is an integer, create that many event
        objects with new fds.  If it's a list of ints, assume they are fds
        and create a list of objects re-using those ints.'''
     if isinstance(list_or_count, int):
-        return [ IVSHMEM_Event_Notifier()
+        return [ IVSHMSG_Event_Notifier()
             for _ in range(list_or_count) ]
     if isinstance(list_or_count, (list, tuple)):
-        return [ IVSHMEM_Event_Notifier(valid_eventfd=fd)
+        return [ IVSHMSG_Event_Notifier(valid_eventfd=fd)
             for fd in list_or_count ]
 
 
@@ -119,7 +120,7 @@ class EventfdReader(object):
 
     def __init__(self, eventobj, callback, cbdata):
         '''cbdata is usually "self" from the caller.'''
-        assert isinstance(eventobj, IVSHMEM_Event_Notifier), 'Bad object'
+        assert isinstance(eventobj, IVSHMSG_Event_Notifier), 'Bad object'
         eventobj.cbdata = cbdata
         self.eventobj = eventobj
         self.eventobj.last_value = None

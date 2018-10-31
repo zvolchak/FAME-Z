@@ -37,15 +37,15 @@ try:
     from commander import Commander
     from famez_mailbox import FAMEZ_MailBox as MB
     from famez_requests import handle_request, send_payload, ResponseObject
-    from ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from ivshmem_sendrecv import ivshmem_send_one_msg
+    from ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
+    from ivshmsg_sendrecv import ivshmsg_send_one_msg
     from twisted_restapi import MailBoxReSTAPI
 except ImportError as e:
     from .commander import Commander
     from .famez_mailbox import FAMEZ_MailBox as MB
     from .famez_requests import handle_request, send_payload, ResponseObject
-    from .ivshmem_eventfd import ivshmem_event_notifier_list, EventfdReader
-    from .ivshmem_sendrecv import ivshmem_send_one_msg
+    from .ivshmsg_eventfd import ivshmsg_event_notifier_list, EventfdReader
+    from .ivshmsg_sendrecv import ivshmsg_send_one_msg
     from .twisted_restapi import MailBoxReSTAPI
 
 # Don't use peer ID 0, certain docs imply it's reserved.  Use its mailslot
@@ -144,7 +144,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         self.EN_list = []
         if not args.silent:
-            self.EN_list = ivshmem_event_notifier_list(MB.nEvents)
+            self.EN_list = ivshmsg_event_notifier_list(MB.nEvents)
             # The actual client doing the sending needs to be fished out
             # via its "num" vector.
             for i, EN in enumerate(self.EN_list):
@@ -196,7 +196,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             self.EN_list = recycled.EN_list
         else:
             try:
-                self.EN_list = ivshmem_event_notifier_list(MB.nEvents)
+                self.EN_list = ivshmsg_event_notifier_list(MB.nEvents)
             except Exception as e:
                 self.SI.logmsg('Event notifiers failed: %s' % str(e))
                 self.send_initial_info(False)
@@ -217,7 +217,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
                 PRINT('NOT recycled: advertising other peers...')
             for other_peer in server_peer_list:
                 for peer_EN in self.EN_list:
-                    ivshmem_send_one_msg(
+                    ivshmsg_send_one_msg(
                         other_peer.transport.socket,
                         self.id,
                         peer_EN.wfd)
@@ -228,7 +228,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             PRINT('Advertising other peers to the new peer...')
         for other_peer in server_peer_list:
             for other_peer_EN in other_peer.EN_list:
-                ivshmem_send_one_msg(
+                ivshmsg_send_one_msg(
                     self.transport.socket,
                     other_peer.id,
                     other_peer_EN.wfd)
@@ -239,7 +239,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         if self.verbose:
             PRINT('Advertising this server to the new peer...')
         for server_EN in self.SI.EN_list:
-            ivshmem_send_one_msg(
+            ivshmsg_send_one_msg(
                 self.transport.socket,
                 self.SI.id,
                 server_EN.wfd)
@@ -251,7 +251,7 @@ class ProtocolIVSHMSGServer(TIPProtocol):
         if self.verbose:
             PRINT('Advertising the new peer to itself...')
         for peer_EN in self.EN_list:
-            ivshmem_send_one_msg(
+            ivshmsg_send_one_msg(
                 self.transport.socket,
                 self.id,
                 peer_EN.get_fd())   # Must be a good story here...
@@ -270,7 +270,8 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
     def connectionLost(self, reason):
         '''Tell the other peers that this one has died.'''
-        status = 'Clean' if reason.check(TIError.ConnectionDone) else 'Dirty'
+        dirty = reason.check(TIError.ConnectionDone) is None
+        status = 'Dirty' if dirty else 'Clean'
         verb = 'server shutdown' if self.SI.quitting else 'disconnect'
         self.SI.logmsg('%s %s of peer id %d' % (status, verb, self.id))
         # For QEMU crashes and shutdowns (not the OS guest but QEMU itself).
@@ -278,22 +279,20 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         if self.id in self.SI.clients:     # Only if everything was completed
             del self.SI.clients[self.id]
-        if self.SI.recycled:
+        if self.SI.recycled and not self.SI.quitting:
             self.SI.recycled[self.id] = self
         else:
             try:
                 for other_peer in self.SI.clients.values():
-                    ivshmem_send_one_msg(other_peer.transport.socket, self.id)
-
+                    ivshmsg_send_one_msg(other_peer.transport.socket, self.id)
                 for EN in self.EN_list:
                     EN.cleanup()
             except Exception as e:
                 self.SI.logmsg('Closing peer transports failed: %s' % str(e))
         self.printswitch(self.SI.clients)
-        if self.SI.quitting and not self.SI.clients:    # Turn out the lights
-            print('Turn out the lights (1)', file=sys.stderr)
-            TIreactor.stop()
-            sys.exit(0)
+        if self.SI.quitting and not self.SI.clients:    # last one exited
+            self.SI.logmsg('Final client disconnected after "quit"')
+            TIreactor.stop()                            # turn out the lights
 
     def create_new_peer_id(self):
         '''Determine the lowest unused client ID and set self.id.'''
@@ -327,21 +326,21 @@ class ProtocolIVSHMSGServer(TIPProtocol):
             # 1. Protocol version without fd.
             if not ok:  # Violate the version check and bomb the client.
                 PRINT('Early termination')
-                ivshmem_send_one_msg(thesocket, -1)
+                ivshmsg_send_one_msg(thesocket, -1)
                 self.transport.loseConnection()
                 self.id = -1
                 return
-            if not ivshmem_send_one_msg(thesocket,
+            if not ivshmsg_send_one_msg(thesocket,
                 self.SERVER_IVSHMEM_PROTOCOL_VERSION):
                 PRINT('This is screwed')
                 return False
 
             # 2. The client's (new) id, without an fd.
-            ivshmem_send_one_msg(thesocket, self.id)
+            ivshmsg_send_one_msg(thesocket, self.id)
 
-            # 3. -1 for data with the fd of the ivshmem file.  Using this
+            # 3. -1 for data with the fd of the IVSHMEM file.  Using this
             # protocol a valid fd is required.
-            ivshmem_send_one_msg(thesocket, -1, MB.fd)
+            ivshmsg_send_one_msg(thesocket, -1, MB.fd)
             return True
         except Exception as e:
             PRINT(str(e))
@@ -466,15 +465,16 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 
         if cmd in ('q', 'quit'):
             self.quitting = True                # self == SI, remember?
-            if not self.clients:
-                print('Turn out the lights (2)', file=sys.stderr)
+            self.logmsg('Interactive command to "quit"')
+            if self.clients:                    # Trigger lostConnection
+                for c in self.clients.values():
+                    c.transport.loseConnection()    # Final callback exits
+            else:
                 TIreactor.stop()
-                sys.exit(0)
-            for c in self.clients.values():
-                c.transport.loseConnection()    # Invokes callbacks in proxies
             return False
 
-        raise NotImplementedError('asdf')
+        PRINT('Unrecognized command "%s", try "help"' % cmd)
+        return True
 
 ###########################################################################
 # Normally the Endpoint and listen() call is done explicitly, interwoven
@@ -485,13 +485,14 @@ class ProtocolIVSHMSGServer(TIPProtocol):
 class FactoryIVSHMSGServer(TIPServerFactory):
 
     _required_arg_defaults = {
+        'title':        'IVSHMSG',
         'foreground':   True,       # Only affects logging choice in here
-        'logfile':      '/tmp/ivshmem_log',
-        'mailbox':      'ivshmem_mailbox',  # Will end up in /dev/shm
+        'logfile':      '/tmp/ivshmsg_log',
+        'mailbox':      'ivshmsg_mailbox',  # Will end up in /dev/shm
         'nClients':     2,
         'recycle':      False,      # Try to preserve other QEMUs
         'silent':       False,      # Does participate in eventfds/mailbox
-        'socketpath':   '/tmp/ivshmem_socket',
+        'socketpath':   '/tmp/ivshmsg_socket',
         'verbose':      0,
     }
 
@@ -541,8 +542,8 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             mode=0o666,         # Deprecated at Twisted 18
             wantPID=True)
         E.listen(self)
-        args.logmsg('FAME-Z server @%d ready for %d clients on %s' %
-            (args.server_id, args.nClients, args.socketpath))
+        args.logmsg('%s server @%d ready for %d clients on %s' %
+            (args.title, args.server_id, args.nClients, args.socketpath))
 
         # https://stackoverflow.com/questions/1411281/twisted-listen-to-multiple-ports-for-multiple-processes-with-one-reactor
 
@@ -562,5 +563,5 @@ class FactoryIVSHMSGServer(TIPServerFactory):
         return protobj
 
     def run(self):
-        TIreactor.run()
+        TIreactor.run()                                 # and hangs here
 
