@@ -101,18 +101,28 @@ the guest OS inside QEMU where the messaging endpoints take place.
 1. Start ivshmem_server.py.  If you used FAME to create your VMs, use the
    --socketpath value that matches FAME's assignment.
 1. Start the VM(s).
-1. Log in to the VM.  Look for the IVSHMSG device with "sudo lspci -v":
-1. In the VM, git clone these repos:
-   1. IVSHMSG
-   1. EmerGen-Z
-1. cd kernel/famez
-   1. make modules_install which should create two kernel modules, 
-   "famez.ko" and "famez_bridge.ko"
-1. cd kernel/genz
-   1. make modules_install which should create another module, genz.ko
-1. sudo modprobe famez.ko famez_verbose=2".  dmesg output should indicate the driver found and attached to the IVSHMSG device, a "Redhat Emulation" card.
-1. sudo insmod famez_bridge.ko fzbridge_verbose=2.  Again dmesg output should now show the driver bound to the famez driver.  There should also be a new device file /dev/famez_bridge_xx where xx matches the PCI pseudevice address in lspci.
-1. Run a famez_client.py program and execute "list".  This shows you participants and their IVSHMSG ID.
-1. On a VM, echo "I:hello there" > /dev/famez_bridge_xx, where "I" is the IVHSHMSG client number of a client.
-2. On a different VM (the target of the echo command above) "cat < /dev/famez_bridge_xx" and you should see the message.
+1. Log in to the VM.  Look for the IVSHMSG pseudo-device with *sudo lspci -v*:
+1. In the VM, git clone these repos into one directory (so that it contains
+   three directories when finished):
+   1. https://github.com/linux-genz/EmerGen-Z.git
+   1. https://github.com/linux-genz/IVSHMSG.git
+   1. https://github.com/?????/executivecardboard.git
+1. cd EmerGen-Z/
+   1. *make modules_install* which should create and install one kernel module, 
+      `genz.ko`
+1. cd ../IVSHMSG/VMguest/
+   1. *make modules_install* which should create and install two kernel modules,
+      `ivshmsg.ko` and `emergenz_bridge.ko`
+1. *sudo modprobe ivshmsg.ko verbose=2*  dmesg output should indicate the driver
+   found and attached to the IVSHMSG pseudo-device.
+1. *sudo insmod emergenz_bridge.ko verbose=2*  dmesg output should show the
+   driver bound to the ivshmsg driver.  There should also be a new device file
+   /dev/famez_bridge_xx where xx matches the PCI pseudevice address in lspci.
+
+## Quick messaging tests
+
+1. In another host window, run *famez_client.py --socketpath ....*.  Note its
+   IVSHMSG ID in the server monitor window, or execute "dump" in the client.
+1. On the VM, echo "C:hello there" > /dev/famez_bridge_xx, where "C" is the
+   IVHSHMSG client number of the client.
 
