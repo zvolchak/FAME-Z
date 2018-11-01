@@ -522,9 +522,7 @@ class FactoryIVSHMSGServer(TIPServerFactory):
             if args.verbose > 1:
                 TPlog.startLogging(sys.stdout, setStdout=False)
             else:
-                print('The first connection will start interactivity...')
                 TPlog.startLogging(open('/dev/null', 'a'), setStdout=False)
-                pass
         else:
             PRINT('Logging to %s' % args.logfile)
             TPlog.startLogging(
