@@ -241,9 +241,9 @@ static ssize_t famez_bridge_write(struct file *file, const char __user *buf,
 
 		if (comma) {
 			*comma = '\0';
-			if ((ret = kstrtoint(buffers->wbuf, 0, &SID)))
+			if ((ret = kstrtoint(buffers->wbuf, 0, &CID)))
 				goto unlock_return;
-			if ((ret = kstrtoint(comma + 1, 0, &CID)))
+			if ((ret = kstrtoint(comma + 1, 0, &SID)))
 				goto unlock_return;
 		} else {	// Direct use of an IVSHMSG peer id
 			if ((ret = kstrtoint(buffers->wbuf, 0, &CID)))
